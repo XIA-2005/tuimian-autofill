@@ -1,0 +1,1137 @@
+// 内容脚本入口：每个 frame 运行一份。顶层 frame 负责悬浮面板、自动填充、体检与消息协调。
+
+import { Profile } from '../core/profile';
+import { loadProfile, saveProfile } from '../core/storage';
+import { generateTestProfile } from '../core/testdata';
+import { importFromPage } from '../core/importer';
+import { scanSite } from '../core/scanner';
+import { runPreSubmitCheck } from '../core/checker';
+import { loadRemoteRules } from '../core/rulesync';
+import { DetectedField, detectAllFields, FIELD_RULES, FieldRule } from '../core/matcher';
+import { clearHighlights, closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, FillItem, FillResult, FillStats, findAchievementTable, findAwardTable, findExperienceTable, findFamilyTable, markEl, pickInPage, sleep, snapshotFillState, trySetSelect } from '../core/filler';
+import { ADAPTERS, AUTO_SHOW_PATTERN, allAdapters, extraRulesFor, matchAdapter, PlatformAdapter } from '../core/adapters';
+import { SCHOOLS } from '../core/schools';
+import { initPanel, PanelHandlers, setPanelStatus, showPanel } from './panel';
+
+// ===================== 醒目填充横幅 + 进度条 =====================
+let fillBanner: HTMLElement | null = null;
+// 本页填充流程已收尾：后续延时轮次不再把横幅顶出来（避免完成后再弹"补填中"）
+let fillFinished = false;
+// 弹窗点选进行中（嵌套计数）：期间不宣告"填充完成"（东华大学等站点弹窗阶段可长达数十秒，不能提前收掉进度条）
+let pickersDepth = 0;
+// 弹窗点选互斥：同一字段已有点选流程在跑时，级联轮次不再重开弹窗（防"循环弹窗"）
+let activePick: { key: string; at: number } | null = null;
+// 行任务互斥：防止延时补填轮次与主流程并发重跑（重复点"添加"）
+let rowJobsRunning = false;
+
+const PROGRESS_KEY = 'tui-fill-progress';
+
+/** 落盘进度：整页回发刷新后，新文档据此恢复横幅与进度条 */
+function persistProgress(pct: number, stage: string, sub: string): void {
+  try {
+    sessionStorage.setItem(PROGRESS_KEY, JSON.stringify({ pct, stage, sub, at: Date.now() }));
+  } catch {
+    // 忽略
+  }
+}
+
+/** 大号醒目横幅 + 进度条：pct 0-100，stage 主标题，sub 副说明（可为空） */
+function setFillProgress(pct: number, stage: string, sub?: string): void {
+  if (!isTop || fillFinished) return;
+  const p = Math.max(0, Math.min(100, Math.round(pct)));
+  const subText = sub || '';
+  persistProgress(p, stage, subText);
+  if (!fillBanner || !fillBanner.isConnected) {
+    fillBanner = document.createElement('div');
+    fillBanner.className = 'tui-fill-banner';
+    fillBanner.innerHTML =
+      `<div class="tui-banner-head"><span class="tui-banner-spin"></span><span class="tui-banner-title"></span><span class="tui-banner-pct"></span></div>` +
+      `<div class="tui-banner-track"><div class="tui-banner-fill"></div></div>` +
+      `<div class="tui-banner-sub"></div>`;
+    (document.body || document.documentElement).appendChild(fillBanner);
+  }
+  fillBanner.classList.remove('tui-banner-done');
+  const title = fillBanner.querySelector('.tui-banner-title');
+  const pctEl = fillBanner.querySelector('.tui-banner-pct');
+  const fillEl = fillBanner.querySelector('.tui-banner-fill') as HTMLElement | null;
+  const subEl = fillBanner.querySelector('.tui-banner-sub') as HTMLElement | null;
+  if (title) title.textContent = stage;
+  if (pctEl) pctEl.textContent = `${p}%`;
+  if (fillEl) fillEl.style.width = `${p}%`;
+  if (subEl) subEl.textContent = subText;
+}
+
+/** 完成态：100% 绿色，短暂停留后自动收起；此后本页延时轮次不再弹出横幅。弹窗点选进行中不宣告完成 */
+function finishFillBanner(summary: string, sub?: string): void {
+  if (!isTop || fillFinished || pickersDepth > 0) return;
+  const hint = '若资料未完全填写，请再次点击「一键填充」';
+  setFillProgress(100, `✅ ${summary}`, sub ? `${sub}；${hint}` : hint);
+  fillFinished = true;
+  try {
+    sessionStorage.removeItem(PROGRESS_KEY);
+  } catch {
+    // 忽略
+  }
+  if (fillBanner) {
+    fillBanner.classList.add('tui-banner-done');
+    const el = fillBanner;
+    setTimeout(() => {
+      if (fillBanner === el) {
+        el.remove();
+        fillBanner = null;
+      }
+    }, 4500);
+  }
+}
+
+/** 页面刷新后恢复横幅：有进行中的行任务或本页曾一键填充过则续显（整页回发刷新后进度条不中断） */
+function restoreProgressBanner(): void {
+  try {
+    const raw = sessionStorage.getItem(PROGRESS_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw) as { pct?: number; stage?: string; sub?: string };
+    if (typeof s.pct === 'number' && s.pct > 0 && s.pct < 100) {
+      setFillProgress(s.pct, s.stage || '🔄 自动填写继续中…', s.sub || '');
+    }
+  } catch {
+    // 忽略
+  }
+}
+
+const isTop = window === window.top;
+let adapters: PlatformAdapter[] = ADAPTERS;
+let activeRules: FieldRule[] = [...FIELD_RULES, ...extraRulesFor(location.href)];
+let lastResult: FillResult | null = null;
+
+// 远程规则（默认关闭，需用户在设置中授权）：异步合并，合并后刷新规则集
+void loadRemoteRules().then((remote) => {
+  if (!remote) return;
+  adapters = allAdapters(remote);
+  activeRules = [...FIELD_RULES, ...extraRulesFor(location.href, adapters), ...(remote.extraFieldRules || [])];
+});
+
+function detect(): DetectedField[] {
+  return detectAllFields(document, activeRules);
+}
+
+function formatStats(s: FillStats): string {
+  const manual = s.failed + s.picker;
+  let t = `识别 ${s.total} 个字段：已填充 ${s.filled}；跳过 ${s.skipped}（验证码/密码）；档案未填 ${s.profileEmpty}；未匹配 ${s.noMatch}；需人工 ${manual}`;
+  if (s.picker > 0) t += `（其中弹窗选择框 ${s.picker}）`;
+  if (manual > 0) t += '；请人工核对红色高亮项';
+  return t;
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function buildMissingText(res: FillResult, profile: Profile): string {
+  const failed = res.items.filter((i) => i.status === 'failed');
+  const picker = res.items.filter((i) => i.status === 'picker');
+  const empty = res.items.filter((i) => i.status === 'profileEmpty');
+  const lines: string[] = [];
+  if (failed.length) {
+    lines.push('【页面有选项但未能自动选中，请人工选择】');
+    failed.forEach((i) => lines.push(`${i.label}：${i.valuePreview || ''}`));
+  }
+  if (picker.length) {
+    lines.push('');
+    lines.push('【弹窗选择框：点字段旁的「选择」按钮打开选择器，选取以下目标】');
+    picker.forEach((i) => lines.push(`${i.label}：${i.valuePreview || ''}`));
+  }
+  if (empty.length) {
+    lines.push('');
+    lines.push('【档案中尚未填写，可在「档案编辑器」中补充】');
+    empty.forEach((i) => {
+      const hint = i.field && i.field.startsWith('compose.') ? '请在档案中补充对应经历列表' : `档案字段：${i.field}`;
+      lines.push(`${i.label}（${hint}）`);
+    });
+  }
+  if (profile.selfStatements.length) {
+    lines.push('');
+    lines.push('【自我陈述版本速查】');
+    profile.selfStatements.forEach((s) => lines.push(`${s.title}：${s.content ? s.content.length : 0} 字`));
+  }
+  return lines.join('\n') || '没有漏填项 🎉';
+}
+
+/** 不包含任何填写值，仅结构与匹配结果，用于反馈给开发者改进规则 */
+function buildReport(): string {
+  const fields = detect();
+  return JSON.stringify(
+    {
+      url: location.href,
+      title: document.title,
+      adapter: matchAdapter(location.href, adapters) ? matchAdapter(location.href, adapters)!.id : null,
+      // 上次填充后的表单值快照（保存失败清空页面后仍能还原"保存前"的值，定位截断字段用）
+      fillSnapshot: (() => {
+        try {
+          const raw = sessionStorage.getItem('tui-fill-snapshot');
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      })(),
+      // 上次填充的逐字段结果（filled/profileEmpty/picker/failed/noMatch 等）
+      fillSummary: (() => {
+        try {
+          const raw = sessionStorage.getItem('tui-fill-summary');
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      })(),
+      // 弹窗点选调试记录（trigger 命中/点击策略/是否弹出/最终结果）
+      pickDebug: (() => {
+        try {
+          const raw = sessionStorage.getItem('tui-pick-debug');
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      })(),
+      // 家庭成员表格填充诊断（成员清单/页面行名/可写行数/填充数——网格异步渲染时定位用）
+      familyDebug: (() => {
+        try {
+          const raw = sessionStorage.getItem('tui-family-debug');
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      })(),
+      // 行任务（自动加行）逐轮诊断：类型/进度/行数变化/异常
+      rowJobsDebug: (() => {
+        try {
+          const raw = sessionStorage.getItem('tui-rowjobs-debug');
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      })(),
+      // 动作按钮点击诊断：被点元素签名（tag/id/class/disabled/onclick）+ 触发策略（"点了没反应"类问题定位用）
+      clickDebug: (() => {
+        try {
+          const raw = sessionStorage.getItem('tui-click-debug');
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      })(),
+      // 加行按钮查找诊断：被跳过的候选及原因（disabled/other-table/own-ui）——定位"为什么没点到真按钮"
+      addbtnDebug: (() => {
+        try {
+          const raw = sessionStorage.getItem('tui-addbtn-debug');
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      })(),
+      // 主世界回发函数探测（WebForm_DoPostback 是否存在及其形态；数组 = 每次点击的方式/目标/函数源码片段）
+      wfpProbe: (() => {
+        try {
+          const raw = sessionStorage.getItem('tui-wfp-probe');
+          if (!raw) return null;
+          try {
+            return JSON.parse(raw);
+          } catch {
+            return raw;
+          }
+        } catch {
+          return null;
+        }
+      })(),
+      // 最近一次整页回发/跳转时间戳（判断「添加」点击是否真的触发了页面刷新）
+      pbFired: (() => {
+        try {
+          return sessionStorage.getItem('tui-pb-fired') || null;
+        } catch {
+          return null;
+        }
+      })(),
+      // 站点架构扫描：网格表格列头/数据行 HTML 样例/加行按钮/弹窗触发器（"先读架构再操作"）
+      siteScan: scanSite(document),
+      total: fields.length,
+      fields: fields.map((f) => ({
+        label: f.label,
+        tag: f.el.tagName.toLowerCase(),
+        type: f.el.getAttribute('type') || '',
+        name: f.el.getAttribute('name') || '',
+        id: f.el.id || '',
+        readonly: f.readonly,
+        hasPickerTrigger: !!f.pickerTrigger,
+        matched: f.skip ? 'SKIP:' + f.skip : f.rule ? f.rule.field : 'NO_MATCH',
+        options: f.el.tagName === 'SELECT' ? Array.from((f.el as HTMLSelectElement).options).map((o) => o.text).join(' | ').slice(0, 200) : '',
+        // 仅对无标签的匿名输入框附值快照（调试网格填充用，截断显示）
+        value: f.label && !/^ctl|^txt|^[a-zA-Z]+\d*$/.test(f.label) ? '' : String((f.el as HTMLInputElement).value || '').slice(0, 24),
+      })),
+      tables: Array.from(document.querySelectorAll('table'))
+        .slice(0, 20)
+        .map((t) => {
+          const headerText = Array.from(t.rows[0] ? t.rows[0].cells : []).map((c) => (c.textContent || '').trim()).join(' ');
+          const isGrid = /学习或工作|学习工作|工作经历|成果名称|成果|论文/.test(headerText);
+          return {
+            rows: t.rows.length,
+            hasThead: !!t.querySelector('thead'),
+            hasTbody: !!t.querySelector('tbody'),
+            inputCount: t.querySelectorAll('input, select, textarea').length,
+            headerCells: Array.from(t.rows[0] ? t.rows[0].cells : []).map((c) => (c.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 24)),
+            // 仅对经历/成果类表格附数据行值快照（调试用，截断显示）
+            dataRows: isGrid
+              ? Array.from(t.rows)
+                  .slice(1, 6)
+                  .map((r) =>
+                    Array.from(r.cells).map((c) => {
+                      const el = c.querySelector('input, textarea') as HTMLInputElement | HTMLTextAreaElement | null;
+                      return el ? String(el.value || '').slice(0, 20) : (c.textContent || '').trim().slice(0, 20);
+                    }),
+                  )
+              : [],
+          };
+        }),
+      buttons: Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"], input[type="image"], span, i, div[role="button"]'))
+        .slice(0, 80)
+        .map((b) => ({
+          tag: b.tagName.toLowerCase(),
+          text: (b.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 24),
+          value: (b.getAttribute('value') || '').slice(0, 24),
+          alt: (b.getAttribute('alt') || '').slice(0, 24),
+          cls: (b.getAttribute('class') || '').slice(0, 40),
+          name: (b.getAttribute('name') || '').slice(0, 60),
+          href: (b.getAttribute('href') || '').slice(0, 80),
+          disabled: !!(b as HTMLButtonElement).disabled,
+          onclick: (b.getAttribute('onclick') || '').slice(0, 60),
+        }))
+        .filter((b) => b.text || b.value || b.alt || /add|new|btn|insert|新增|添加|增加|保存|提交|doPostBack/i.test(b.cls + b.name + b.href)),
+    },
+    null,
+    2,
+  );
+}
+
+// ===================== 弹窗选择框自动点选与联动重试 =====================
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+}
+
+/** 控件是否"空"（未选/未填）——不能复用 fieldValueOf（其对输入框返回 "值|checked"，空框也会返回 "|false" 导致误判"已选过"） */
+function controlEmpty(el: Element): boolean {
+  const tag = el.tagName;
+  if (tag === 'SELECT') return (el as HTMLSelectElement).value === '';
+  if (tag === 'TEXTAREA') return (el as HTMLTextAreaElement).value.trim() === '';
+  const i = el as HTMLInputElement;
+  return i.value.trim() === '' && !i.checked;
+}
+
+/** 联动下拉自动重试：上级字段选定后选项异步加载，延时重试几次 */
+function scheduleCascadeRetries(items: FillItem[]): void {
+  const retrySelects = () => {
+    for (const it of items) {
+      if (it.status !== 'failed') continue;
+      const el = it.el as HTMLSelectElement | undefined;
+      if (!el || el.tagName !== 'SELECT' || !document.documentElement.contains(el)) continue;
+      if (it.valuePreview && trySetSelect(el, it.valuePreview)) {
+        it.status = 'filled';
+        markEl(el, 'filled');
+      }
+    }
+  };
+  [900, 1800, 3000].forEach((delay) => setTimeout(retrySelects, delay));
+  setTimeout(() => void attemptPickers(items), 1200);
+}
+
+/** 弹窗选择框自动点选一次（已填的不动，无法匹配的留给人工） */
+async function attemptPickers(items: FillItem[]): Promise<void> {
+  pickersDepth += 1;
+  let manualHint: string | null = null;
+  try {
+    manualHint = await attemptPickersInner(items);
+  } finally {
+    pickersDepth -= 1;
+  }
+  // 每轮点选结束立即更新进度，避免"正在自动选择"卡住不动；行任务也结束后才宣告完成
+  if (manualHint) {
+    if (isTop) {
+      setPanelStatus(`🎯 ${manualHint}：弹窗已自动填好类别与关键字——若结果未显示请点「查询」，再点行前绿色对勾；完成后自动继续`);
+      setFillProgress(48, '🔔 需要人工协助', `请点「查询」与行前绿色对勾（${manualHint}）`);
+    }
+  } else if (isTop) {
+    if (readRowJobs().length || rowJobsRunning) setFillProgress(50, '🔄 正在自动加行', '弹窗选择完成，继续处理表格…');
+    else finishFillBanner('填充完成', '请核对绿色高亮后保存');
+  }
+}
+
+async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
+  // 地区三联直写优先：直接写 6 位区划码+名称，免开树弹窗（东华/北理工式 chooseArea，成熟填表软件同款做法）；树弹窗仅兜底
+  directFillRegionTriplets(document, items);
+  // 代码+名称成对字段共用同一个"选择"按钮：同字段+同单元格/同行的项只处理一次
+  const processed = new Map<string | null, Set<Element>>();
+  const wasProcessed = (field: string | null, scope: Element | null): boolean => {
+    if (!scope) return false;
+    const s = processed.get(field);
+    return !!s && s.has(scope);
+  };
+  const markProcessed = (field: string | null, scope: Element | null): void => {
+    if (!scope) return;
+    let s = processed.get(field);
+    if (!s) {
+      s = new Set();
+      processed.set(field, s);
+    }
+    s.add(scope);
+  };
+  let manualHint: string | null = null;
+  // 自愈：学校/专业"代码+名称"弹窗对的错位值（代号框被填了学校名、名称框被填了专业名等）→ 清空重走弹窗
+  try {
+    const pickerPairs = new Map<string, HTMLInputElement[]>();
+    for (const it of items) {
+      if (it.status !== 'picker' || !(it.el instanceof HTMLInputElement) || !document.documentElement.contains(it.el)) continue;
+      const key = it.field || '';
+      const list = pickerPairs.get(key) || [];
+      list.push(it.el);
+      pickerPairs.set(key, list);
+    }
+    for (const [, pair] of pickerPairs) {
+      if (pair.length < 2) continue;
+      // 代码框命名不一：txtBkzydm(专业码) / txtBkbydwm(学校码)，统一按 dm/bm/wm 结尾识别
+      const codeInput = pair.find((i) => /(dm|bm|wm|cm)$/i.test(i.name || '') || /(dm|bm|wm|cm)$/i.test(i.id || ''));
+      const nameInput = pair.find((i) => i !== codeInput);
+      if (!codeInput || !nameInput) continue;
+      const codeVal = (codeInput.value || '').trim();
+      // 代号框应为纯数字编码；被填成文字（学校名/专业名错位）即清空成对框，随后走弹窗自动选择
+      if (codeVal && !/^\d+$/.test(codeVal)) {
+        codeInput.value = '';
+        nameInput.value = '';
+      }
+    }
+  } catch {
+    // 忽略
+  }
+  const pickTotal = Math.max(1, items.filter((i) => i.status === 'picker').length);
+  let pickIdx = 0;
+  const deadFields = new Set<string | null>();
+  for (const it of items) {
+    if (it.status !== 'picker') continue;
+    if (deadFields.has(it.field)) continue; // 同字段兄弟项（代码/名称/隐藏框）共用同一弹窗，本轮已失败就不再重复弹
+    const el = it.el as HTMLElement | undefined;
+    if (!el || !document.documentElement.contains(el)) continue;
+    if (!controlEmpty(el)) continue; // 已选过（保存后页面可能已回显）→ 不动
+    const cell = el.closest('td,th') || el.parentElement;
+    const scopeKey = cell || el.closest('tr');
+    if (wasProcessed(it.field, scopeKey)) continue;
+    markProcessed(it.field, scopeKey);
+    if (cell) {
+      // 同单元格任一输入已有值（弹窗点选常同时写代码+名称两个框）→ 跳过
+      if (Array.from(cell.querySelectorAll('input, select, textarea')).some((x) => !controlEmpty(x))) continue;
+    }
+    // 同一字段弹窗自动尝试最多 3 次；超限转人工引导，不再反复弹窗打扰
+    let fails: Record<string, number> = {};
+    try {
+      fails = JSON.parse(sessionStorage.getItem('tui-pick-fails') || '{}');
+    } catch {
+      fails = {};
+    }
+    const failKey = `${(el as HTMLInputElement).name || el.id || it.field}`;
+    if ((fails[failKey] || 0) >= 3) continue;
+    // 每字段弹窗调用总次数上限（页面被误回发重载时也能终止循环）
+    let rounds: Record<string, number> = {};
+    try {
+      rounds = JSON.parse(sessionStorage.getItem('tui-pick-rounds') || '{}');
+    } catch {
+      rounds = {};
+    }
+    if ((rounds[failKey] || 0) >= 4) {
+      manualHint = manualHint || it.label;
+      continue;
+    }
+    rounds[failKey] = (rounds[failKey] || 0) + 1;
+    try {
+      sessionStorage.setItem('tui-pick-rounds', JSON.stringify(rounds));
+    } catch {
+      // 忽略
+    }
+    // 互斥：该字段已有点选在跑（或卡死保护期内）→ 本轮跳过，不重开弹窗
+    if (activePick && activePick.key === failKey && Date.now() - activePick.at < 90_000) continue;
+    if (activePick && Date.now() - activePick.at >= 90_000) activePick = null;
+    // 逐个处理（弹窗不能同时开多个）
+    if (isTop) setFillProgress(40 + Math.round(10 * (pickIdx / pickTotal)), '🎯 正在自动选择弹窗', `${Math.min(pickIdx + 1, pickTotal)}/${pickTotal} ${it.label}`);
+    pickIdx++;
+    activePick = { key: failKey, at: Date.now() };
+    let res: 'picked' | 'opened' | 'none' = 'none';
+    try {
+      res = await pickInPage(document, el, it.valuePreview || '');
+    } finally {
+      if (activePick && activePick.key === failKey) activePick = null;
+    }
+    if (res !== 'opened') closeLeftoverPickers(document); // 清理遗留弹层，防止旧弹窗叠在下一字段上
+    if (!controlEmpty(el)) {
+      it.status = 'filled';
+      markEl(el, 'filled');
+      fails[failKey] = 0;
+      try {
+        const r2 = JSON.parse(sessionStorage.getItem('tui-pick-rounds') || '{}');
+        r2[failKey] = 0;
+        sessionStorage.setItem('tui-pick-rounds', JSON.stringify(r2));
+      } catch {
+        // 忽略
+      }
+    } else {
+      await sleep(800); // 回发型选择器点选后主页面值可能稍后才回填
+      if (!controlEmpty(el)) {
+        it.status = 'filled';
+        markEl(el, 'filled');
+        fails[failKey] = 0;
+        try {
+          const r2 = JSON.parse(sessionStorage.getItem('tui-pick-rounds') || '{}');
+          r2[failKey] = 0;
+          sessionStorage.setItem('tui-pick-rounds', JSON.stringify(r2));
+        } catch {
+          // 忽略
+        }
+      } else if (res === 'opened') {
+        // 弹窗已打开并填好（服务器结果慢/需人工点对勾）：不记失败，提示人工两步，弹窗保持打开
+        manualHint = it.label;
+        fails[failKey] = 0;
+        deadFields.add(it.field);
+      } else if (res === 'picked') {
+        // 已点选但值未回填（服务器慢/页面被回发清空）：不记失败，允许下一轮再试
+        fails[failKey] = 0;
+      } else {
+        fails[failKey] = (fails[failKey] || 0) + 1;
+        deadFields.add(it.field);
+      }
+    }
+    try {
+      sessionStorage.setItem('tui-pick-fails', JSON.stringify(fails));
+    } catch {
+      // 忽略
+    }
+  }
+  return manualHint;
+}
+
+/** 保存回发后分多次补填（EasyUI 字段异步就绪需延时重试）；仅第一轮尝试自动点选弹窗字段 */
+function scheduleRestorePasses(profile: Profile): void {
+  const run = (attemptPickersToo: boolean) => {
+    const res = fillAll(profile, document, activeRules);
+    if (isTop && pickersDepth === 0) setFillProgress(93, '🔁 保存后自动补填', '恢复被回发清空的字段…');
+    if (attemptPickersToo) scheduleCascadeRetries(res.items);
+  };
+  setTimeout(() => run(true), 900);
+  setTimeout(() => run(false), 2600);
+  setTimeout(() => {
+    run(false);
+    if (isTop) {
+      if (readRowJobs().length || rowJobsRunning) setFillProgress(96, '🔁 自动加行仍在进行', '补填完成，行任务继续…');
+      else finishFillBanner('已恢复被清空的字段', '请核对后点保存');
+    }
+    setPanelStatus('🔄 已恢复被清空的字段，请核对后点保存');
+  }, 6000);
+}
+
+// ===================== 提交前体检 =====================
+function closeCheckReport(): void {
+  document.getElementById('tui-check-report')?.remove();
+}
+
+function showCheckReport(): void {
+  const { items, summary } = runPreSubmitCheck(document, activeRules);
+  closeCheckReport();
+  const box = document.createElement('div');
+  box.id = 'tui-check-report';
+  box.innerHTML = `<div class="tui-cr-head">🩺 提交前体检<span class="tui-cr-close" title="关闭">✕</span></div><div class="tui-cr-summary">${escapeHtml(summary)}</div>`;
+  const list = document.createElement('div');
+  list.className = 'tui-cr-list';
+  if (!items.length) {
+    const ok = document.createElement('div');
+    ok.className = 'tui-cr-item ok';
+    ok.textContent = '✅ 未发现必填缺失或格式异常，可放心提交（仍请人工核对内容）';
+    list.appendChild(ok);
+  }
+  items.forEach((it) => {
+    const row = document.createElement('div');
+    row.className = 'tui-cr-item ' + it.level;
+    row.textContent = `${it.level === 'error' ? '🔴' : '🟡'} ${it.title}：${it.detail}`;
+    row.addEventListener('click', () => {
+      const el = it.el as HTMLElement | undefined;
+      if (el && document.documentElement.contains(el)) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el.classList.add('tui-guide');
+        setTimeout(() => el.classList.remove('tui-guide'), 1600);
+      }
+    });
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+  (document.body || document.documentElement).appendChild(box);
+  box.querySelector('.tui-cr-close')?.addEventListener('click', closeCheckReport);
+}
+
+// ===================== 学校目录（报名入口导航） =====================
+type SchoolStatus = 'done' | 'doing';
+
+async function loadSchoolStatus(): Promise<Record<string, SchoolStatus>> {
+  try {
+    const got = (await chrome.storage.local.get('tui-school-status')) as { 'tui-school-status'?: Record<string, SchoolStatus> };
+    return (got && got['tui-school-status']) || {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveSchoolStatus(st: Record<string, SchoolStatus>): Promise<void> {
+  try {
+    await chrome.storage.local.set({ 'tui-school-status': st });
+  } catch {
+    // 忽略
+  }
+}
+
+function closeSchoolDirectory(): void {
+  document.getElementById('tui-schools')?.remove();
+}
+
+/** 学校目录浮层：82 所高校报名入口 + 每校"未开始/进行中/已填"状态标记（本地保存） */
+function showSchoolDirectory(): void {
+  closeSchoolDirectory();
+  const box = document.createElement('div');
+  box.id = 'tui-schools';
+  box.innerHTML =
+    `<div class="tui-schools-head">🏫 学校目录 · 预推免报名入口<span class="tui-schools-sub">共 ${SCHOOLS.length} 所 · 点「去填写」打开报名页</span><span class="tui-cr-close" title="关闭">✕</span></div>` +
+    `<div class="tui-schools-toolbar"><input id="tui-schools-search" type="text" placeholder="搜索学校名 / 网址…"><span id="tui-schools-count"></span></div>` +
+    `<div class="tui-schools-list" id="tui-schools-list"></div>`;
+  (document.body || document.documentElement).appendChild(box);
+  const list = box.querySelector('#tui-schools-list') as HTMLElement;
+  const searchEl = box.querySelector('#tui-schools-search') as HTMLInputElement;
+  const countEl = box.querySelector('#tui-schools-count') as HTMLElement;
+  box.querySelector('.tui-cr-close')?.addEventListener('click', closeSchoolDirectory);
+  const curHost = location.hostname || '';
+  let statuses: Record<string, SchoolStatus> = {};
+  const statusLabel: Record<string, string> = { done: '✓ 已填', doing: '▶ 进行中' };
+  const render = () => {
+    const f = (searchEl.value || '').trim().toLowerCase();
+    const hits = SCHOOLS.filter((s) => !f || s.name.toLowerCase().includes(f) || s.host.toLowerCase().includes(f) || s.entry.toLowerCase().includes(f));
+    const doneN = Object.values(statuses).filter((v) => v === 'done').length;
+    const doingN = Object.values(statuses).filter((v) => v === 'doing').length;
+    countEl.textContent = `匹配 ${hits.length} 所 · 已填 ${doneN} · 进行中 ${doingN}`;
+    list.innerHTML = '';
+    hits.forEach((s) => {
+      const st = statuses[s.name] || '';
+      const row = document.createElement('div');
+      row.className = 'tui-school-item' + (st ? ` st-${st}` : '') + (s.host === curHost ? ' current' : '');
+      const badges: string[] = [];
+      if (s.adapter) badges.push('<span class="tui-school-badge adapter" title="有专项适配">已适配</span>');
+      if (s.host === curHost) badges.push('<span class="tui-school-badge current">当前站点</span>');
+      row.innerHTML =
+        `<div class="tui-school-info"><div class="tui-school-name">${escapeHtml(s.name)}${badges.join('')}</div>` +
+        `<div class="tui-school-host">${escapeHtml(s.host)}</div></div>` +
+        `<div class="tui-school-actions"><button type="button" class="tui-school-open">去填写 ↗</button>` +
+        `<button type="button" class="tui-school-status">${st ? statusLabel[st] : '◌ 未开始'}</button></div>`;
+      (row.querySelector('.tui-school-open') as HTMLButtonElement).addEventListener('click', (e) => {
+        e.stopPropagation();
+        window.open(s.entry, '_blank');
+      });
+      (row.querySelector('.tui-school-status') as HTMLButtonElement).addEventListener('click', (e) => {
+        e.stopPropagation();
+        const cur: SchoolStatus | '' = (statuses[s.name] as SchoolStatus | undefined) || '';
+        const next: SchoolStatus | '' = cur === '' ? 'doing' : cur === 'doing' ? 'done' : '';
+        if (next) statuses[s.name] = next;
+        else delete statuses[s.name];
+        void saveSchoolStatus(statuses).then(render);
+      });
+      list.appendChild(row);
+    });
+  };
+  searchEl.addEventListener('input', render);
+  void loadSchoolStatus().then((st) => {
+    statuses = st;
+    render();
+  });
+}
+
+// ===================== 自动加行断点续填（ASP.NET 整页回发场景） =====================
+const RESUME_KEY = 'tui-pending-rows';
+/** 标记本标签页已一键填充过的页面 URL：保存回发刷新后据此自动补填被清空的字段 */
+const REFILL_KEY = 'tui-refill-url';
+
+interface RowJob {
+  type: 'achievements' | 'experiences' | 'family' | 'awards';
+  startIndex: number;
+  attempt: number;
+}
+
+function readRowJobs(): RowJob[] {
+  try {
+    const s = sessionStorage.getItem(RESUME_KEY);
+    return s ? (JSON.parse(s) as RowJob[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeRowJobs(jobs: RowJob[]): void {
+  try {
+    if (jobs.length) sessionStorage.setItem(RESUME_KEY, JSON.stringify(jobs));
+    else sessionStorage.removeItem(RESUME_KEY);
+  } catch {
+    // 忽略
+  }
+}
+
+// 行任务互斥：防止延时补填轮次与主流程并发重跑（重复点"添加"）；rerun 标记保证排队的新任务不丢失
+let rowJobsRerun = false;
+
+async function processRowJobs(profile: Profile): Promise<void> {
+  if (rowJobsRunning) {
+    rowJobsRerun = true; // 已有流程在跑：结束后立即自动再跑一轮（第一遍点击常因回发刷新丢上下文而漏行）
+    try {
+      const dbg = JSON.parse(sessionStorage.getItem('tui-rowjobs-debug') || '[]');
+      dbg.push({ at: Date.now(), type: 'queue', note: 'busy-rerun-flagged' });
+      sessionStorage.setItem('tui-rowjobs-debug', JSON.stringify(dbg.slice(-20)));
+    } catch {
+      // 忽略
+    }
+    return;
+  }
+  rowJobsRunning = true;
+  try {
+    await processRowJobsInner(profile);
+  } finally {
+    rowJobsRunning = false;
+    if (rowJobsRerun) {
+      rowJobsRerun = false;
+      void processRowJobs(profile);
+    }
+  }
+}
+
+async function processRowJobsInner(profile: Profile): Promise<void> {
+  const jobs = readRowJobs();
+  // 等网格稳定（回发后 datagrid 异步渲染，过早填充会被抹掉/找不到表）：
+  // 四类网格（经历/成果/奖励/家庭）都参与探测；表已出现且行数连续两次一致才开填；
+  // 页面还没有网格时最多等 3 秒（防止"页面未渲染完就点击填充"→ 前几次点了没反应）
+  let lastCount = -1;
+  let zeroRounds = 0;
+  for (let i = 0; i < 14; i++) {
+    const info =
+      findExperienceTable(document) ||
+      findAchievementTable(document) ||
+      findAwardTable(document) ||
+      findFamilyTable(document);
+    const count = info ? info.table.rows.length : 0;
+    if (count > 0 && count === lastCount) break;
+    lastCount = count;
+    if (count === 0) zeroRounds++;
+    if (zeroRounds >= 6) break; // 等 3 秒仍无网格：不再空等，交给填写函数按"本页无该表"处理
+    await sleep(500);
+  }
+  const entriesOf = (type: RowJob['type'], profile: Profile): unknown[] => {
+    switch (type) {
+      case 'achievements':
+        return profile.research.filter((r) => r.title && r.title.trim()).slice(0, 20);
+      case 'family':
+        return profile.familyMembers.filter((m) => m.name && m.name.trim()).slice(0, 10);
+      case 'awards':
+        return profile.awards.filter((a) => a.content && a.content.trim()).slice(0, 20);
+      default:
+        return profile.experiences.filter((e) => (e.org && e.org.trim()) || (e.start && e.start.trim())).slice(0, 20);
+    }
+  };
+  // 进度条：按 4 类行任务"已处理条目 / 总条目"汇总（任务状态随页面回发落盘，整页刷新后进度不断档）
+  const updateRowJobsProgress = (stage: string) => {
+    if (!isTop) return;
+    let sumDone = 0;
+    let sumTotal = 0;
+    for (const j of jobs) {
+      const len = entriesOf(j.type, profile).length;
+      sumTotal += len;
+      sumDone += Math.min(j.startIndex, len);
+    }
+    const ratio = sumTotal ? sumDone / sumTotal : 1;
+    setFillProgress(50 + Math.round(45 * ratio), stage, '逐行添加并自动保存；页面自动刷新属正常现象');
+  };
+  for (let round = 0; round < 15 && jobs.length; round++) {
+    const job = jobs[0];
+    if (job.attempt > 12) {
+      jobs.shift();
+      writeRowJobs(jobs);
+      if (isTop) setPanelStatus('自动加行多次未成功：请手动点一次「新增一行」后再次「一键填充」');
+      break;
+    }
+    const entries = entriesOf(job.type, profile);
+    if (job.startIndex >= entries.length) {
+      jobs.shift();
+      writeRowJobs(jobs);
+      updateRowJobsProgress('🔄 正在自动加行');
+      continue;
+    }
+    // 按任务自己的表测量行数（家庭/奖项/经历/成果各有各的网格）
+    const infoOf = (type: RowJob['type']) =>
+      type === 'family'
+        ? findFamilyTable(document)
+        : type === 'awards'
+          ? findAwardTable(document)
+          : type === 'achievements'
+            ? findAchievementTable(document)
+            : findExperienceTable(document);
+    const infoBefore = infoOf(job.type);
+    const rowsBefore = infoBefore ? infoBefore.table.rows.length : -1;
+    let clicked = false;
+    const beforeAdd = (i: number): number => {
+      clicked = true;
+      job.startIndex = i;
+      job.attempt += 1;
+      writeRowJobs(jobs); // 点击前落盘：整页刷新后新上下文据此恢复
+      updateRowJobsProgress('🔄 正在自动加行');
+      return job.attempt - 1; // 返回 0 起点击序号：clickPageAction 按序号轮换回发方式（0 标准回发 / 1 location 求值 / 2 原生点击）
+    };
+    let n = 0;
+    try {
+      n =
+        job.type === 'achievements'
+          ? await fillAchievements(profile, document, job.startIndex, beforeAdd)
+          : job.type === 'family'
+            ? await fillFamilyMembers(profile, document, job.startIndex, beforeAdd)
+            : job.type === 'awards'
+              ? await fillAwardRows(profile, document, job.startIndex, beforeAdd)
+              : await fillExperiences(profile, document, job.startIndex, beforeAdd);
+    } catch (e) {
+      n = 0;
+      try {
+        const dbg = JSON.parse(sessionStorage.getItem('tui-rowjobs-debug') || '[]');
+        dbg.push({ at: Date.now(), type: job.type, error: String((e as Error).message || e).slice(0, 60) });
+        sessionStorage.setItem('tui-rowjobs-debug', JSON.stringify(dbg.slice(-20)));
+      } catch {
+        // 忽略
+      }
+    }
+    const next = job.startIndex + n;
+    if (next >= entries.length) {
+      jobs.shift();
+      writeRowJobs(jobs);
+      continue;
+    }
+    // 无进展且没点过按钮（该类型表格在本页不存在，如北邮无"学术成果"表）→ 放弃本任务，继续下一个，
+    // 否则队列永远卡在第一个任务上（v1.12.2 重写时丢失的关键分支）
+    if (!clicked && n === 0) {
+      jobs.shift();
+      writeRowJobs(jobs);
+      try {
+        const dbg = JSON.parse(sessionStorage.getItem('tui-rowjobs-debug') || '[]');
+        dbg.push({ at: Date.now(), type: job.type, note: 'dropped-no-table-on-page' });
+        sessionStorage.setItem('tui-rowjobs-debug', JSON.stringify(dbg.slice(-20)));
+      } catch {
+        // 忽略
+      }
+      updateRowJobsProgress('🔄 正在自动加行');
+      continue;
+    }
+    const infoAfter = infoOf(job.type);
+    const rowsAfter = infoAfter ? infoAfter.table.rows.length : -1;
+    job.startIndex = next;
+    writeRowJobs(jobs);
+    updateRowJobsProgress('🔄 正在自动加行');
+    try {
+      const dbg = JSON.parse(sessionStorage.getItem('tui-rowjobs-debug') || '[]');
+      dbg.push({ at: Date.now(), type: job.type, startIndex: job.startIndex, n, clicked, rowsBefore, rowsAfter });
+      sessionStorage.setItem('tui-rowjobs-debug', JSON.stringify(dbg.slice(-20)));
+    } catch {
+      // 忽略
+    }
+    // 点过"添加/保存"后一律继续下一轮重试：原地加行成功→下一轮补下一条；
+    // 整页刷新→由载入恢复接管；加行未生效→下一轮再点。不再空等，避免任务搁浅。
+    continue;
+  }
+  if (isTop && !jobs.length) {
+    setPanelStatus('表格自动加行填写完成 ✅（绿色高亮，请核对后提交）');
+    finishFillBanner('表格自动加行填写完成', '绿色高亮，请核对后提交');
+  } else {
+    updateRowJobsProgress('🔄 正在自动加行');
+  }
+  snapshotFillState(document);
+  // 回发型页面：写完后定时补写（纯填充、不点按钮），防止网格重新渲染抹掉内容；网格异步渲染慢，末尾再补一轮
+  void (async () => {
+    await sleep(2500);
+    await fillExperiences(profile, document, 0, undefined, 0);
+    await fillFamilyMembers(profile, document, 0, undefined, 0);
+    await sleep(2500);
+    await fillAchievements(profile, document, 0, undefined, 0);
+    await fillAwardRows(profile, document, 0, undefined, 0);
+    await fillExperiences(profile, document, 0, undefined, 0);
+    snapshotFillState(document);
+    await sleep(6000);
+    await fillFamilyMembers(profile, document, 0, undefined, 0);
+    await fillAwardRows(profile, document, 0, undefined, 0);
+    snapshotFillState(document);
+  })();
+}
+
+const handlers: PanelHandlers = {
+  onAction: async (act: string) => {
+    if (act === 'fill') {
+      setPanelStatus('正在填充…');
+      try {
+        const resp = await chrome.runtime.sendMessage({ type: 'PANEL_FILL' });
+        if (resp && resp.ok) setPanelStatus(formatStats(resp.stats));
+        else setPanelStatus('填充失败：请确认已登录并停留在报名填表页');
+      } catch {
+        setPanelStatus('扩展后台未就绪：请刷新页面后重试');
+      }
+    } else if (act === 'schools') {
+      showSchoolDirectory();
+    } else if (act === 'check') {
+      showCheckReport();
+    } else if (act === 'importprofile') {
+      try {
+        const profile = await loadProfile();
+        const res = importFromPage(profile, document, activeRules);
+        await saveProfile(profile);
+        if (!res.summary.length) setPanelStatus('本页没有可提取的已填信息（可能没有匹配到档案字段，或本页表单不在顶层/同源框架内）');
+        else setPanelStatus(`已从本页（含同源子框架）提取 ${res.summary.length} 项到档案并保存（仅覆盖空项），请在档案编辑器中核对：\n${res.summary.slice(0, 14).join('；')}`);
+      } catch {
+        setPanelStatus('提取失败：请刷新页面后重试');
+      }
+    } else if (act === 'copymissing') {
+      if (!lastResult) {
+        setPanelStatus('请先点击「一键填充」');
+        return;
+      }
+      try {
+        const profile = await loadProfile();
+        const ok = await copyText(buildMissingText(lastResult, profile));
+        setPanelStatus(ok ? '漏填项已复制到剪贴板' : '复制失败，请手动处理');
+      } catch {
+        setPanelStatus('读取档案失败，请刷新页面重试');
+      }
+    } else if (act === 'copyreport') {
+      try {
+        const resp = await chrome.runtime.sendMessage({ type: 'PANEL_REPORT' });
+        if (!resp || !resp.ok) {
+          setPanelStatus('字段报告生成失败，请刷新页面重试');
+          return;
+        }
+        const full = {
+          url: location.href,
+          title: document.title,
+          adapter: matchAdapter(location.href, adapters) ? matchAdapter(location.href, adapters)!.id : null,
+          frames: resp.reports || [],
+        };
+        const ok = await copyText(JSON.stringify(full, null, 2));
+        setPanelStatus(ok ? '字段报告已复制（含所有子框架），可粘贴反馈给开发者' : '复制失败');
+      } catch {
+        setPanelStatus('字段报告生成失败，请刷新页面重试');
+      }
+    } else if (act === 'clear') {
+      clearHighlights(document);
+      closeCheckReport();
+      try {
+        sessionStorage.removeItem(REFILL_KEY); // 停止自动补填
+        sessionStorage.removeItem(PROGRESS_KEY);
+      } catch {
+        // 忽略
+      }
+      fillFinished = true;
+      if (fillBanner) {
+        fillBanner.remove();
+        fillBanner = null;
+      }
+      setPanelStatus('已清除高亮标记（并停止自动补填）');
+    }
+  },
+};
+
+if (isTop) {
+  initPanel(handlers);
+  try {
+    sessionStorage.removeItem('tui-pb-fired'); // 新文档已载入：上一文档的卸载信号作废，避免阻断本页自动加行
+    // 弹窗失败计数只在单页生命周期内有效：每次页面载入都给选择器全新机会（旧版本失败不得拖累新版本；成熟填表软件同款——失败防护不跨会话）
+    sessionStorage.removeItem('tui-pick-fails');
+    sessionStorage.removeItem('tui-pick-rounds');
+  } catch {
+    // 忽略
+  }
+  const url = location.href;
+  const fields = detect();
+  const matched = fields.filter((f) => f.rule).length;
+  if (matchAdapter(url, adapters)?.autoShow || AUTO_SHOW_PATTERN.test(url) || (fields.length >= 12 && matched >= 5)) {
+    showPanel();
+  }
+  // 恢复未完成的自动加行任务（页面整页刷新后继续），并补回可能被失败回发清空的基本字段
+  void (async () => {
+    if (readRowJobs().length) {
+      const profile = await loadProfile();
+      fillFinished = false;
+      setFillProgress(52, '🔄 继续未完成的自动加行', '页面刷新后自动续填…');
+      setPanelStatus('🔄 继续未完成的自动加行填写…');
+      fillAll(profile, document, activeRules); // 恢复被清空的常规字段
+      await processRowJobs(profile);
+    } else {
+      restoreProgressBanner(); // 回发刷新后恢复进度条显示（行任务刚起步或延时补填中）
+    }
+  })();
+  // 保存回发后恢复：本标签页内曾一键填充过（同 URL）→ 每次页面刷新后自动补填被清空的字段
+  const refillUrl = (() => {
+    try {
+      return sessionStorage.getItem(REFILL_KEY);
+    } catch {
+      return null;
+    }
+  })();
+  if (refillUrl && refillUrl === location.href) {
+    restoreProgressBanner(); // 保存回发刷新：先恢复进度条，随后补填轮次再更新
+    void loadProfile().then((profile) => {
+      setPanelStatus('🔄 检测到保存后页面刷新：正在恢复被清空的字段…');
+      scheduleRestorePasses(profile);
+    });
+  }
+  // 调试钩子：?tui-autotest=1 用本地档案自动填充；?tui-autotest=2 用随机测试档案填充（供自动化测试与商店截图）
+  if (/[?&]tui-autotest=[12]/.test(location.search)) {
+    const run = (profile: Profile) => {
+      const res = fillAll(profile, document, activeRules);
+      const marker = document.createElement('div');
+      marker.id = 'tui-autotest-result';
+      marker.textContent = JSON.stringify({ ...res.stats, extId: chrome.runtime.id || '' });
+      (document.body || document.documentElement).appendChild(marker);
+      void (async () => {
+        const a = await fillAchievements(profile, document);
+        const x = await fillExperiences(profile, document);
+        if (a > 0 || x > 0) marker.textContent = JSON.stringify({ ...res.stats, achievements: a, experiences: x, extId: chrome.runtime.id || '' });
+      })();
+    };
+    if (/[?&]tui-autotest=2/.test(location.search)) run(generateTestProfile());
+    else void loadProfile().then(run);
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any): boolean => {
+  switch (msg && msg.type) {
+    case 'FILL': {
+      // 日历等工具 iframe（几乎没有可匹配字段）不执行填充，避免覆盖主页面诊断数据
+      if (window !== window.top && detect().filter((f) => f.rule).length < 3) return false;
+      try {
+        // 先读一遍页面架构再操作（网格/加行按钮/弹窗结构），供适配逻辑与后续诊断
+        sessionStorage.setItem('tui-site-scan', JSON.stringify(scanSite(document)));
+        // 每次用户主动点「一键填充」都重置弹窗失败计数：上一轮失败不应让新一轮直接跳过（否则选择器失败 3 次后被永久跳过）
+        sessionStorage.removeItem('tui-pick-fails');
+        sessionStorage.removeItem('tui-pick-rounds');
+        // 清除过期回发信号：上一次导航的 pagehide 时间戳不得让本轮点击被"回发刚发生"误拦 8 秒
+        sessionStorage.removeItem('tui-pb-fired');
+      } catch {
+        // 忽略
+      }
+      loadProfile()
+        .then((profile) => {
+          if (isTop) {
+            fillFinished = false;
+            setFillProgress(2, '⚡ 正在扫描页面并填充', '请稍候…');
+          }
+          lastResult = fillAll(profile, document, activeRules);
+          if (isTop) {
+            const t = lastResult.stats.total || 1;
+            const done = lastResult.stats.filled + lastResult.stats.skipped + lastResult.stats.failed;
+            setFillProgress(8 + Math.round(30 * Math.min(1, done / t)), '⚡ 常规字段填充', `已填 ${lastResult.stats.filled} 项 / 共 ${lastResult.stats.total} 项`);
+          }
+          try {
+            sessionStorage.setItem(REFILL_KEY, location.href); // 之后每次保存回发刷新都自动补填
+          } catch {
+            // 忽略
+          }
+          scheduleCascadeRetries(lastResult.items);
+          const finalStats = lastResult.stats; // 闭包内引用快照，避免 TS 无法收窄 lastResult 非空
+          // 弹窗点选可能触发页面脚本清空联动字段（如选择本科学校后清空院系/专业）；且网格异步渲染较慢，多轮延时补填
+          [6500, 12000, 20000, 30000].forEach((delay, idx) =>
+            setTimeout(() => {
+              fillAll(profile, document, activeRules);
+              // 行任务若因异常/上下文丢失而死掉：延时轮次将其唤醒重跑（互斥保证不并发）
+              if (readRowJobs().length && !rowJobsRunning) {
+                void processRowJobs(profile);
+              }
+              if (isTop) {
+                if (pickersDepth > 0) setFillProgress(98, '🔁 自动选择弹窗仍在进行', '请稍候，不要手动关闭弹窗…');
+                else if (idx < 3) setFillProgress(96 + idx, '🔁 自动补填进行中…', '等待页面渲染，防止字段被脚本清空');
+                else if (!readRowJobs().length) finishFillBanner(`填充完成：已填 ${finalStats.filled} 项`, '请核对绿色高亮后保存');
+                else setFillProgress(99, '🔁 自动加行仍在进行', '表格行尚未全部添加，稍后自动继续');
+              }
+            }, delay),
+          );
+          // 学术成果表 / 学习工作经历表 / 家庭成员 / 奖励情况：自动"新增一行"并逐条填写（含整页回发后的断点续填）
+          void (async () => {
+            writeRowJobs([
+              { type: 'achievements', startIndex: 0, attempt: 0 },
+              { type: 'experiences', startIndex: 0, attempt: 0 },
+              { type: 'family', startIndex: 0, attempt: 0 },
+              { type: 'awards', startIndex: 0, attempt: 0 },
+            ]);
+            await processRowJobs(profile);
+          })();
+          // 兜底第二遍：首遍点击常因整页回发刷新丢上下文而漏行（实测"再点一次一键填充"即可补全）→ 35 秒后自动等价重跑一次
+          setTimeout(() => {
+            if (rowJobsRunning) return; // 首遍还在推进则不打扰；结束后 rerun 标记也会接力
+            try {
+              const dbg = JSON.parse(sessionStorage.getItem('tui-rowjobs-debug') || '[]');
+              dbg.push({ at: Date.now(), type: 'queue', note: 'second-pass' });
+              sessionStorage.setItem('tui-rowjobs-debug', JSON.stringify(dbg.slice(-20)));
+            } catch {
+              // 忽略
+            }
+            writeRowJobs([
+              { type: 'achievements', startIndex: 0, attempt: 0 },
+              { type: 'experiences', startIndex: 0, attempt: 0 },
+              { type: 'family', startIndex: 0, attempt: 0 },
+              { type: 'awards', startIndex: 0, attempt: 0 },
+            ]);
+            void processRowJobs(profile);
+          }, 35000);
+          try {
+            // DOM 元素无法跨消息序列化，剥离后再上报后台聚合
+            const plainItems = lastResult.items.map(({ el, ...rest }) => rest);
+            void chrome.runtime.sendMessage({ type: 'FILL_RESULT', stats: lastResult.stats, items: plainItems });
+          } catch {
+            // 后台不存在时忽略
+          }
+          sendResponse({ ok: true, stats: lastResult.stats });
+        })
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+    }
+    case 'SHOW_PANEL':
+      if (isTop) showPanel();
+      sendResponse({ ok: isTop });
+      return false;
+    case 'REPORT':
+      try {
+        void chrome.runtime.sendMessage({ type: 'REPORT_RESULT', report: buildReport() });
+        sendResponse({ ok: true });
+      } catch {
+        sendResponse({ ok: false });
+      }
+      return false;
+    case 'FILL_DONE':
+      if (isTop) {
+        lastResult = { stats: msg.stats, items: msg.items || [] };
+        setPanelStatus(formatStats(msg.stats));
+      }
+      sendResponse({ ok: true });
+      return false;
+    default:
+      return false;
+  }
+});

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="预推免填表助手：面向 Edge 和 Chrome 的本地离线报名表辅助填写扩展。">
+  <title>预推免填表助手 · 下载与使用说明</title>
+  <style>
+    :root{--blue:#2563eb;--blue2:#1d4ed8;--ink:#172033;--muted:#667085;--line:#e6eaf0;--soft:#f5f8ff;--green:#087a4b}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#f7f9fc;color:var(--ink);font:16px/1.7 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+    a{color:var(--blue)}.wrap{width:min(920px,calc(100% - 32px));margin:auto}.hero{padding:72px 0 54px;background:linear-gradient(145deg,#edf4ff,#fff 56%,#eefbf6)}
+    .pill{display:inline-block;padding:5px 12px;border:1px solid #bfd3ff;border-radius:999px;background:#fff;color:var(--blue2);font-size:13px;font-weight:700}
+    h1{margin:18px 0 12px;font-size:clamp(34px,7vw,58px);line-height:1.12;letter-spacing:-1.5px}.lead{max-width:700px;margin:0;color:var(--muted);font-size:18px}
+    .actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}.btn{display:inline-flex;align-items:center;justify-content:center;padding:13px 20px;border-radius:10px;text-decoration:none;font-weight:750}
+    .primary{background:var(--blue);color:#fff;box-shadow:0 8px 22px #2563eb35}.primary:hover{background:var(--blue2)}.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}
+    .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:34px}.stat{padding:20px;border:1px solid var(--line);border-radius:14px;background:#ffffffd9}.num{font-size:30px;font-weight:800}.label{color:var(--muted);font-size:14px}
+    main{padding:42px 0 72px}.card{margin:0 0 20px;padding:26px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 6px 24px #152b5b0b}h2{margin:0 0 18px;font-size:25px}h3{margin:22px 0 7px;font-size:18px}
+    ol,ul{padding-left:24px}code{padding:2px 6px;border-radius:5px;background:#eef2f7;font-family:Consolas,monospace}.notice{padding:15px 17px;border-left:4px solid var(--green);border-radius:8px;background:#eefaf5;color:#075d3b}.warn{border-left-color:#d97706;background:#fff8e8;color:#7c4700}
+    .meta{color:var(--muted);font-size:14px}.footer{padding:28px 0;border-top:1px solid var(--line);color:var(--muted);text-align:center;font-size:14px}
+    @media(max-width:560px){.hero{padding-top:48px}.stats{grid-template-columns:1fr}.btn{width:100%}.card{padding:20px}}
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <span class="pill">Edge / Chrome · Manifest V3</span>
+      <h1>预推免填表助手</h1>
+      <p class="lead">辅助填写高校预推免、夏令营报名表。个人档案只保存在本机浏览器中，不自动提交，不处理验证码与登录密码。</p>
+      <div class="actions">
+        <a class="btn primary" id="downloadButton" href="https://github.com/XIA-2005/tuimian-autofill/releases/latest/download/tuimian-autofill-v1.15.2.zip">⬇ 下载 v1.15.2 安装包</a>
+        <a class="btn secondary" href="https://github.com/XIA-2005/tuimian-autofill">查看 GitHub 源码</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="num" id="downloadCount">—</div><div class="label">GitHub Release 真实下载次数</div></div>
+        <div class="stat"><div class="num" id="releaseVersion">v1.15.2</div><div class="label">当前公开版本</div></div>
+      </div>
+      <p class="meta" id="statsStatus">下载次数来自 GitHub 官方接口，正在读取……</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card">
+      <h2>安装教程</h2>
+      <h3>1. 下载并解压</h3>
+      <ol>
+        <li>点击上方“下载安装包”。</li>
+        <li>将 ZIP 完整解压到一个不会经常移动的位置。</li>
+        <li>解压后确认其中存在 <code>dist</code> 文件夹。</li>
+      </ol>
+      <h3>2. Edge 浏览器</h3>
+      <ol>
+        <li>在地址栏打开 <code>edge://extensions</code>。</li>
+        <li>打开页面左侧的“开发人员模式”。</li>
+        <li>点击“加载解压缩的扩展”，选择刚才解压出的 <code>dist</code> 文件夹。</li>
+        <li>在工具栏扩展菜单中固定“预推免填表助手”。</li>
+      </ol>
+      <h3>3. Chrome 浏览器</h3>
+      <ol>
+        <li>在地址栏打开 <code>chrome://extensions</code>。</li>
+        <li>打开右上角“开发者模式”。</li>
+        <li>点击“加载已解压的扩展程序”，选择 <code>dist</code> 文件夹。</li>
+      </ol>
+      <div class="notice warn">更新版本前，请先在档案编辑器中导出 JSON 备份。安装新版本后可重新导入。</div>
+    </section>
+
+    <section class="card">
+      <h2>使用方法</h2>
+      <ol>
+        <li>点击扩展图标，打开档案编辑器并录入个人材料。</li>
+        <li>人工登录目标学校报名系统，并人工完成验证码或短信验证。</li>
+        <li>进入报名表页面，点击右侧悬浮面板中的“一键填充”。</li>
+        <li>检查红色、黄色提示项，人工补全并核对。</li>
+        <li>确认所有内容正确后，由你本人点击网站的提交按钮。</li>
+      </ol>
+      <div class="notice">扩展不会自动提交报名表。绿色代表已填，红色代表需要人工处理，黄色代表档案中没有对应内容。</div>
+    </section>
+
+    <section class="card">
+      <h2>隐私与安全</h2>
+      <ul>
+        <li>个人档案保存于浏览器本地 <code>chrome.storage.local</code>。</li>
+        <li>不会读取或填写密码、验证码、短信验证字段。</li>
+        <li>不会上传个人档案；网页也没有接入第三方访客跟踪代码。</li>
+        <li>下载次数是 GitHub Release 文件的公开累计下载次数，不等同于实际安装人数。</li>
+      </ul>
+      <p><a href="https://github.com/XIA-2005/tuimian-autofill/blob/main/PRIVACY.md">查看完整隐私说明</a></p>
+    </section>
+
+    <section class="card">
+      <h2>常见问题</h2>
+      <h3>扩展面板没有出现？</h3>
+      <p>浏览器内置页面（如 <code>edge://</code>）不允许扩展注入内容。请在普通网页中点击扩展图标，再选择“在当前页显示悬浮面板”。</p>
+      <h3>部分字段没有自动填写？</h3>
+      <p>先检查档案中是否有对应内容。下拉框选项与档案不一致时，工具会保守跳过并标红，请人工选择。</p>
+      <h3>如何反馈不支持的学校页面？</h3>
+      <p>使用悬浮面板的“复制字段报告”功能，然后到 <a href="https://github.com/XIA-2005/tuimian-autofill/issues">GitHub Issues</a> 提交。字段报告不包含已填写的个人信息。</p>
+    </section>
+  </main>
+
+  <footer class="footer"><div class="wrap">预推免填表助手 · 免费公开发布 · 请在提交前人工核对所有内容</div></footer>
+  <script>
+    /**
+     * 功能说明：读取 GitHub 最新 Release，并展示公开版本和安装包真实下载次数。
+     * 统计原理：download_count 由 GitHub 对 Release Asset 的下载请求累计生成。
+     */
+    async function loadReleaseStats() {
+      const statusNode = document.getElementById('statsStatus');
+      try {
+        const response = await fetch('https://api.github.com/repos/XIA-2005/tuimian-autofill/releases/latest', {
+          headers: { Accept: 'application/vnd.github+json' }
+        });
+        if (!response.ok) throw new Error('GitHub API ' + response.status);
+        const release = await response.json();
+        const asset = release.assets.find(function (item) { return item.name.toLowerCase().endsWith('.zip'); });
+        document.getElementById('releaseVersion').textContent = release.tag_name || 'v1.15.2';
+        if (asset) {
+          document.getElementById('downloadCount').textContent = new Intl.NumberFormat('zh-CN').format(asset.download_count || 0);
+          document.getElementById('downloadButton').href = asset.browser_download_url;
+        }
+        statusNode.textContent = '数据来自 GitHub 官方 Releases API。';
+      } catch (error) {
+        statusNode.textContent = '暂时无法读取下载次数，不影响下载安装包。';
+      }
+    }
+    loadReleaseStats();
+  </script>
+</body>
+</html>

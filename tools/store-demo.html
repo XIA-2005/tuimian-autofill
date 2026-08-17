@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>推免生预报名系统（演示页面）</title>
+<style>
+  body { font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif; background: #f1f5f9; margin: 0; }
+  .wrap { max-width: 760px; margin: 24px auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 28px 32px; }
+  h1 { font-size: 20px; color: #0f172a; margin: 0 0 4px; }
+  .sub { color: #64748b; font-size: 13px; margin-bottom: 18px; }
+  .row { display: flex; gap: 12px; margin-bottom: 12px; }
+  .field { flex: 1; }
+  .field label { display: block; font-size: 13px; color: #334155; margin-bottom: 4px; }
+  .field input, .field select, .field textarea { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 7px; font-size: 13px; font-family: inherit; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 13px; }
+  th, td { border: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; }
+  th { background: #f8fafc; color: #475569; font-weight: 600; }
+  .btn { padding: 6px 12px; border: 1px solid #93c5fd; background: #eff6ff; color: #1d4ed8; border-radius: 7px; cursor: pointer; font-size: 12px; }
+  .section { font-size: 14px; font-weight: 600; color: #0f172a; margin: 18px 0 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>推免生预报名</h1>
+  <div class="sub">演示页面：点击右侧悬浮面板「⚡ 一键填充」体验自动填写</div>
+
+  <div class="row">
+    <div class="field"><label>姓名*</label><input name="xm"></div>
+    <div class="field"><label>性别*</label><select name="xb"><option value="">请选择</option><option>男</option><option>女</option></select></div>
+    <div class="field"><label>出生年月*</label><input name="csny" placeholder="如 2003-05"></div>
+  </div>
+  <div class="row">
+    <div class="field"><label>身份证号*</label><input name="sfzh"></div>
+    <div class="field"><label>民族*</label><select name="mz"><option value="">请选择</option><option>汉族</option><option>满族</option><option>回族</option><option>壮族</option><option>蒙古族</option></select></div>
+    <div class="field"><label>政治面貌*</label><select name="zzmm"><option value="">请选择</option><option>中共党员</option><option>中共预备党员</option><option>共青团员</option><option>群众</option></select></div>
+  </div>
+  <div class="row">
+    <div class="field"><label>籍贯</label><input name="jg"></div>
+    <div class="field"><label>通讯地址*</label><input name="txdz"></div>
+    <div class="field"><label>邮政编码</label><input name="yzbm"></div>
+  </div>
+  <div class="row">
+    <div class="field"><label>手机号码*</label><input name="sjh"></div>
+    <div class="field"><label>电子邮箱*</label><input name="email"></div>
+    <div class="field"><label>英语四级成绩</label><input name="cet4"></div>
+  </div>
+  <div class="row">
+    <div class="field"><label>毕业学校*</label><input name="byyx"></div>
+    <div class="field"><label>所在学院</label><input name="xy"></div>
+    <div class="field"><label>所学专业*</label><input name="zy"></div>
+  </div>
+  <div class="row">
+    <div class="field"><label>专业排名*</label><input name="pm"></div>
+    <div class="field"><label>专业总人数</label><input name="pmrs"></div>
+    <div class="field"><label>是否服从专业调剂</label><select name="fctj"><option value="">请选择</option><option>是</option><option>否</option></select></div>
+  </div>
+  <div class="field"><label>获奖情况（自动汇总自档案）</label><textarea name="hjqk" rows="3"></textarea></div>
+
+  <div class="section">家庭主要成员</div>
+  <table>
+    <thead><tr><th>成员姓名</th><th>与本人关系</th><th>工作单位及职务</th><th>联系电话</th><th>政治面貌</th></tr></thead>
+    <tbody>
+      <tr><td><input name="f0x"></td><td><input name="f0g"></td><td><input name="f0d"></td><td><input name="f0p"></td><td><select name="f0z"><option>请选择</option><option>群众</option><option>中共党员</option></select></td></tr>
+      <tr><td><input name="f1x"></td><td><input name="f1g"></td><td><input name="f1d"></td><td><input name="f1p"></td><td><select name="f1z"><option>请选择</option><option>群众</option><option>中共党员</option></select></td></tr>
+    </tbody>
+  </table>
+
+  <div class="section">学术成果</div>
+  <table id="acad">
+    <thead><tr><th>取得时间</th><th>发表刊物；出版单位</th><th>成果名称</th><th>作者排名</th><th>操作</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><input name="a0t"></td><td><input name="a0k"></td><td><input name="a0m"></td><td><input name="a0p"></td>
+        <td><button type="button" class="btn" onclick="demoAdd(this)">新增一行</button></td>
+      </tr>
+    </tbody>
+  </table>
+  <script>
+    function demoAdd(btn) {
+      var t = btn.closest('table');
+      var r = t.querySelector('tbody').insertRow();
+      for (var i = 0; i < 4; i++) { var td = r.insertCell(); td.innerHTML = '<input>'; }
+      var op = r.insertCell(); op.innerHTML = '<button type="button" class="btn" onclick="demoAdd(this)">新增一行</button>';
+    }
+  </script>
+
+  <div class="row">
+    <div class="field"><label>验证码*（人工填写）</label><input name="yzm"></div>
+    <div class="field"><label>登录密码（人工填写）</label><input type="password" name="pwd"></div>
+  </div>
+  <div class="sub">数据仅在本机处理；验证码与最终提交需人工完成。</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>档案编辑器 - 预推免填表助手</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>📝 个人档案</h1>
+      <p class="sub">所有数据仅保存在本机浏览器中，不会上传。保存后即可在报名页面一键填充。</p>
+    </div>
+    <div class="actions">
+      <button id="saveBtn" class="primary">💾 保存档案</button>
+      <button id="exportBtn">导出 JSON 备份</button>
+      <button id="importBtn">导入 JSON</button>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+      <button id="genBtn">🎲 生成测试数据</button>
+      <button id="resetBtn" class="danger">清空重置</button>
+    </div>
+  </header>
+  <div id="toast" class="toast"></div>
+  <div id="missingBanner" class="missing-banner" hidden></div>
+
+  <main>
+    <section class="card">
+      <h2>基本信息</h2>
+      <div class="grid">
+        <label>姓名<input data-field="basic.name" placeholder="如：张三"></label>
+        <label>姓名拼音<input data-field="basic.namePinyin" placeholder="如：Zhang San"></label>
+        <label>性别
+          <select data-field="basic.gender">
+            <option value="">未选择</option><option>男</option><option>女</option>
+          </select>
+        </label>
+        <label>证件类型<input data-field="basic.idType" placeholder="如：居民身份证"></label>
+        <label>身份证号<input data-field="basic.idCard" placeholder="18 位"></label>
+        <label>出生日期<input data-field="basic.birthday" placeholder="如：2003-05-12"></label>
+        <label>民族<input data-field="basic.nation" placeholder="如：汉族"></label>
+        <label>政治面貌
+          <select data-field="basic.politicalStatus">
+            <option value="">未选择</option>
+            <option>中共党员</option><option>中共预备党员</option><option>共青团员</option>
+            <option>群众</option><option>民主党派</option>
+          </select>
+        </label>
+        <label>籍贯<input data-field="basic.hometown" placeholder="如：辽宁省大连市"></label>
+        <label>出生地<input data-field="basic.birthPlace" placeholder="如：辽宁省大连市"></label>
+        <label>户口所在地<input data-field="basic.hukou" placeholder="如：辽宁省大连市"></label>
+        <label>国籍<input data-field="basic.country" placeholder="如：中国"></label>
+        <label>通讯地址<input data-field="basic.address" placeholder="用于邮寄材料等"></label>
+        <label>邮政编码<input data-field="basic.postalCode"></label>
+        <label>手机号码<input data-field="basic.phone"></label>
+        <label>固定电话<input data-field="basic.landline" placeholder="如：0411-84708114"></label>
+        <label>紧急联系人姓名<input data-field="basic.emergencyName" placeholder="如：父亲/母亲姓名"></label>
+        <label>紧急联系人电话<input data-field="basic.emergencyPhone"></label>
+        <label>电子邮箱<input data-field="basic.email"></label>
+        <label>QQ<input data-field="basic.qq"></label>
+        <label>微信<input data-field="basic.wechat"></label>
+        <label>婚姻状况
+          <select data-field="basic.maritalStatus">
+            <option value="">未选择</option><option>未婚</option><option>已婚</option>
+          </select>
+        </label>
+        <label>健康状况<input data-field="basic.health" placeholder="如：良好"></label>
+        <label>预计能否获得推免资格
+          <select data-field="basic.tuimianQual">
+            <option value="">未选择</option><option>是</option><option>否</option>
+          </select>
+        </label>
+        <label>现役军人码
+          <select data-field="basic.militaryStatus">
+            <option value="">未选择</option><option>非军人</option><option>军队在职干部</option><option>军校学员</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>教育背景</h2>
+      <div class="grid">
+        <label>本科学校<input data-field="education.university" placeholder="学校全称"></label>
+        <label>院校所在省市<input data-field="education.province" placeholder="如：辽宁（留空则按学校名自动识别）"></label>
+        <label>所在学院<input data-field="education.college"></label>
+        <label>专业<input data-field="education.major"></label>
+        <label>班级<input data-field="education.className"></label>
+        <label>学号<input data-field="education.studentId"></label>
+        <label>入学时间<input data-field="education.startDate" placeholder="如：2021-09"></label>
+        <label>毕业时间<input data-field="education.endDate" placeholder="如：2025-06"></label>
+        <label>GPA / 绩点<input data-field="education.gpa" placeholder="如：3.8/4.0"></label>
+        <label>平均成绩 / 加权<input data-field="education.score" placeholder="如：88.5"></label>
+        <label>专业排名<input data-field="education.rank" placeholder="如：5"></label>
+        <label>综合排名<input data-field="education.comprehensiveRank" placeholder="如：6"></label>
+        <label>年级排名<input data-field="education.gradeRank" placeholder="如：10"></label>
+        <label>专业总人数<input data-field="education.rankBase" placeholder="如：120"></label>
+        <label>排名单位<input data-field="education.rankUnit" placeholder="如：专业"></label>
+        <label>所学语种<input data-field="education.foreignLang" placeholder="如：英语"></label>
+        <label>英语四级（CET-4）<input data-field="education.cet4" placeholder="如：457"></label>
+        <label>四级取得时间<input data-field="education.cet4Date" placeholder="如：2025-06"></label>
+        <label>英语六级（CET-6）<input data-field="education.cet6" placeholder="如：510"></label>
+        <label>六级取得时间<input data-field="education.cet6Date" placeholder="如：2025-12"></label>
+        <label>其他语言成绩<input data-field="education.otherExams" placeholder="如：雅思 7.0 / GRE 325"></label>
+        <label>是否服从专业调剂
+          <select data-field="education.obeyAdjust">
+            <option value="">未选择</option><option>是</option><option>否</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>获奖情况</h2>
+      <p class="hint">页面上的"获奖情况"长文本域会按以下条目自动汇总填入，提交前请人工核对。</p>
+      <div id="list-awards" class="list"></div>
+      <button data-add="awards" class="add">＋ 添加一项获奖</button>
+    </section>
+
+    <section class="card">
+      <h2>科研 / 竞赛经历</h2>
+      <p class="hint">页面上的"科研/竞赛经历"长文本域会按以下条目自动汇总填入，提交前请人工核对。</p>
+      <div id="list-research" class="list"></div>
+      <button data-add="research" class="add">＋ 添加一项经历</button>
+    </section>
+
+    <section class="card">
+      <h2>学习 / 工作经历（从高中开始）</h2>
+      <p class="hint">用于南理工等系统"学习或工作经历"表格（起止时间/单位/职务）自动填写。</p>
+      <div id="list-experiences" class="list"></div>
+      <button data-add="experiences" class="add">＋ 添加一段经历</button>
+    </section>
+
+    <section class="card">
+      <h2>社会实践 / 学生工作</h2>
+      <div id="list-socialPractice" class="list"></div>
+      <button data-add="socialPractice" class="add">＋ 添加一项</button>
+    </section>
+
+    <section class="card">
+      <h2>家庭主要成员</h2>
+      <div id="list-familyMembers" class="list"></div>
+      <button data-add="familyMembers" class="add">＋ 添加一位成员</button>
+    </section>
+
+    <section class="card">
+      <h2>自我陈述（建议多版本）</h2>
+      <p class="hint">不同学校字数要求不同，建议准备多个版本（如：通用 500 字、800 字）。填表时请手动粘贴对应版本；面板「复制漏填项」会附上各版本字数速查。</p>
+      <div id="list-selfStatements" class="list"></div>
+      <button data-add="selfStatements" class="add">＋ 添加一个版本</button>
+    </section>
+
+    <section class="card">
+      <h2>报考意向（可选）</h2>
+      <p class="hint">仅作备忘，填表时请按页面人工选择。</p>
+      <div id="list-applications" class="list"></div>
+      <button data-add="applications" class="add">＋ 添加一个意向</button>
+    </section>
+
+    <section class="card">
+      <h2>网络与规则更新（默认关闭）</h2>
+      <p class="hint">开启后，仅在点击「立即更新」或扩展启动时，从下方地址下载<b>规则文件</b>（平台适配器与字段规则），用于覆盖更多学校系统。<b>不包含、不上传任何个人数据</b>。保持关闭 = 扩展完全离线。</p>
+      <div class="grid">
+        <label>启用规则更新
+          <select id="remoteEnabled">
+            <option value="">关闭（默认）</option><option value="1">开启</option>
+          </select>
+        </label>
+        <label>规则文件地址<input id="remoteUrl" placeholder="https://…/rules.json"></label>
+      </div>
+      <button id="syncRulesBtn" class="add">🔄 立即更新规则</button>
+      <p class="hint" id="syncRulesStatus"></p>
+    </section>
+  </main>
+  <script src="options/options.js"></script>
+</body>
+</html>

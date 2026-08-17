@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>推免生预报名（本地测试表单）</title>
+</head>
+<body>
+<h1>推免生预报名表（测试）</h1>
+<form>
+  <table border="1">
+    <tr>
+      <td>姓名*</td><td><input type="text" name="xm"></td>
+      <td>姓名拼音</td><td><input type="text" name="namepinyin"></td>
+    </tr>
+    <tr>
+      <td>性别*</td>
+      <td>
+        <select name="xb">
+          <option value="">请选择</option>
+          <option value="1">男</option>
+          <option value="2">女</option>
+        </select>
+      </td>
+      <td>证件类型*</td>
+      <td>
+        <select name="zjlx"><option value="">请选择</option><option>居民身份证</option><option>护照</option></select>
+      </td>
+    </tr>
+    <tr>
+      <td>身份证号*</td><td><input type="text" name="sfzh"></td>
+      <td>出生日期*</td><td><input type="text" placeholder="格式：YYYYMMDD" name="csrq"></td>
+    </tr>
+    <tr>
+      <td>民族*</td>
+      <td>
+        <select name="mz"><option value="">请选择</option><option>汉族</option><option>满族</option></select>
+      </td>
+      <td>政治面貌*</td>
+      <td>
+        <select name="zzmm"><option value="">请选择</option><option>中共党员</option><option>中共预备党员</option><option>共青团员</option><option>群众</option></select>
+      </td>
+    </tr>
+    <tr>
+      <td>籍贯</td><td><input name="jg"></td>
+      <td>国籍</td>
+      <td>
+        <select name="gj"><option value="">请选择</option><option>中国</option><option>其他</option></select>
+      </td>
+    </tr>
+    <tr>
+      <td>通讯地址*</td><td><input name="txdz"></td>
+      <td>通信地址邮政编码*</td><td><input name="yzbm2"></td>
+    </tr>
+    <tr>
+      <td>籍贯地</td><td><input name="jgd"></td>
+      <td>出生地</td><td><input name="csd"></td>
+    </tr>
+    <tr>
+      <td>现役军人码</td>
+      <td><select name="xyjrm"><option value="">----请选择----</option><option>非军人</option><option>军队在职干部</option><option>军校学员</option></select></td>
+      <td>政治面貌（全称）</td>
+      <td><select name="zzmmq"><option value="">----请选择----</option><option>中国共产主义青年团团员</option><option>中国共产党党员</option><option>群众</option></select></td>
+    </tr>
+    <tr>
+      <td>手机号码*</td><td><input name="sjh"></td>
+      <td>固定电话</td><td><input name="gddh"></td>
+    </tr>
+    <tr>
+      <td>紧急联系人姓名</td><td><input name="jxlxr"></td>
+      <td>紧急联系人电话</td><td><input name="jxlxrdh"></td>
+    </tr>
+    <tr>
+      <td>电子邮箱*</td><td><input name="email"></td>
+      <td>QQ</td><td><input name="qq"></td>
+    </tr>
+    <tr>
+      <td>毕业学校*</td><td><input name="byyx"></td>
+      <td>所学专业*</td><td><input name="zy"></td>
+    </tr>
+    <tr>
+      <td>毕业学校（弹窗选择）*</td>
+      <td><input readonly name="byxx2"><button type="button" class="select-btn">选择</button></td>
+      <td>所学专业（弹窗选择）</td>
+      <td><input readonly name="zy2"><a href="javascript:void(0)" class="picker-link">选择</a></td>
+    </tr>
+    <tr>
+      <td>所在学校（禁用+选择按钮）</td>
+      <td><input disabled name="szxx2"><button type="button" class="select-btn">选择</button></td>
+      <td>所在学校（隐藏值+选择按钮）</td>
+      <td><input type="hidden" name="szxx3"><button type="button" class="select-btn">选择</button></td>
+    </tr>
+    <tr>
+      <td>所在学校*</td>
+      <td><input name="bkbydwShow"><button type="button" class="select-btn">选择</button></td>
+      <td>所在专业*</td>
+      <td><input name="bkbyzyShow"><button type="button" class="select-btn">选择</button></td>
+    </tr>
+    <tr>
+      <td>入学年月（只读日期）</td><td><input readonly name="rxny"></td>
+      <td>预计毕业年月（只读日期）</td><td><input readonly name="byny"></td>
+    </tr>
+    <tr>
+      <td>所在学院</td><td><input name="yx"></td>
+      <td>学号*</td><td><input name="xh"></td>
+    </tr>
+    <tr>
+      <td>所学语种</td>
+      <td>
+        <select name="sxyz"><option value="">请选择</option><option>英语</option><option>日语</option></select>
+      </td>
+      <td>平均成绩</td><td><input name="pjcj"></td>
+    </tr>
+    <tr>
+      <td>CET-4成绩</td><td><input name="cet4"></td>
+      <td>CET-6成绩</td><td><input name="cet6"></td>
+    </tr>
+    <tr>
+      <td>专业排名*</td><td><input name="pm"></td>
+      <td>专业人数</td><td><input name="pmrs"></td>
+    </tr>
+    <tr>
+      <td>综合排名</td><td><input name="zhpm"></td>
+      <td>年级排名</td><td><input name="njpm"></td>
+    </tr>
+    <tr>
+      <td>排名单位</td>
+      <td>
+        <select name="pmdw"><option value="">请选择</option><option>专业</option><option>年级</option></select>
+      </td>
+      <td>预计能否获得推免资格</td>
+      <td>
+        <select name="tmzg"><option value="">请选择</option><option>是</option><option>否</option></select>
+      </td>
+    </tr>
+    <tr>
+      <td>是否服从专业调剂</td>
+      <td>
+        <select name="fctj"><option value="">请选择</option><option>是</option><option>否</option></select>
+      </td>
+      <td>申请学院</td>
+      <td><select name="sqxy"><option value="">请选择</option></select></td>
+    </tr>
+    <tr>
+      <td>申请专业</td><td><input name="sqzy"></td>
+      <td>政治面貌（联动下拉）</td>
+      <td><select name="zzmm2"><option value="">请选择</option></select></td>
+    </tr>
+    <tr>
+      <td>验证码*</td><td><input name="yzm"></td>
+      <td>登录密码</td><td><input type="password" name="pwd"></td>
+    </tr>
+  </table>
+
+  <h2>长文本域（应自动汇总合成）</h2>
+  <div class="form-item"><label>获奖情况</label><textarea name="hjqk" rows="4"></textarea></div>
+  <div class="form-item"><label>科研经历</label><textarea name="kyjl" rows="4"></textarea></div>
+  <div class="form-item"><label>社会实践</label><textarea name="shsj" rows="4"></textarea></div>
+
+  <h2>家长 / 联系信息（不应误填到本人字段）</h2>
+  <div class="form-item"><label>家长姓名</label><input name="jzxm"></div>
+  <div class="form-item"><label>联系人姓名</label><input name="lxr"></div>
+  <div class="form-item"><label>联系电话</label><input name="lxdh"></div>
+  <div class="form-item"><label>父亲姓名</label><input name="fq"></div>
+  <div class="form-item"><label>母亲姓名</label><input name="mq"></div>
+
+  <h2>健康状况（单选组）</h2>
+  <div class="form-item">
+    <span>健康状况</span>
+    <label><input type="radio" name="jk" value="1">良好</label>
+    <label><input type="radio" name="jk" value="2">一般</label>
+  </div>
+
+  <h2>自我陈述（应人工粘贴，不自动填）</h2>
+  <label>自我陈述<textarea name="zwcs" rows="5"></textarea></label>
+
+  <h2>家庭主要成员（河海式：列头定义含义的裸表格，每个成员一个表）</h2>
+  <table border="1">
+    <thead>
+      <tr><th>成员姓名</th><th>与本人关系</th><th>工作单位及职务</th><th>联系电话</th><th>政治面貌</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><input name="f0x"></td><td><input name="f0g"></td><td><input name="f0d"></td><td><input name="f0p"></td>
+        <td><select name="f0z"><option>请选择</option><option>群众</option><option>中共党员</option></select></td>
+      </tr>
+    </tbody>
+  </table>
+  <table border="1">
+    <thead>
+      <tr><th>成员姓名</th><th>与本人关系</th><th>工作单位及职务</th><th>联系电话</th><th>政治面貌</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><input name="f1x"></td><td><input name="f1g"></td><td><input name="f1d"></td><td><input name="f1p"></td>
+        <td><select name="f1z"><option>请选择</option><option>群众</option><option>中共党员</option></select></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>计算机或外语水平（河海式：表头在首行）</h2>
+  <table border="1">
+    <tbody>
+      <tr>
+        <th>计算机或外语水平名称</th><th>成绩</th><th>取得成绩时间（日期格式：2019-11-11）</th><th>备注</th><th>操作</th>
+      </tr>
+      <tr>
+        <td><input name="lbmc" id="lbmc0"></td><td><input name="cj" id="cj0"></td><td><input name="sj" id="sj0"></td><td><input id="bz0"></td><td></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>学术成果（南航式：表头在首行）</h2>
+  <table border="1">
+    <tbody>
+      <tr><th>时间（日期格式：2018-11）</th><th>发表刊物或出版社</th><th>标题</th><th>作者排名</th></tr>
+      <tr>
+        <td><input name="sj3" value="2024-03"></td>
+        <td><input name="kw3" value="某学术期刊"></td>
+        <td><input name="bt3" value="基于XX的研究"></td>
+        <td><input name="pm3" value="2/4"></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>奖励情况（本科期间）（南航式：标题表 + 时间/地点/内容数据表）</h2>
+  <table border="1"><tbody>
+    <tr><th>何时何地何原因受过何种奖励</th></tr>
+  </tbody></table>
+  <table border="1"><tbody>
+    <tr><th>时间（日期格式：2018-11）</th><th>地点</th><th>内容</th></tr>
+    <tr>
+      <td><input name="jlsj" value="2023-09"></td>
+      <td><input name="jldd" value="南京"></td>
+      <td><input name="jlnr" value="获校一等奖学金"></td>
+    </tr>
+  </tbody></table>
+
+  <h2>学习和工作经历（南航式：起始/结束时间 + 单位 + 职务）</h2>
+  <table border="1"><tbody>
+    <tr><th>学习和工作经历（从大学开始填写）</th></tr>
+  </tbody></table>
+  <table border="1"><tbody>
+    <tr><th>起始时间（日期格式：2019-11）</th><th>结束时间（日期格式：2019-11）</th><th>学校或工作单位</th><th>担任职务</th></tr>
+    <tr>
+      <td><input name="jlks" value="2021-09"></td>
+      <td><input name="jljs" value="2025-06"></td>
+      <td><input name="jldw" value="某大学"></td>
+      <td><input name="jlzw" value="学生"></td>
+    </tr>
+  </tbody></table>
+
+  <h2>学术成果（河海式：区块标题表 + 数据表）</h2>
+  <table border="1"><tbody>
+    <tr><th>学术成果（包括荣获奖项、发表论文、学术活动等）（</th><th>取得时间（日期格式：2018-11） 发表刊物（水平）；出版单位 成果名称（包括论文、专著等） 作者排名（本人排序） 操作</th></tr>
+  </tbody></table>
+  <table border="1">
+    <tbody>
+      <tr>
+        <th>取得时间（日期格式：2018-11）</th><th>发表刊物（水平）；出版单位</th><th>成果名称（包括论文、专著等）</th><th>作者排名（本人排序）</th><th>操作</th>
+      </tr>
+      <tr>
+        <td><input type="hidden" value="0"><input name="hg0t"></td><td><input type="hidden" value="0"><input name="hg0k"></td><td><input type="hidden" value="0"><input name="hg0m"></td><td><input type="hidden" value="0"><input name="hg0p"></td>
+        <td><button type="button" onclick="hgAddRow(this)">新增一行</button></td>
+      </tr>
+    </tbody>
+  </table>
+  <script>
+    function hgAddRow(btn) {
+      var t = btn.closest('table');
+      var r = t.querySelector('tbody').insertRow();
+      for (var i = 0; i < 4; i++) {
+        var td = r.insertCell();
+        var inp = document.createElement('input');
+        td.appendChild(inp);
+      }
+      var op = r.insertCell();
+      op.innerHTML = '<button type="button" onclick="hgAddRow(this)">新增一行</button>';
+    }
+  </script>
+
+  <h2>学习或工作经历（南理工式：起止时间/单位/职务表格 + 新增行按钮 + "没有数据"占位行）</h2>
+  <table border="1">
+    <tbody>
+      <tr><th>学习或工作起止时间</th><th>学习或工作单位名称</th><th>担任职务</th><th>操作</th></tr>
+      <tr><td colspan="4">没有数据</td></tr>
+      <tr>
+        <td><input name="nj0t"></td><td><input name="nj0d"></td><td><input name="nj0z"></td>
+        <td><button type="button" onclick="expAddRow(this)">新增一行</button></td>
+      </tr>
+    </tbody>
+  </table>
+  <script>
+    function expAddRow(btn) {
+      var t = btn.closest('table');
+      var r = t.querySelector('tbody').insertRow();
+      for (var i = 0; i < 3; i++) {
+        var td = r.insertCell();
+        var inp = document.createElement('input');
+        td.appendChild(inp);
+      }
+      var op = r.insertCell();
+      op.innerHTML = '<button type="button" onclick="expAddRow(this)">新增一行</button>';
+    }
+  </script>
+  <div class="form-item"><label>学习和工作经历（从高中开始）</label><textarea name="xxgzjl" rows="3"></textarea></div>
+
+  <h2>出生地（显示框+隐藏编码弹窗对）与户口地</h2>
+  <table border="1">
+    <tbody>
+      <tr>
+        <td>出生地</td>
+        <td><input name="txtCsd"><input type="hidden" name="txtCsdm"><button type="button" class="select-btn">选择</button></td>
+        <td>户口地</td>
+        <td><input name="hkszd"></td>
+      </tr>
+      <tr>
+        <td>籍贯所在地</td>
+        <td><input name="txtJgdm"><input name="txtJg"><button type="button" class="select-btn">选择</button></td>
+      </tr>
+    </tbody>
+  </table>
+  <input type="hidden" name="ctl00$hdIndex" id="hdIndex">
+
+  <h2>奖励情况表（南理工式：时间/单位/原因/名称）</h2>
+  <table border="1">
+    <tbody>
+      <tr><th>时 间</th><th>奖励单位</th><th>奖励原因</th><th>奖励名称</th></tr>
+      <tr><td><input name="jl0t"></td><td><input name="jl0u"></td><td><input name="jl0c"></td><td><input name="jl0n"></td></tr>
+    </tbody>
+  </table>
+
+  <script>
+    function tuiAct(td) {
+      if (!td.querySelector('input')) td.innerHTML = '<input>';
+    }
+  </script>
+
+  <h2>弹窗选择器浮层（模拟）</h2>
+  <ul role="listbox" style="display:none">
+    <li role="option">汉族</li>
+    <li role="option">满族</li>
+  </ul>
+  <div class="popup">
+    <input type="text" id="pop-search">
+    <ul role="listbox">
+      <li role="option">西安电子科技大学</li>
+      <li role="option">大连理工大学</li>
+    </ul>
+  </div>
+
+  <h2>ECUST 风格字段（模拟：编码选项 / 联动 / 档案推导）</h2>
+  <table border="1">
+    <tr>
+      <td>出生年月</td><td><input name="csny"></td>
+      <td>英语成绩</td><td><input name="wycj"></td>
+    </tr>
+    <tr>
+      <td>就读院校</td>
+      <td>院校所在省市：
+        <select name="ddlss"><option value="">请选择</option><option>北京</option><option>上海</option><option>辽宁</option></select>院校：
+        <select name="ddlyx"><option value="">请选择</option><option>大连理工大学</option><option>北京大学</option></select>
+      </td>
+      <td>所学专业</td>
+      <td><select name="ddlbkzy"><option value="">请选择</option><option>080714|软件工程</option><option>010101|哲学</option></select></td>
+    </tr>
+    <tr>
+      <td>亲属电话</td><td><input name="qtdh"></td>
+      <td>申请类型</td>
+      <td><select name="zslx"><option value="">请选择</option><option>硕士</option><option>直博</option></select></td>
+    </tr>
+    <tr>
+      <td>申请学院</td>
+      <td><select name="ddsqxy"><option value="">请选择</option><option>光电科学与智能仪器学院</option><option>化工学院</option></select></td>
+      <td>申请专业</td>
+      <td><select name="ddsqzy"><option value="">请选择</option><option>080302|测控技术与仪器</option></select></td>
+    </tr>
+    <tr>
+      <td>是否有意向导师</td>
+      <td><select name="yxds"><option value="">请选择</option><option>有</option><option>无</option></select></td>
+      <td>研究方向</td>
+      <td><select name="yjfx"><option value="">请选择</option><option>测试方向</option><option>其他方向</option></select></td>
+    </tr>
+  </table>
+  <div class="form-item"><label>奖励处分</label><textarea name="jlcf" rows="3"></textarea></div>
+  <div class="form-item"><label>发表论文</label><textarea name="fblw" rows="3"></textarea></div>
+  <div class="form-item"><label>备注信息</label><textarea name="bz"></textarea></div>
+  <div class="form-item">
+    <span>国家四级</span>
+    <label><input type="radio" name="rbwysp" value="1">通过</label>
+    <label><input type="radio" name="rbwysp" value="0">未通过</label>
+  </div>
+</form>
+</body>
+</html>

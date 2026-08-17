@@ -1,0 +1,12 @@
+node_modules/
+test/run.js
+test/run.js.js
+dist/
+release/
+site/
+site-deploy-*.tar.gz
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
