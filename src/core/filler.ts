@@ -311,6 +311,7 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
       // 只读日期弹窗框：模拟"点击打开再收起"，让页面 JS 同步内部状态（否则需人工再点一次才能提交）
       if (isDateLike && d.el.tagName === 'INPUT' && (d.el as HTMLInputElement).readOnly) {
         syncReadonlyPicker(d.el as HTMLInputElement, doc);
+        restoreAfterPickerSync(d.el as HTMLInputElement, v, doc); // 日历把值重置成"当前月份"时自动恢复（防入学=毕业）
       }
     } else {
       stats.failed++;
@@ -396,6 +397,26 @@ function syncReadonlyPicker(el: HTMLInputElement, doc: Document): void {
     const body = doc.body || doc.documentElement;
     body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
   }, 60);
+}
+
+/** 日期值是否同一"年月"（忽略格式差异：2021-09 vs 2021年9月 vs 202109） */
+function sameYearMonth(a: string, b: string): boolean {
+  const m1 = /^(\d{4})\D*(\d{1,2})/.exec(a || '');
+  const m2 = /^(\d{4})\D*(\d{1,2})/.exec(b || '');
+  return !!m1 && !!m2 && m1[1] === m2[1] && String(Number(m1[2])) === String(Number(m2[2]));
+}
+
+/** 只读日历框自愈：My97 等日历一点开就把值重置成"当前月份"（入学=毕业事故）→ 稍后校验，值被改掉就恢复档案值 */
+function restoreAfterPickerSync(el: HTMLInputElement, written: string, doc: Document): void {
+  setTimeout(() => {
+    try {
+      if (!doc.documentElement.contains(el)) return;
+      const cur = (el.value || '').trim();
+      if (cur && !sameYearMonth(cur, written)) setInputValue(el, written);
+    } catch {
+      // 忽略
+    }
+  }, 400);
 }
 
 // ===================== 学术成果表格（自动新增行并填写） =====================
@@ -1209,6 +1230,11 @@ export async function fillExperiences(profile: Profile, doc: Document, startInde
 /** 定位"奖励情况"表格（表头含 奖励/荣誉 + 时间列 + 名称列，如南理工"奖励单位/奖励原因/奖励名称"、北邮等） */
 export function findAwardTable(doc: Document): { table: HTMLTableElement; timeIdx: number; nameIdx: number; unitIdx: number; reasonIdx: number } | null {
   const matches: Array<{ table: HTMLTableElement; timeIdx: number; nameIdx: number; unitIdx: number; reasonIdx: number }> = [];
+  // 页面存在"何时何地何原因受过何种奖励"等标题表（东华/苏大式：关键词只在外层标题表里）
+  const hasAwardTitleTable = Array.from(doc.querySelectorAll<HTMLTableElement>('table')).some((t) => {
+    const rows = Array.from(t.rows);
+    return !!rows.length && /奖励|获奖|荣誉|奖项|处分/.test(normalizeText(rows[0].textContent || ''));
+  });
   for (const table of Array.from(doc.querySelectorAll<HTMLTableElement>('table'))) {
     const rows = Array.from(table.rows);
     if (rows.length < 2) continue; // 纯标题表（"何时何地何原因受过何种奖励"）跳过
@@ -1223,8 +1249,8 @@ export function findAwardTable(doc: Document): { table: HTMLTableElement; timeId
       /新增|添加|删除|移除/.test(normalizeText(`${b.textContent || ''} ${(b as HTMLInputElement).value || ''}`)),
     );
     // 东华式：真网格表头只有「时间/地点/内容」，「奖励」字样在外层标题表里 →
-    // 无奖励关键词的网格必须有 加行/删行 chrome 且列像奖励表（时间+内容+地点/级别）才算，防误吞通知列表
-    if (!hasAwardWord && !(hasAddDel && (unitIdx >= 0 || reasonIdx >= 0))) continue;
+    // 无奖励关键词的网格必须有 加行/删行 chrome；或页面存在奖励标题表且网格带「地点」列（苏大式网格无删行按钮），防误吞通知列表
+    if (!hasAwardWord && !(hasAddDel && (unitIdx >= 0 || reasonIdx >= 0)) && !(hasAwardTitleTable && unitIdx >= 0)) continue;
     matches.push({ table, timeIdx, nameIdx, unitIdx, reasonIdx });
   }
   if (!matches.length) return null;
@@ -1256,13 +1282,25 @@ function fillAwardTables(profile: Profile, doc: Document, handled: Set<Element>,
     if (el && el.value.trim()) return el.value.trim();
     return (cell.textContent || '').trim();
   };
+  // 页面存在奖励标题表（东华/苏大式：关键词只在外层标题表里）
+  const hasAwardTitleTable = Array.from(doc.querySelectorAll<HTMLTableElement>('table')).some((t) => {
+    const rs = Array.from(t.rows);
+    return !!rs.length && /奖励|获奖|荣誉|奖项|处分/.test(normalizeText(rs[0].textContent || ''));
+  });
   for (const table of Array.from(doc.querySelectorAll<HTMLTableElement>('table'))) {
     const rows = Array.from(table.rows);
     if (rows.length < 2) continue;
     const first = Array.from(rows[0].cells).map((c) => normalizeText(c.textContent || ''));
-    if (!first.some((h) => /奖励|荣誉|获奖|奖项/.test(h))) continue;
+    const hasAwardWord = first.some((h) => /奖励|荣誉|获奖|奖项/.test(h));
+    if (!hasAwardWord) {
+      // 无关键词网格：仅当页面存在奖励标题表、且本表列像奖励表（时间+名称/内容+地点/级别）才认定
+      const nameLike = first.findIndex((h) => /名称|奖项|荣誉|内容/.test(h));
+      const unitLike = first.findIndex((h) => /单位|机构|部门|组织|颁发|地点/.test(h));
+      const timeLike = first.findIndex((h) => /时间|日期/.test(h));
+      if (!(hasAwardTitleTable && nameLike >= 0 && unitLike >= 0 && timeLike >= 0)) continue;
+    }
     const timeIdx = first.findIndex((h) => /时间|日期/.test(h));
-    const nameIdx = first.findIndex((h) => /名称|奖项|荣誉/.test(h));
+    const nameIdx = first.findIndex((h) => /名称|奖项|荣誉|内容/.test(h));
     if (timeIdx < 0 || nameIdx < 0) continue;
     markGridHandled(table, handled); // 整表控件标记"已处理"，空插入行不参与通用匹配
     const unitIdx = first.findIndex((h) => /单位|机构|部门|组织|颁发/.test(h));
@@ -1432,7 +1470,10 @@ function fillCetTables(profile: Profile, doc: Document, handled: Set<Element>, i
             if (nm) {
               const dv = fullDateHint ? `${nm}-01` : nm;
               setInputValue(dateEl, dv);
-              if (dateEl.readOnly) syncReadonlyPicker(dateEl, doc);
+              if (dateEl.readOnly) {
+                syncReadonlyPicker(dateEl, doc);
+                restoreAfterPickerSync(dateEl, dv, doc); // 日历重置成当前月份时自动恢复
+              }
               handled.add(dateEl);
               markEl(dateEl, 'filled');
             } else {
@@ -1463,7 +1504,10 @@ function fillCetTables(profile: Profile, doc: Document, handled: Set<Element>, i
           const dv = fullDateHint ? `${nm}-01` : nm;
           setInputValue(dateEl, dv);
           // 时间框有弹窗（只读）→ 补一次"打开-收起"同步页面状态；没弹窗 → 直接注入即可
-          if (dateEl.readOnly) syncReadonlyPicker(dateEl, doc);
+          if (dateEl.readOnly) {
+            syncReadonlyPicker(dateEl, doc);
+            restoreAfterPickerSync(dateEl, dv, doc); // 日历重置成当前月份时自动恢复
+          }
           handled.add(dateEl);
           markEl(dateEl, 'filled');
         } else {

@@ -27,12 +27,12 @@
       <h1>预推免填表助手</h1>
       <p class="lead">辅助填写高校预推免、夏令营报名表。个人档案只保存在本机浏览器中，不自动提交，不处理验证码与登录密码。</p>
       <div class="actions">
-        <a class="btn primary" id="downloadButton" href="https://github.com/XIA-2005/tuimian-autofill/releases/latest/download/tuimian-autofill-v1.15.2.zip">⬇ 下载 v1.15.2 安装包</a>
+        <a class="btn primary" id="downloadButton" href="https://github.com/XIA-2005/tuimian-autofill/releases/latest/download/tuimian-autofill-v1.15.4.zip">⬇ 下载 v1.15.4 安装包</a>
         <a class="btn secondary" href="https://github.com/XIA-2005/tuimian-autofill">查看 GitHub 源码</a>
       </div>
       <div class="stats">
         <div class="stat"><div class="num" id="downloadCount">—</div><div class="label">GitHub Release 真实下载次数</div></div>
-        <div class="stat"><div class="num" id="releaseVersion">v1.15.2</div><div class="label">当前公开版本</div></div>
+        <div class="stat"><div class="num" id="releaseVersion">v1.15.4</div><div class="label">当前公开版本</div></div>
       </div>
       <p class="meta" id="statsStatus">下载次数来自 GitHub 官方接口，正在读取……</p>
     </div>
@@ -112,7 +112,7 @@
         if (!response.ok) throw new Error('GitHub API ' + response.status);
         const release = await response.json();
         const asset = release.assets.find(function (item) { return item.name.toLowerCase().endsWith('.zip'); });
-        document.getElementById('releaseVersion').textContent = release.tag_name || 'v1.15.2';
+        document.getElementById('releaseVersion').textContent = release.tag_name || 'v1.15.4';
         if (asset) {
           document.getElementById('downloadCount').textContent = new Intl.NumberFormat('zh-CN').format(asset.download_count || 0);
           document.getElementById('downloadButton').href = asset.browser_download_url;

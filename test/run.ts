@@ -2,7 +2,7 @@
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { emptyProfile, normalizeProfile } from '../src/core/profile';
-import { closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, FillItem, findAchievementTable, findAwardTable, findExperienceTable, findPickerOption, pickInPage } from '../src/core/filler';
+import { closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, FillItem, findAchievementTable, findAwardTable, findExperienceTable, findPickerOption, pickInPage, sleep } from '../src/core/filler';
 import { scanSite } from '../src/core/scanner';
 import { importFromPage } from '../src/core/importer';
 import { findPickerTrigger } from '../src/core/matcher';
@@ -326,6 +326,27 @@ check(imp.summary.length >= 6, '反向提取：产生摘要');
   importFromPage(pIfr, wIfr.window.document);
   check(pIfr.basic.name === '张三', '反向提取：同源 iframe 内字段被提取');
 }
+
+// 自愈：只读日历框打开收起后被重置成当前月份 → 自动恢复档案日期（苏大"入学=毕业"事故）
+void (async () => {
+  const wDt = new JSDOM(
+    '<body><table><tbody><tr><td>入学年月*</td><td><input name="rxny" readonly></td></tr>' +
+      '<tr><td>预计毕业年月*</td><td><input name="byny" readonly></td></tr></tbody></table></body>',
+  );
+  wDt.window.Element.prototype.getBoundingClientRect = rect as never;
+  const rx = wDt.window.document.querySelector('[name="rxny"]') as HTMLInputElement;
+  const by = wDt.window.document.querySelector('[name="byny"]') as HTMLInputElement;
+  for (const el of [rx, by]) {
+    el.addEventListener('click', () => {
+      el.value = '2026-08'; // 模拟 My97 日历点开即写入当前月份
+    });
+  }
+  const pDt = emptyProfile();
+  Object.assign(pDt.education, { startDate: '2021-09', endDate: '2025-06' });
+  fillAll(pDt, wDt.window.document);
+  await sleep(700);
+  check(rx.value === '2021-09' && by.value === '2025-06', '只读日历框被日历重置后自动恢复（入学≠毕业）');
+})();
 
 // 旧版获奖档案迁移：{name, level, date, role} → 时间/地点/内容
 {
@@ -851,6 +872,28 @@ void (async () => {
     pL.awards.push({ date: '2024-01', place: '', content: '某奖' });
     const nL = await fillAwardRows(pL, wList.window.document, 0, undefined, 0);
     check(nL === 0, '无加删按钮的时间+内容列表不被误当奖励表');
+  }
+
+  // 苏大式奖励表：网格无加删按钮、无奖励关键词，标题只在外层表 → 通过标题表识别并填写
+  {
+    const wSd = new JSDOM(
+      '<body>' +
+        '<table id="jlOuter2"><tbody><tr><td>何时何地何原因受过何种奖励（内容中不得含有符号）</td><td>时间（日期格式：2018-11） 地点 内容</td></tr></tbody></table>' +
+        '<table id="jlTbl2"><tbody><tr><th>时间（日期格式：2018-11）</th><th>地点</th><th>内容</th></tr>' +
+        '<tr><td><input name="sd0t"></td><td><input name="sd0p"></td><td><input name="sd0n"></td></tr>' +
+        '<tr><td><input name="sd1t"></td><td><input name="sd1p"></td><td><input name="sd1n"></td></tr></tbody></table>' +
+        '</body>',
+    );
+    const dSd = wSd.window.document;
+    wSd.window.Element.prototype.getBoundingClientRect = rect as never;
+    const pSd = emptyProfile();
+    pSd.awards.push({ date: '2025-12', place: '西安理工大学', content: '尚真笃学先进个人' });
+    pSd.awards.push({ date: '2024-12', place: '西安理工大学', content: '竟赛奖金1250元' });
+    const nSd = await fillAwardRows(pSd, dSd, 0, undefined, 0);
+    const sd0n = dSd.querySelector('[name="sd0n"]') as HTMLInputElement;
+    const sd1n = dSd.querySelector('[name="sd1n"]') as HTMLInputElement;
+    const sd0t = dSd.querySelector('[name="sd0t"]') as HTMLInputElement;
+    check(nSd === 2 && sd0n.value === '尚真笃学先进个人' && sd1n.value === '竟赛奖金1250元' && sd0t.value === '2025-12', '苏大式奖励表（无加删按钮，标题在外层表）识别并填写');
   }
 
   // 邮箱别名：「电子信箱」标签命中邮箱字段（中南大学式）
