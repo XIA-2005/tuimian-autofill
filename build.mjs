@@ -36,6 +36,8 @@ const builds = [
       background: 'src/background/index.ts',
       'popup/popup': 'src/popup/popup.ts',
       'options/options': 'src/options/options.ts',
+      // 主世界桥独立构建为 IIFE 注入文件；esbuild 会移除仅有的自执行侧效，保留显式 IIFE 包装
+      'world/main-world': 'src/world/main-world.ts',
     },
     outdir,
     format: 'iife',

@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "预推免填表助手",
-  "version": "1.15.4",
+  "version": "2.0.0",
   "author": "tuimian-autofill",
-  "minimum_chrome_version": "110",
+  "minimum_chrome_version": "111",
   "description": "辅助填写高校预推免/夏令营报名系统：本地档案、一键填充、漏填高亮。验证码与提交由用户手动完成，数据不出本机。",
   "permissions": ["storage", "clipboardWrite"],
   "host_permissions": ["https://raw.githubusercontent.com/*"],
@@ -35,6 +35,13 @@
       "css": ["content.css"],
       "all_frames": true,
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["world/main-world.js"],
+      "world": "MAIN",
+      "all_frames": true,
+      "run_at": "document_start"
     }
   ]
 }

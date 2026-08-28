@@ -19,7 +19,7 @@ document.getElementById('fillBtn')!.addEventListener('click', async () => {
   try {
     const resp = await chrome.runtime.sendMessage({ type: 'FILL_REQUEST', tabId: tab.id });
     if (!resp || !resp.ok) {
-      setStatus('此页面无法填充：浏览器内置页面（edge:// 等）不支持，或页面尚未加载完成。', 'err');
+      setStatus(resp?.reason === '用户取消了投影预览' || resp?.reason === 'cancelled' ? '已取消填充' : '此页面无法填充：浏览器内置页面（edge:// 等）不支持，或页面尚未加载完成。', resp?.reason === '用户取消了投影预览' ? 'info' : 'err');
       return;
     }
     const s = resp.stats;

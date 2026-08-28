@@ -118,14 +118,17 @@ chrome.runtime.onMessage.addListener((msg: any, sender: any, sendResponse: any):
       sendResponse({ ok: false, reason: 'no-tab' });
       return false;
     }
-    startAggregation(tabId, sendResponse);
-    chrome.tabs.sendMessage(tabId, { type: 'FILL' }).catch(() => {
-      const agg = pending.get(tabId);
-      if (agg) {
-        cancelAggregation(agg);
-        agg.respond && agg.respond({ ok: false, reason: 'no-receiver' });
+    void (async () => {
+      try {
+        // 一键填充直接执行；投影摘要属于诊断信息，不再用 confirm 阻断每一次操作。
+        startAggregation(tabId, sendResponse);
+        await chrome.tabs.sendMessage(tabId, { type: 'FILL' });
+      } catch {
+        const agg = pending.get(tabId);
+        if (agg) cancelAggregation(agg);
+        sendResponse({ ok: false, reason: 'no-receiver' });
       }
-    });
+    })();
     return true;
   }
 

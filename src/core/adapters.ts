@@ -5,12 +5,126 @@ import { FieldRule } from './matcher';
 export interface PlatformAdapter {
   id: string;
   name: string;
-  match: (url: string) => boolean;
+  /** 内置适配器可保留函数；远程规则必须使用 declarativeMatch。 */
+  match?: (url: string) => boolean;
+  declarativeMatch?: DeclarativeUrlMatch;
   /** 命中后自动显示悬浮面板 */
   autoShow: boolean;
   /** 平台专属的补充匹配规则（在通用规则之后追加，优先级更高时靠更长关键词取胜） */
   extraRules?: FieldRule[];
   note?: string;
+}
+
+export interface DeclarativeUrlMatch {
+  hosts: string[];
+  /** 简单路径 glob，仅支持 * 通配符；空数组代表任意路径。 */
+  pathPatterns?: string[];
+  excludePathPatterns?: string[];
+}
+
+export type SupportStatus = 'directory' | 'experimental' | 'verified' | 'drifted';
+
+export interface AdapterCapabilities {
+  registerFill: SupportStatus;
+  formFill: SupportStatus;
+  pluginExtract: SupportStatus;
+  sessionCrawl: SupportStatus;
+}
+
+export type ControlDriverId =
+  | 'text'
+  | 'radio'
+  | 'native-select'
+  | 'date'
+  | 'month-picker'
+  | 'date-range'
+  | 'textarea'
+  | 'table'
+  | 'layui'
+  | 'ant'
+  | 'select2'
+  | 'element'
+  | 'kendo'
+  | 'aspnet'
+  | 'school-picker'
+  | 'major-picker';
+
+export interface AdapterFieldContract {
+  nativeId?: string;
+  profilePath?: string;
+  extensionKey?: string;
+  labels?: string[];
+  selectors?: string[];
+  driver: ControlDriverId;
+  codeNamespace?: string;
+  /** 弹窗型代码框和名称框必须显式成对声明；不得从整个表单猜第一个 dm/mc。 */
+  codeSelectors?: string[];
+  nameSelectors?: string[];
+  /** 蓝色系统的第三个展示框，通常显示“代码 空格 名称”。 */
+  displaySelectors?: string[];
+  /** 日期精度覆盖；未声明时根据 input 类型、placeholder 和字段标签推断。 */
+  datePrecision?: 'year' | 'month' | 'day';
+  /** 页面要求的日期字符串格式；用于生成值并执行严格格式回读。 */
+  dateFormat?: 'yyyy' | 'yyyyMM' | 'yyyy-MM' | 'yyyy/MM' | 'yyyy年MM月' | 'yyyyMMdd' | 'yyyy-MM-dd' | 'yyyy/MM/dd' | 'yyyy年MM月dd日';
+  dateModelSelectors?: string[];
+  datePanelSelectors?: string[];
+  componentDriver?: 'ant' | 'select2' | 'element' | 'layui';
+  /** 仅允许声明式选择器和 frame 名称；执行逻辑固定在扩展内核。 */
+  picker?: {
+    protocol?: 'minimal' | 'blue-flat';
+    triggerSelectors?: string[];
+    frameNames?: string[];
+    frameSrcPatterns?: string[];
+    searchInputSelectors?: string[];
+    queryButtonSelectors?: string[];
+    resultRowSelectors?: string[];
+    chooseSelectors?: string[];
+    categorySelectSelectors?: string[];
+  };
+  readonly?: boolean;
+}
+
+export interface AdapterPageContract {
+  id: string;
+  name: string;
+  pathPatterns: string[];
+  titlePatterns?: string[];
+  requiredSelectors?: string[];
+  forbiddenSelectors?: string[];
+  /** 真实页面验收后记录的允许结构指纹；命中路径但不命中指纹时立即停止专项采集。 */
+  expectedFingerprints?: string[];
+  role: 'form' | 'crawl-only' | 'shell' | 'upload' | 'print' | 'result';
+  safeNavigationSelectors?: string[];
+  /** 仅用于用户主动开启“连续填写”后定位下一步；按钮文字仍由内核二次校验。 */
+  nextSelectors?: string[];
+  /** 点击下一步前及服务器驳回后需要检查的页面错误容器。 */
+  validationErrorSelectors?: string[];
+  fields?: AdapterFieldContract[];
+}
+
+export interface AdapterCrawlPlan {
+  mode: 'plugin' | 'session' | 'guided';
+  /** 会话爬取只允许访问这里声明的同源 GET/只读页面。 */
+  readOnlyPaths?: string[];
+  pageOrder: string[];
+  blockPathPatterns?: string[];
+}
+
+export interface SchoolAdapterPackage {
+  schemaVersion: 1;
+  id: string;
+  version: string;
+  minCoreVersion: string;
+  schoolName: string;
+  programName: string;
+  family: 'blue' | 'minimal' | 'jingzhi' | 'cover' | 'other';
+  match: DeclarativeUrlMatch;
+  capabilities: AdapterCapabilities;
+  pages: AdapterPageContract[];
+  crawl: AdapterCrawlPlan;
+  projectionPolicy: string;
+  codeNamespaces?: string[];
+  commitPolicy: 'never' | 'manual-save-only' | 'validated-next-only';
 }
 
 export const ADAPTERS: PlatformAdapter[] = [
@@ -77,7 +191,27 @@ export interface RemoteAdapterSet {
 }
 
 export function matchAdapter(url: string, adapters: PlatformAdapter[] = ADAPTERS): PlatformAdapter | undefined {
-  return adapters.find((a) => a.match(url));
+  return adapters.find((a) => adapterMatches(a, url));
+}
+
+function globRegex(glob: string): RegExp {
+  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+export function declarativeMatchUrl(rule: DeclarativeUrlMatch, rawUrl: string): boolean {
+  let url: URL;
+  try { url = new URL(rawUrl); } catch { return false; }
+  const host = url.hostname.toLowerCase();
+  if (!rule.hosts.some((h) => h === '*' || host === h.toLowerCase() || (h.startsWith('*.') && host.endsWith(h.slice(1).toLowerCase())))) return false;
+  const path = `${url.pathname}${url.search}`;
+  if (rule.excludePathPatterns?.some((p) => globRegex(p).test(path))) return false;
+  return !rule.pathPatterns?.length || rule.pathPatterns.some((p) => globRegex(p).test(path));
+}
+
+export function adapterMatches(adapter: PlatformAdapter, url: string): boolean {
+  if (adapter.declarativeMatch && declarativeMatchUrl(adapter.declarativeMatch, url)) return true;
+  return typeof adapter.match === 'function' ? adapter.match(url) : false;
 }
 
 /** URL 出现这些特征时也自动显示面板（覆盖未登记的平台） */

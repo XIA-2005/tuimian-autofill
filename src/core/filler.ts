@@ -5,6 +5,13 @@ import { DetectedField, detectAllFields, detectField, FIELD_RULES, FieldRule, fi
 import { isRegionLike, regionCode6, regionFromIdCard, regionKeywords, regionMatchTokens, regionTreeTokens } from './regionutil';
 import { composeListText, Experience, FamilyMember, getByPath, Profile, Application } from './profile';
 import { matchAdapter } from './adapters';
+import { fillDateControl } from './date-drivers';
+import { PopupPickContext, resolveCodeNameBinding, verifyCodeNameBinding } from './popup-binding';
+import { pickSchool } from './school-picker-driver';
+import { pickMajor } from './major-picker-driver';
+import { pickComponentOption } from './component-select-drivers';
+import { withUnlocked } from './unlock';
+import { mainWorldJqueryClick } from './world-bridge';
 
 export interface FillItem {
   label: string;
@@ -14,6 +21,8 @@ export interface FillItem {
   valuePreview?: string;
   /** 对应页面控件（仅内存使用，跨消息传递时会被剥离） */
   el?: Element;
+  /** 弹窗字段语义与可接受代码；用于学校/专业代码和名称的精确成对校验。 */
+  pickerContext?: PopupPickContext;
 }
 
 export interface FillStats {
@@ -58,15 +67,18 @@ function escapeAttr(s: string): string {
 }
 
 function setInputValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
-  const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-  if (desc && desc.set) desc.set.call(el, value);
-  else el.value = value;
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-  // 部分系统在失焦时校验/同步内部状态，补发 blur/focusout
-  el.dispatchEvent(new Event('blur', { bubbles: false }));
-  el.dispatchEvent(new Event('focusout', { bubbles: true }));
+  // 写前临时解锁：readonly/disabled 控件的值页面校验器与表单序列化会忽略，造成"回读通过、保存丢失"
+  withUnlocked(el, () => {
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (desc && desc.set) desc.set.call(el, value);
+    else el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    // 部分系统在失焦时校验/同步内部状态，补发 blur/focusout
+    el.dispatchEvent(new Event('blur', { bubbles: false }));
+    el.dispatchEvent(new Event('focusout', { bubbles: true }));
+  });
 }
 
 /** 按 placeholder 提示把 2003-05-12 / 2025-06 这类值转成页面要求的格式 */
@@ -98,11 +110,14 @@ function formatDateForInput(raw: string, el: HTMLInputElement): string {
 }
 
 function pickOption(el: HTMLSelectElement, index: number): void {
-  const desc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
-  if (desc && desc.set) desc.set.call(el, el.options[index].value);
-  else el.selectedIndex = index;
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
+  // 禁用下拉的选中值会被表单序列化忽略；写前临时启用，写后恢复
+  withUnlocked(el, () => {
+    const desc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+    if (desc && desc.set) desc.set.call(el, el.options[index].value);
+    else el.selectedIndex = index;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
 }
 
 function setSelectValue(el: HTMLSelectElement, value: string): boolean {
@@ -296,27 +311,59 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
     // 弹窗选择框（只读/禁用/隐藏输入框 + 选择按钮、Show 显示框）：不直接注入文本（真实值往往是隐藏编码），交给自动点选处理。
     // 日期类字段除外：值本质就是文本（年月格式），直接注入并同步页面状态。
     const input = d.el as HTMLInputElement;
-    const isDateLike = d.rule.field === 'basic.birthday' || d.rule.field === 'education.startDate' || d.rule.field === 'education.endDate';
+    const isDateLike =
+      d.rule.field === 'basic.birthday' ||
+      /(?:^|\.)(?:startDate|endDate|date|birthday)$/i.test(d.rule.field || '') ||
+      (d.el.tagName === 'INPUT' && ['date', 'month'].includes((d.el as HTMLInputElement).type));
     if (hasPopupBehavior(d) && !isDateLike) {
       stats.picker++;
-      items.push({ label: d.label, field: d.rule.field, status: 'picker', reason: '弹窗选择框：请点「选择」按钮后选取', valuePreview: v, el: d.el });
+      const codeEntry = profile.codebook[d.rule.field];
+      const pickerInput = d.el as HTMLInputElement;
+      const readSelectorList = (attr: string): string[] => {
+        try {
+          const parsed = JSON.parse(pickerInput.getAttribute(attr) || '[]');
+          return Array.isArray(parsed) && parsed.every((item) => typeof item === 'string') ? parsed : [];
+        } catch {
+          return [];
+        }
+      };
+      items.push({
+        label: d.label,
+        field: d.rule.field,
+        status: 'picker',
+        reason: '弹窗选择框：将按当前字段精确匹配代码和名称',
+        valuePreview: v,
+        el: d.el,
+        pickerContext: {
+          profilePath: pickerInput.getAttribute('data-tui-picker-profile') || d.rule.field,
+          expectedCode: pickerInput.getAttribute('data-tui-picker-code') || undefined,
+          codeAliases: codeEntry ? Object.values(codeEntry.codes).filter(Boolean) : [],
+          codeSelectors: readSelectorList('data-tui-picker-code-selectors'),
+          nameSelectors: readSelectorList('data-tui-picker-name-selectors'),
+          displaySelectors: readSelectorList('data-tui-picker-display-selectors'),
+          pickerProtocol: (pickerInput.getAttribute('data-tui-picker-protocol') || undefined) as PopupPickContext['pickerProtocol'],
+          cascadeLabels: readSelectorList('data-tui-picker-cascade-labels'),
+          componentDriver: (pickerInput.getAttribute('data-tui-component-driver') || undefined) as PopupPickContext['componentDriver'],
+          triggerSelectors: readSelectorList('data-tui-picker-trigger-selectors'),
+          frameNames: readSelectorList('data-tui-picker-frame-names'),
+          frameSrcPatterns: readSelectorList('data-tui-picker-frame-patterns'),
+        },
+      });
       markEl(d.el, 'missing');
       continue;
     }
-    const ok = fillControl(d, v);
+    const dateOutcome = isDateLike && d.el.tagName === 'INPUT' ? fillDateControl(d.el as HTMLInputElement, v) : null;
+    const ok = dateOutcome ? dateOutcome.ok : fillControl(d, v);
     if (ok) {
       stats.filled++;
-      items.push({ label: d.label, field: d.rule.field, status: 'filled', valuePreview: v, el: d.el });
+      items.push({ label: d.label, field: d.rule.field, status: 'filled', reason: dateOutcome?.reason, valuePreview: dateOutcome?.written || v, el: d.el });
       markEl(d.el, 'filled');
-      // 只读日期弹窗框：模拟"点击打开再收起"，让页面 JS 同步内部状态（否则需人工再点一次才能提交）
-      if (isDateLike && d.el.tagName === 'INPUT' && (d.el as HTMLInputElement).readOnly) {
-        syncReadonlyPicker(d.el as HTMLInputElement, doc);
-        restoreAfterPickerSync(d.el as HTMLInputElement, v, doc); // 日历把值重置成"当前月份"时自动恢复（防入学=毕业）
-      }
     } else {
       stats.failed++;
       const reason =
-        d.el.tagName === 'SELECT' && (d.el as HTMLSelectElement).options.length <= 1
+        dateOutcome
+          ? dateOutcome.reason
+          : d.el.tagName === 'SELECT' && (d.el as HTMLSelectElement).options.length <= 1
           ? '下拉暂无选项（可能是联动下拉，请先选择上级字段后重试）'
           : '下拉/单选选项不匹配，请人工选择';
       items.push({ label: d.label, field: d.rule.field, status: 'failed', reason, valuePreview: v, el: d.el });
@@ -429,12 +476,30 @@ export interface AchievementTableInfo {
   roleIdx: number;
 }
 
-/** 定位学术成果表：表头含"成果名称"或（"标题"+刊物/排名伴生列）且带时间列；必须是"有数据行的表"（跳过纯标题表） */
+/** 学术成果表页内缓存：只缓存表对象和列索引；页面回发产生新 Document 后自动失效。 */
+const achievementTableCache = new WeakMap<Document, { info: AchievementTableInfo; signature: string }>();
+
+function achievementTableSignature(table: HTMLTableElement): string {
+  const first = table.rows[0];
+  const header = first ? Array.from(first.cells).map((cell) => normalizeText(cell.textContent || '')).join('|') : '';
+  return `${table.rows.length}/${table.querySelectorAll('input:not([type="hidden"]),select,textarea,[contenteditable="true"]').length}/${header}`;
+}
+
+/** 定位"学术成果"表格；缓存只在表对象仍连接且轻量结构签名未变化时命中。 */
 export function findAchievementTable(doc: Document): AchievementTableInfo | null {
+  const cached = achievementTableCache.get(doc);
+  if (cached && doc.documentElement.contains(cached.info.table) && achievementTableSignature(cached.info.table) === cached.signature) {
+    return cached.info;
+  }
+  achievementTableCache.delete(doc);
   const matches: AchievementTableInfo[] = [];
   for (const table of Array.from(doc.querySelectorAll<HTMLTableElement>('table'))) {
     const rows = Array.from(table.rows);
-    if (rows.length < 2) continue; // 纯标题表（如"学术成果（包括荣获奖项…）"区块标题行）跳过
+    if (rows.length < 2) {
+      // 表头-only 网格（0 条成果的新表）：整行都是 th 且列数足够才认；纯文字标题表（td）仍跳过
+      const headerOnly = rows.length === 1 && rows[0].cells.length >= 3 && Array.from(rows[0].cells).every((cell) => cell.tagName === 'TH');
+      if (!headerOnly) continue;
+    }
     const first = Array.from(rows[0].cells).map((c) => normalizeText(c.textContent || ''));
     const hasName = first.some((h) => h.includes('成果名称'));
     const timeIdx = first.findIndex((h) => /时间|日期/.test(h));
@@ -463,7 +528,9 @@ export function findAchievementTable(doc: Document): AchievementTableInfo | null
     const isWrapper = !!m.table.querySelector('table');
     return (hasEmptyTitle ? 1000 : 0) + (hasAddDel ? 500 : 0) + controls - (isWrapper ? 600 : 0);
   };
-  return matches.sort((a, b) => score(b) - score(a))[0];
+  const selected = matches.sort((a, b) => score(b) - score(a))[0];
+  if (selected) achievementTableCache.set(doc, { info: selected, signature: achievementTableSignature(selected.table) });
+  return selected || null;
 }
 
 /** 表格末列的图标型"新增"按钮（EasyUI 无文字 linkbutton，如 icon-search） */
@@ -583,6 +650,16 @@ function isDoPostbackAction(c: HTMLElement): boolean {
   return /^javascript:/i.test(href) && /dopostback|__doPostBack/i.test(href);
 }
 
+/**
+ * 是否是语义明确的“新增空行”动作。仅有“添加/保存”的行内按钮可能会把当前行落库，
+ * 在安全模式下不能把它误当作新增空行。
+ */
+function isExplicitAddRowAction(c: HTMLElement): boolean {
+  const label = normalizeText(`${c.textContent || ''} ${c.getAttribute('value') || ''} ${c.getAttribute('title') || ''}`);
+  const identity = `${c.id || ''} ${c.getAttribute('name') || ''}`;
+  return /新增一行|添加一行|增加一行|插入一行|再添一行/.test(label) || /addnewrow|addrow|addline/i.test(identity);
+}
+
 /** 调用 beforeAdd 并取得本轮点击序号（点击方式按序号轮换：0 标准回发 / 1 主世界 location 求值 / 2 原生点击） */
 function clickAttempt(beforeAdd: ((i: number) => void | number) | undefined, i: number, fallback: number): number {
   const r = beforeAdd ? beforeAdd(i) : undefined;
@@ -654,8 +731,8 @@ export async function clickPageAction(c: HTMLElement, attempt = 0): Promise<void
     }
     return;
   }
-  // 非 DoPostback 控件：多策略触发（巨能填经验：真站按钮的处理器常在"绑定脚本"里，普通 .click() 可能不触发；
-  // 部分处理器监听 mousedown/pointerdown 或经 jQuery 绑定）
+  // 非 DoPostback 控件按轮次选择一种点击策略。不能在同一轮连续执行原生 click 和
+  // jQuery trigger，否则两个策略都生效时会一次新增两行。
   const elInfo = {
     tag: c.tagName.toLowerCase(),
     id: c.getAttribute('id') || '',
@@ -669,6 +746,7 @@ export async function clickPageAction(c: HTMLElement, attempt = 0): Promise<void
     return;
   }
   const w2 = doc.defaultView as Window | null;
+  const strategy = attempt % 3;
   const fireEv = (type: string): void => {
     try {
       const ev = new MouseEvent(type, { bubbles: true, cancelable: true, view: w2 || undefined });
@@ -677,30 +755,37 @@ export async function clickPageAction(c: HTMLElement, attempt = 0): Promise<void
       // 忽略
     }
   };
-  let fired = 'events';
   try {
-    fireEv('pointerdown');
-    fireEv('mousedown');
-    try {
-      (c as HTMLElement).focus();
-    } catch {
-      // 忽略
-    }
-    fireEv('pointerup');
-    fireEv('mouseup');
-    c.click();
-  } catch {
-    fired = 'events-error';
-  }
-  // 主世界 jQuery 触发兜底：处理器若经 jQuery 绑定（且未校验 isTrusted），trigger('click') 可直达
-  try {
-    if (w2) {
-      const sel = JSON.stringify(cssPathOf(c));
-      w2.location.href = `javascript:void((function(){try{var j=window.jQuery;if(j&&j.fn){var el=document.querySelector(${sel});if(el&&!el.disabled){j(el).trigger('click');return 'jq-ok';}}return 'no-jq';}catch(e){return 'err:'+e.message;}})())`;
-    }
-    fired = 'events+jquery';
+    c.scrollIntoView({ block: 'center', inline: 'nearest' });
   } catch {
     // 忽略
+  }
+  let fired = strategy === 0 ? 'native-sequence' : strategy === 1 ? 'jquery-click' : 'dispatch-click';
+  try {
+    if (strategy === 0) {
+      // 模拟一次完整的用户点击序列；最终只触发一次 click，不再叠加 jQuery trigger。
+      fireEv('pointerdown');
+      fireEv('mousedown');
+      try {
+        c.focus();
+      } catch {
+        // 忽略
+      }
+      fireEv('pointerup');
+      fireEv('mouseup');
+      c.click();
+    } else if (strategy === 1 && w2) {
+      // 主世界 jQuery 触发兜底：优先走主世界桥（DOM 属性通道，无导航副作用）；桥不可用时退回 location 求值。
+      const bridged = await mainWorldJqueryClick(doc, c);
+      if (!bridged) {
+        const sel = JSON.stringify(cssPathOf(c));
+        w2.location.href = `javascript:void((function(){try{var j=window.jQuery;if(j&&j.fn){var el=document.querySelector(${sel});if(el&&!el.disabled){j(el).trigger('click');}}}catch(e){}})())`;
+      }
+    } else {
+      fireEv('click');
+    }
+  } catch {
+    fired += '-error';
   }
   logClickDebug(doc, { ...elInfo, fired });
 }
@@ -763,6 +848,276 @@ async function waitForRowGrowth(
     const info = findTable(doc);
     if (!info) return false;
     if (validDataRows(info.table).length > rowsBefore) return true;
+  }
+  return false;
+}
+
+/** 同一页、同一按钮的有效点击策略短期记忆；不跨 Document/iframe，不保存档案内容。 */
+const addRowStrategyCache = new WeakMap<Document, Map<string, number>>();
+
+function addRowButtonKey(btn: HTMLElement): string {
+  const text = normalizeText(`${btn.textContent || ''} ${btn.getAttribute('value') || ''}`).slice(0, 30);
+  const table = btn.closest('table');
+  const header = table?.rows[0] ? Array.from(table.rows[0].cells).map((cell) => normalizeText(cell.textContent || '')).join('|').slice(0, 80) : '';
+  return `${btn.tagName}|${btn.id}|${btn.getAttribute('name') || ''}|${(btn.className || '').toString().slice(0, 50)}|${text}|${header}`;
+}
+
+/**
+ * 加行点击 + 行数验证：单次点击（点击策略按全局点击序号轮换、跨轮升级）→ 短轮询等待行数增长。
+ * 不在同一轮连点多种策略：服务器加行可能延迟数秒，未验证就连点会造成一次尝试多行。
+ * 同一页同一按钮一旦成功，后续优先复用成功策略；页面重建后 WeakMap 自动失效。
+ */
+export async function clickAddRowVerified(
+  doc: Document,
+  btn: HTMLElement,
+  findTable: (d: Document) => { table: HTMLTableElement } | null,
+  rowsBefore: number,
+  beforeAdd?: (i: number) => void | number,
+  entryIndex = 0,
+  fallbackStrategy = 0,
+): Promise<boolean> {
+  if (!docAlive(doc)) return false;
+  const key = addRowButtonKey(btn);
+  const cache = addRowStrategyCache.get(doc) || new Map<string, number>();
+  addRowStrategyCache.set(doc, cache);
+  const remembered = cache.get(key);
+  const callbackStrategy = beforeAdd?.(entryIndex);
+  const strategy = remembered ?? (typeof callbackStrategy === 'number' ? callbackStrategy : fallbackStrategy);
+  await clickPageAction(btn, strategy);
+  const grown = await waitForRowGrowth(doc, findTable, rowsBefore);
+  if (grown) {
+    cache.set(key, strategy);
+    return true;
+  }
+  if (remembered !== undefined) cache.delete(key);
+  return false;
+}
+
+/** “已达最大行数”类系统弹窗/提示文案（巨能填 known_table_row_limits 同款关键词族） */
+const ROW_LIMIT_TEXT =
+  /(?:超过|超出|达到|已达)(?:系统)?(?:最大|限定)?(?:记录数|行数|条数)|(?:记录数|行数|条数)(?:已)?(?:达|到)(?:了)?(?:最大|上限)|不能超过\s*\d+|最多(?:只能)?(?:添加|填写|录入)?\s*\d+\s*(?:条|行|项)/;
+const ROW_LIMIT_DIALOG_SEL =
+  '.layui-layer, .ui-dialog, .artdialog, [role="dialog"], [class*="dialog" i], [class*="modal" i], [class*="popup" i], [class*="alert" i], [class*="toast" i]';
+
+/**
+ * 功能：检测“已达最大行数”类阻断（系统弹窗可见文案）。命中返回脱敏原因文本，未命中返回 null。
+ * 巨能填在行数不增长时先查此类弹窗再决定是否重试；我们也据此停止连点并如实告知用户。
+ */
+export function detectRowLimitBlocked(doc: Document): string | null {
+  try {
+    for (const el of Array.from(doc.querySelectorAll<HTMLElement>(ROW_LIMIT_DIALOG_SEL))) {
+      if (!isVisible(el)) continue;
+      const t = normalizeText(el.textContent || '');
+      if (!t || t.length > 200) continue;
+      if (ROW_LIMIT_TEXT.test(t)) return `系统提示行数上限：${t.slice(0, 80)}`;
+    }
+  } catch {
+    // 忽略
+  }
+  return null;
+}
+
+/** 动态表逐条决策诊断：每条记录的填写/跳过/停止决策落盘（不含档案内容），字段报告可直接定位停在哪一条。 */
+export function logRowDecision(doc: Document, entry: Record<string, unknown>): void {
+  try {
+    const store = (doc.defaultView as Window | null)?.sessionStorage;
+    if (!store) return;
+    const arr = (() => {
+      try {
+        return JSON.parse(store.getItem('tui-row-decision') || '[]') as unknown[];
+      } catch {
+        return [] as unknown[];
+      }
+    })();
+    arr.push({ at: Date.now(), ...entry });
+    store.setItem('tui-row-decision', JSON.stringify(arr.slice(-30)));
+  } catch {
+    // 忽略
+  }
+}
+
+// ===================== 弹窗式加行：误开检测与差量填写 =====================
+// 巨能填厦大协议同款安全规则：点击"新增"后若打开的是"修改/编辑"弹窗，绝不能在里面填写——
+// 那会把已有行覆盖掉。只承认明确的新增证据（标题/iframe 地址/隐藏操作字段），可疑一律中止并关闭。
+
+export interface OpenDialogInfo {
+  root: HTMLElement;
+  /** 弹窗内嵌 iframe 的文档（iframe 式弹窗） */
+  innerDoc: Document | null;
+  kind: 'add' | 'edit' | 'unknown';
+  confirmBtn: HTMLElement | null;
+}
+
+const DIALOG_ROOT_SEL =
+  '.layui-layer, .bh-dialog, [role="dialog"], .emap-dialog, .jqx-window, .modal, .bh-modal, [class*="dialog" i], [class*="modal" i], [class*="window" i], [class*="layer" i]';
+
+/** 功能：收集当前可见的弹窗根节点（供点击前后对比，归责"这次点击打开了哪个弹窗"）。只保留最外层容器。 */
+export function visibleDialogRoots(doc: Document): HTMLElement[] {
+  try {
+    return Array.from(doc.querySelectorAll<HTMLElement>(DIALOG_ROOT_SEL)).filter((root) => {
+      if (!isVisible(root)) return false;
+      // close 图标等内层元素同 class 命中时不算弹窗：只有外层容器参与归责
+      return !root.parentElement?.closest(DIALOG_ROOT_SEL);
+    });
+  } catch {
+    return [];
+  }
+}
+
+function sameRootSet(a: HTMLElement[], b: HTMLElement[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((root) => set.has(root));
+}
+
+function dialogInnerText(scope: HTMLElement | Document): string {
+  const root = scope instanceof Document ? (scope.body || scope.documentElement) : scope;
+  return normalizeText(root?.textContent || '');
+}
+
+/** 功能：把点击后新出现的弹窗分类为 新增/编辑/未知。编辑证据：标题"修改/编辑"、iframe 地址含 change/edit、隐藏 act 字段为 edit。 */
+function classifyDialog(root: HTMLElement): OpenDialogInfo {
+  let innerDoc: Document | null = null;
+  const frame = root.querySelector('iframe');
+  if (frame) {
+    try {
+      innerDoc = frame.contentDocument || null;
+    } catch {
+      innerDoc = null; // 跨域弹窗：只能靠外层证据判断
+    }
+  }
+  let kind: OpenDialogInfo['kind'] = 'unknown';
+  const src = (frame?.getAttribute('src') || '').toLowerCase();
+  if (/change|edit|modify|update/.test(src)) kind = 'edit';
+  else if (/add|create|append|new/.test(src)) kind = 'add';
+  if (kind === 'unknown' && innerDoc) {
+    const ops = Array.from(innerDoc.querySelectorAll<HTMLInputElement>('input[type="hidden"]')).filter((el) =>
+      /^(act|op|action|mode|oper|type|do)$/i.test(`${el.name} ${el.id}`),
+    );
+    if (ops.some((el) => /edit|change|update|modify/i.test(el.value))) kind = 'edit';
+    else if (ops.some((el) => /add|insert|new|create/i.test(el.value))) kind = 'add';
+  }
+  if (kind === 'unknown') {
+    const title = normalizeText(root.querySelector('.layui-layer-title,.modal-title,[class*="title" i],h1,h2,h3')?.textContent || '');
+    if (/修改|编辑|变更|更改/.test(title)) kind = 'edit';
+    else if (/新增|添加|增加|新建|录入/.test(title)) kind = 'add';
+  }
+  if (kind === 'unknown' && innerDoc) {
+    const text = dialogInnerText(innerDoc).slice(0, 400);
+    if (/^修改|编辑信息|修改记录/.test(text)) kind = 'edit';
+    else if (/^新增|添加记录|添加信息/.test(text)) kind = 'add';
+  }
+  return { root, innerDoc, kind, confirmBtn: null };
+}
+
+/** 功能：温和关闭弹窗——只点关闭/取消类控件，绝不点"确定/保存"（编辑弹窗里点确定会提交覆盖）。 */
+function closeDialogSoft(root: HTMLElement): void {
+  const closer = Array.from(root.querySelectorAll<HTMLElement>('.layui-layer-close, [class*="close" i], a, button, span, i')).find((el) => {
+    if (!isVisible(el) || el.closest(OWN_UI_SEL)) return false;
+    const text = normalizeText(`${el.textContent || ''} ${el.getAttribute('title') || ''}`);
+    const cls = (el.className || '').toString();
+    if (/^(取消|关闭|返回|收起|放弃)$/.test(text)) return true;
+    return /close|cancel/i.test(cls) && !/确定|保存|提交/.test(text);
+  });
+  if (closer) {
+    try {
+      closer.click();
+    } catch {
+      // 忽略
+    }
+    return;
+  }
+  // 无关闭控件：派发 Escape（多数弹窗组件支持 Esc 关闭），仍不碰确定/保存
+  try {
+    root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    root.ownerDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+  } catch {
+    // 忽略
+  }
+}
+
+/**
+ * 功能：加行点击未带来行增长时的弹窗归责处理。
+ * 原理：只处理"本次点击新出现"的弹窗（避免误关选择器弹窗）；编辑/未知弹窗立即温和关闭并中止本条；
+ * 新增弹窗且调用方提供填写回调时执行弹窗内填写并确认。返回是否已消化本次点击（filled=true 视为成功）。
+ */
+export async function handleDialogAfterClick(
+  doc: Document,
+  beforeRoots: HTMLElement[],
+  kindLabel: string,
+  entryIndex: number,
+  fillAdd?: (dialog: OpenDialogInfo) => Promise<boolean>,
+): Promise<'filled' | 'closed-edit' | 'closed-new' | 'left-open' | 'none'> {
+  const after = visibleDialogRoots(doc);
+  if (sameRootSet(beforeRoots, after)) return 'none';
+  const fresh = after.filter((root) => !beforeRoots.includes(root));
+  for (const root of fresh) {
+    const info = classifyDialog(root);
+    if (info.kind === 'add' && fillAdd) {
+      if (await fillAdd(info)) return 'filled';
+    }
+    closeDialogSoft(root);
+    logRowDecision(doc, { kind: kindLabel, index: entryIndex, decision: info.kind === 'edit' ? 'edit-dialog-aborted' : 'new-dialog-unsupported' });
+    return info.kind === 'edit' ? 'closed-edit' : 'closed-new';
+  }
+  return 'left-open';
+}
+
+/** 功能：在"新增"弹窗内按语义映射填写学术成果字段并确认，行真实增长才算成功。 */
+async function fillAchievementDialog(doc: Document, dialog: OpenDialogInfo, entry: { title: string; date: string; role: string; description: string }): Promise<boolean> {
+  const scope: HTMLElement | Document = dialog.innerDoc || dialog.root;
+  const rootEl = scope instanceof Document ? (scope.body || scope.documentElement) : scope;
+  if (!rootEl) return false;
+  const inputs = Array.from(rootEl.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input:not([type="hidden"]), textarea')).filter((el) => isVisible(el) && !el.readOnly && !el.disabled);
+  const semanticOf = (el: HTMLInputElement | HTMLTextAreaElement): string => {
+    const label = el.closest('td,th,label,.form-item,.layui-form-item,.el-form-item')?.textContent || '';
+    return normalizeText(`${(el as HTMLInputElement).placeholder || ''} ${el.getAttribute('title') || ''} ${el.name} ${el.id} ${label}`.slice(0, 160));
+  };
+  let titleInput: HTMLInputElement | HTMLTextAreaElement | null = null;
+  for (const el of inputs) {
+    const s = semanticOf(el);
+    if (/标题|题目|成果名称|论文名称|名称/.test(s) && !/刊物|出版社|期刊|排名/.test(s)) {
+      titleInput = el;
+      break;
+    }
+  }
+  if (!titleInput && inputs.length) titleInput = inputs[0]; // 单输入框弹窗：唯一输入框即标题
+  if (!titleInput) return false;
+  const trySet = (el: HTMLInputElement | HTMLTextAreaElement, val: string, semantic: RegExp): boolean => {
+    if (!val) return false;
+    const hit = inputs.find((cand) => cand !== titleInput && semantic.test(semanticOf(cand)));
+    if (hit && !hit.value.trim()) {
+      setInputValue(hit, val);
+      return true;
+    }
+    return false;
+  };
+  setInputValue(titleInput, entry.title);
+  if (!titleInput.value.trim() || normalizeText(titleInput.value) !== normalizeText(entry.title)) return false; // 弹窗写入被组件拒绝：不确认，交给人工
+  const monthStart = (s: string): string => {
+    const m = /^(\d{4})[-/.](\d{1,2})/.exec((s || '').trim());
+    return m ? `${m[1]}-${m[2].padStart(2, '0')}` : (s || '').trim();
+  };
+  trySet(titleInput, monthStart(entry.date), /时间|日期|年月/);
+  trySet(titleInput, entry.description || '', /刊物|出版社|期刊|来源|出处/);
+  trySet(titleInput, entry.role || '', /排名|位次|排序/);
+  const confirm = Array.from(rootEl.querySelectorAll<HTMLElement>('a,button,input[type="button"],input[type="submit"],span')).find((el) => {
+    if (!isVisible(el) || el.closest(OWN_UI_SEL)) return false;
+    const text = normalizeText(`${el.textContent || ''} ${(el as HTMLInputElement).value || ''}`);
+    return /^(确定|确认|保存|提交)$/.test(text) && !/最终|锁定|缴费|报名/.test(text);
+  });
+  if (!confirm) return false;
+  // 新表可能只有表头行（成果为 0 条）：此时 findAchievementTable 返回 null，行增长基线按 0 计
+  const tableInfo = findAchievementTable(doc);
+  const rowsBefore = tableInfo ? validDataRows(tableInfo.table).length : 0;
+  await clickPageAction(confirm, 0);
+  // 确认后行可能异步出现（服务器保存）：表出现前持续轮询，不能因"暂无表"立即判负
+  const t0 = Date.now();
+  while (Date.now() - t0 < 3000) {
+    await sleep(120);
+    if (!docAlive(doc)) return false;
+    const info = findAchievementTable(doc);
+    if (info && validDataRows(info.table).length > rowsBefore) return true;
   }
   return false;
 }
@@ -863,7 +1218,15 @@ function dataRowsOf(table: HTMLTableElement): HTMLTableRowElement[] {
  * 行数不够时自动点击"新增一行"按钮扩展，直到全部填完。
  * 注意：不依赖"空行"判断（真实页面行内常带隐藏编码输入框），按行号直接覆盖填写。
  */
-export async function fillAchievements(profile: Profile, doc: Document, startIndex = 0, beforeAdd?: (i: number) => void | number, maxAddAttempts = 10): Promise<number> {
+export async function fillAchievements(
+  profile: Profile,
+  doc: Document,
+  startIndex = 0,
+  beforeAdd?: (i: number) => void | number,
+  maxAddAttempts = 10,
+  allowCommitActions = true,
+  onProcessed?: (nextIndex: number) => void,
+): Promise<number> {
   const entries = profile.research.filter((r) => r.title && r.title.trim()).slice(0, 20);
   if (!entries.length) return 0;
   const stripJournal = (s: string) => s.replace(/^发表刊物(?:或出版社)?[：:]?\s*/, '');
@@ -882,52 +1245,93 @@ export async function fillAchievements(profile: Profile, doc: Document, startInd
     return (cell.textContent || '').trim();
   };
   let filled = 0;
+  // 去重键 = 标题（巨能填 page_protocol_fill 同款：页面已有同题名行即跳过，宁可不填也不产生重复行；
+  // 同题不同月的档案条目会被跳过，决策日志记为 duplicate，字段报告可直接看到跳过了哪几条）
   for (let i = startIndex; i < entries.length; i++) {
     const entry = entries[i];
     let row: HTMLTableRowElement | null = null;
     let alreadyPresent = false;
-    for (let attempt = 0; attempt <= maxAddAttempts; attempt++) {
+    let attempt = 0; // 连续加行失败计数：仅"点击后行数未增长"才 +1，成功增长不计数（不再按总点击封顶）
+    let pbWaits = 0; // 回发等待次数：与失败分开计，防止回发窗口把失败预算烧光后卡死
+    let iters = 0; // 安全阀：单条记录总迭代上限，防"行一直加但永远不被判定可用"的异常页面无限点击
+    while (attempt <= maxAddAttempts && ++iters <= maxAddAttempts * 2 + 6) {
       if (!docAlive(doc)) return filled; // 整页回发已刷新：续填接管，旧文档不再操作
       if (postbackJustFired(doc)) {
-        await sleep(2000); // 回发进行中：等刷新，不连点
-        continue;
+        if (++pbWaits <= 4) {
+          await sleep(2000); // 回发进行中：等刷新，不连点
+          continue;
+        }
+        // 回发窗口（约 8 秒）已耗尽而文档仍在：不再空等，按当前页面状态继续
       }
       const info = findAchievementTable(doc);
-      if (!info) break;
-      const rows = validDataRows(info.table);
+      if (!info) {
+        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'table-missing' });
+        break;
+      }
       // 页面已有该条目（含无输入框的服务器展示行）→ 跳过，避免重复
       if (dataRowsOf(info.table).some((r) => normalizeText(rowTitle(r, info.titleIdx)) === normalizeText(entry.title))) {
         alreadyPresent = true;
+        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'duplicate' });
         break;
       }
       // 优先填空行（标题格为空且有关键输入框；整行全空才用，避免覆盖用户半填的行）
+      const rows = validDataRows(info.table);
       const empty = rows.find((r) => !rowTitle(r, info.titleIdx) && cellHasControl(r, info.titleIdx) && rowFullyEmpty(r, [info.timeIdx, info.titleIdx, info.journalIdx, info.roleIdx]));
       if (empty) {
         row = empty;
         break;
       }
-      if (attempt >= maxAddAttempts) break; // 纯填充模式（maxAddAttempts=0）不点按钮
-      const addBtn = findAddButton(info.table);
-      if (addBtn) {
-        const rowsBefore = validDataRows(info.table).length;
-        await clickPageAction(addBtn, clickAttempt(beforeAdd, i, attempt));
-        // 短轮询等行数增长（东华式客户端加行即时换行）；整页回发由断点续填接管
-        if (await waitForRowGrowth(doc, findAchievementTable, rowsBefore)) continue;
-        if (!docAlive(doc)) continue;
-        break; // 等待超时且行数未增长：停止连点，防「无限新增一行」
-      }
-      // 南理工式：保存后服务器才多出一行 → 自动点「保存」
-      const saveBtn = findSaveButton(info.table);
-      if (saveBtn) {
-        const rowsBefore = validDataRows(info.table).length;
-        await clickPageAction(saveBtn, clickAttempt(beforeAdd, i, attempt));
-        if (await waitForRowGrowth(doc, findAchievementTable, rowsBefore)) continue;
-        if (!docAlive(doc)) continue;
+      // 系统已提示行数上限：不再点击，停止并如实报告（巨能填 known_table_row_limits 同款停止条件）
+      const limit = detectRowLimitBlocked(doc);
+      if (limit) {
+        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'limit-blocked', reason: limit });
         break;
       }
+      if (attempt >= maxAddAttempts) {
+        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'add-fail-cap', failRound: attempt });
+        break; // 纯填充模式（maxAddAttempts=0）不点按钮
+      }
+      const addBtn = findAddButton(info.table);
+      if (addBtn && (allowCommitActions || isExplicitAddRowAction(addBtn))) {
+        const rowsBefore = validDataRows(info.table).length;
+        const dialogsBefore = visibleDialogRoots(doc);
+        // 单次点击（策略跨轮轮换）+ 行数验证；整页回发由断点续填接管
+        if (await clickAddRowVerified(doc, addBtn, findAchievementTable, rowsBefore, beforeAdd, i, attempt)) continue;
+        if (!docAlive(doc)) continue;
+        // 行数上限弹窗最先判定：命中时保留弹窗给用户看，不关闭不继续
+        const limit = detectRowLimitBlocked(doc);
+        if (limit) {
+          logRowDecision(doc, { kind: 'achievements', index: i, decision: 'limit-blocked', failRound: attempt, reason: limit });
+          break;
+        }
+        // 点击打开的是弹窗而非直接加行：新增弹窗就地填写确认，编辑弹窗立即关闭（防止覆盖已有行）
+        const dialogOutcome = await handleDialogAfterClick(doc, dialogsBefore, 'achievements', i, (dialog) =>
+          fillAchievementDialog(doc, dialog, { title: entry.title, date: entry.date, role: entry.role || '', description: entry.description || '' }),
+        );
+        if (dialogOutcome === 'filled') continue;
+        if (dialogOutcome !== 'none') break; // 弹窗已处理（关闭/无法安全填写）：本条中止，交由外层预算与人工核对
+        attempt++;
+        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'no-growth', failRound: attempt });
+        break; // 行数未增长：本轮停止连点，跨轮由外层按连续失败预算重试并轮换点击策略
+      }
+      // 南理工式：保存后服务器才多出一行 → 自动点「保存」
+      const saveBtn = allowCommitActions ? findSaveButton(info.table) : null;
+      if (saveBtn) {
+        const rowsBefore = validDataRows(info.table).length;
+        if (await clickAddRowVerified(doc, saveBtn, findAchievementTable, rowsBefore, beforeAdd, i, attempt)) continue;
+        if (!docAlive(doc)) continue;
+        attempt++;
+        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'save-no-growth', failRound: attempt });
+        break;
+      }
+      logRowDecision(doc, { kind: 'achievements', index: i, decision: 'no-add-btn' });
       break;
     }
-    if (alreadyPresent) continue;
+    if (alreadyPresent) {
+      // 已存在行无需重写，但已经完成，续填内核必须据此推进游标。
+      onProcessed?.(i + 1);
+      continue;
+    }
     if (!row) break;
     const info = findAchievementTable(doc);
     if (!info) break;
@@ -945,6 +1349,7 @@ export async function fillAchievements(profile: Profile, doc: Document, startInd
     set(info.roleIdx, entry.role || '');
     set(info.journalIdx, stripJournal(entry.description || ''));
     filled++;
+    onProcessed?.(i + 1);
   }
   return filled;
 }
@@ -1135,7 +1540,15 @@ function fillExperienceTables(profile: Profile, doc: Document, handled: Set<Elem
  * 学习/工作经历全自动填写（异步）：只填空行、已存在的条目自动跳过；行数不够时自动点击"新增一行"按钮扩展。
  * 北邮式逐行网格：填完立即点行内「添加」落库（自动换行），输入行里残留的未保存内容也会被补点「添加」保存。
  */
-export async function fillExperiences(profile: Profile, doc: Document, startIndex = 0, beforeAdd?: (i: number) => void | number, maxAddAttempts = 10): Promise<number> {
+export async function fillExperiences(
+  profile: Profile,
+  doc: Document,
+  startIndex = 0,
+  beforeAdd?: (i: number) => void | number,
+  maxAddAttempts = 10,
+  allowCommitActions = true,
+  onProcessed?: (nextIndex: number) => void,
+): Promise<number> {
   const entries = profile.experiences.filter((e) => (e.org && e.org.trim()) || (e.start && e.start.trim())).slice(0, 20);
   if (!entries.length) return 0;
   let filled = 0;
@@ -1163,7 +1576,7 @@ export async function fillExperiences(profile: Profile, doc: Document, startInde
         }
         // 输入行里已填但未落库（上次「添加」没生效）→ 点本行 DoPostback「添加」保存，实现自动换行
         const rowBtn = findAddButton(info.table, existingRow);
-        if (rowBtn && isDoPostbackAction(rowBtn)) {
+        if (allowCommitActions && rowBtn && isDoPostbackAction(rowBtn)) {
           if (attempt >= maxAddAttempts) break;
           await clickPageAction(rowBtn, clickAttempt(beforeAdd, i, attempt));
           await sleep(1500); // 北邮等服务器回发较慢：给足新行出现的时间再继续
@@ -1180,16 +1593,24 @@ export async function fillExperiences(profile: Profile, doc: Document, startInde
       }
       if (attempt >= maxAddAttempts) break; // 纯填充模式（maxAddAttempts=0）不点按钮
       const addBtn = findAddButton(info.table);
-      if (addBtn) {
+      if (addBtn && (allowCommitActions || isExplicitAddRowAction(addBtn))) {
         const rowsBefore = validDataRows(info.table).length;
-        await clickPageAction(addBtn, clickAttempt(beforeAdd, i, attempt));
-        // 短轮询等行数增长（东华式客户端加行即时换行）；整页回发由断点续填接管
-        if (await waitForRowGrowth(doc, findExperienceTable, rowsBefore)) continue;
+        const dialogsBefore = visibleDialogRoots(doc);
+        // 验证式点击：单策略生效即停，确认未增长才换策略；行数上限弹窗出现即停止
+        if (await clickAddRowVerified(doc, addBtn, findExperienceTable, rowsBefore, beforeAdd, i)) continue;
         if (!docAlive(doc)) continue; // 整页回发已刷新：断点续填接管
+        // 行数上限弹窗最先判定：命中时保留弹窗给用户看；其余新开弹窗若非本表可安全填写的形态则温和关闭
+        const limit = detectRowLimitBlocked(doc);
+        if (limit) {
+          logRowDecision(doc, { kind: 'experiences', index: i, decision: 'limit-blocked', reason: limit });
+          break;
+        }
+        if ((await handleDialogAfterClick(doc, dialogsBefore, 'experiences', i)) !== 'none') break;
+        logRowDecision(doc, { kind: 'experiences', index: i, decision: 'no-growth' });
         break; // 等待超时且行数未增长：停止连点，防「无限新增一行」
       }
       // 南理工式：保存后服务器才多出一行 → 自动点「保存」（回发刷新后由断点续填接管）
-      const saveBtn = findSaveButton(info.table);
+      const saveBtn = allowCommitActions ? findSaveButton(info.table) : null;
       if (saveBtn) {
         const rowsBefore = validDataRows(info.table).length;
         await clickPageAction(saveBtn, clickAttempt(beforeAdd, i, attempt));
@@ -1209,14 +1630,18 @@ export async function fillExperiences(profile: Profile, doc: Document, startInde
       }
       break;
     }
-    if (alreadyPresent) continue;
+    if (alreadyPresent) {
+      onProcessed?.(i + 1); // 已存在的经历行也必须推进断点，防止外层空转误判失败
+      continue;
+    }
     if (!row) break;
     const info = findExperienceTable(doc);
     if (!info) break;
     if (!fillExperienceRow(row, e, info)) break;
     filled++;
+    onProcessed?.(i + 1); // 本条已完整写入：显式推进断点（n 计数不含"已存在跳过"的条目）
     // 北邮式逐行网格：填完立即点本行 DoPostback「添加」落库（自动换行/自动添加）
-    if (maxAddAttempts > 0) {
+    if (allowCommitActions && maxAddAttempts > 0) {
       const rowBtn = findAddButton(info.table, row);
       if (rowBtn && isDoPostbackAction(rowBtn)) {
         await clickPageAction(rowBtn, clickAttempt(beforeAdd, i, 0));
@@ -1313,8 +1738,8 @@ function fillAwardTables(profile: Profile, doc: Document, handled: Set<Element>,
       return normalizeText(row.cells[idx].textContent || '');
     };
     // 去重键 = 名称+时间：同名但获奖时间不同是两条不同记录
-    const rowKey = (r: HTMLTableRowElement): string => `${normalizeText(cellName(r, nameIdx))}|${cellTime(r, timeIdx)}`;
-    const entryKey = (name: string, date: string): string => `${normalizeText(name)}|${normalizeText(normalizeMonth(date) || date)}`;
+    const rowKey = (r: HTMLTableRowElement): string => `${normalizeText(cellName(r, nameIdx))}|${monthKeyOf(cellTime(r, timeIdx))}`;
+    const entryKey = (name: string, date: string): string => `${normalizeText(name)}|${monthKeyOf(date)}`;
     const seenKeys = new Set<string>();
     let dupCount = 0;
     entries.forEach((a, i) => {
@@ -1358,7 +1783,15 @@ function fillAwardTables(profile: Profile, doc: Document, handled: Set<Element>,
 }
 
 /** 奖励情况全自动填写：去重 + 行数不够时自动点击"新增一行/保存"扩展（断点续填） */
-export async function fillAwardRows(profile: Profile, doc: Document, startIndex = 0, beforeAdd?: (i: number) => void | number, maxAddAttempts = 10): Promise<number> {
+export async function fillAwardRows(
+  profile: Profile,
+  doc: Document,
+  startIndex = 0,
+  beforeAdd?: (i: number) => void | number,
+  maxAddAttempts = 10,
+  allowCommitActions = true,
+  onProcessed?: (nextIndex: number) => void,
+): Promise<number> {
   const entries = profile.awards.filter((a) => a.content && a.content.trim()).slice(0, 20);
   if (!entries.length) return 0;
   let filled = 0;
@@ -1384,9 +1817,23 @@ export async function fillAwardRows(profile: Profile, doc: Document, startIndex 
         if (el && el.value.trim()) return normalizeText(el.value);
         return normalizeText(r.cells[found.timeIdx].textContent || '');
       };
-      // 去重键 = 名称+时间：同名但获奖时间不同是两条不同记录
-      const entryKey = `${normalizeText(name)}|${normalizeText(normalizeMonth(a.date) || a.date)}`;
-      if (dataRowsOf(found.table).some((r) => `${normalizeText(cellNameOf(r))}|${cellTimeOf(r)}` === entryKey)) {
+      // 去重键 = 名称+时间：同名但获奖时间不同是两条不同记录；月份两侧统一规范化（页面可能用 202410 紧凑格式）
+      const entryKey = `${normalizeText(name)}|${monthKeyOf(a.date)}`;
+      const existingRow = dataRowsOf(found.table).find((r) => `${normalizeText(cellNameOf(r))}|${monthKeyOf(cellTimeOf(r))}` === entryKey);
+      if (existingRow) {
+        // 已有同名同时间的行：只补空白单元格（如漏填的获奖地点/级别），绝不覆盖已有内容（巨能填"差量同步·先补缺"同款）。
+        // 补缺后视为已处理并推进断点，否则外层会对同一行反复空转直到误判失败。
+        const setIfEmpty = (idx: number, val: string): void => {
+          if (idx < 0 || !val || !existingRow.cells[idx]) return;
+          const cell = existingRow.cells[idx];
+          const el = (cell.querySelector('input:not([type="hidden"])') || cell.querySelector('input')) as HTMLInputElement | null;
+          if (!el || el.value.trim()) return;
+          setInputValue(el, val);
+          markEl(el, 'filled');
+          logRowDecision(doc, { kind: 'awards', index: i, decision: 'gap-filled' });
+        };
+        setIfEmpty(found.unitIdx, unit);
+        setIfEmpty(found.reasonIdx, (a.level || '').trim());
         alreadyPresent = true;
         break;
       }
@@ -1398,14 +1845,22 @@ export async function fillAwardRows(profile: Profile, doc: Document, startIndex 
       }
       if (attempt >= maxAddAttempts) break;
       const addBtn = findAddButton(found.table);
-      if (addBtn) {
+      if (addBtn && (allowCommitActions || isExplicitAddRowAction(addBtn))) {
         const rowsBefore = validDataRows(found.table).length;
-        await clickPageAction(addBtn, clickAttempt(beforeAdd, i, attempt));
-        if (await waitForRowGrowth(doc, findAwardTable, rowsBefore)) continue;
+        const dialogsBefore = visibleDialogRoots(doc);
+        // 验证式点击：单策略生效即停，确认未增长才换策略；行数上限弹窗出现即停止
+        if (await clickAddRowVerified(doc, addBtn, findAwardTable, rowsBefore, beforeAdd, i)) continue;
         if (!docAlive(doc)) continue; // 整页回发已刷新：断点续填接管
+        const limit = detectRowLimitBlocked(doc);
+        if (limit) {
+          logRowDecision(doc, { kind: 'awards', index: i, decision: 'limit-blocked', reason: limit });
+          break;
+        }
+        if ((await handleDialogAfterClick(doc, dialogsBefore, 'awards', i)) !== 'none') break;
+        logRowDecision(doc, { kind: 'awards', index: i, decision: 'no-growth' });
         break; // 行数未增长：停止连点，防「无限新增一行」
       }
-      const saveBtn = findSaveButton(found.table);
+      const saveBtn = allowCommitActions ? findSaveButton(found.table) : null;
       if (saveBtn) {
         const rowsBefore = validDataRows(found.table).length;
         await clickPageAction(saveBtn, clickAttempt(beforeAdd, i, attempt));
@@ -1415,7 +1870,12 @@ export async function fillAwardRows(profile: Profile, doc: Document, startIndex 
       }
       break;
     }
-    if (alreadyPresent) continue;
+    if (alreadyPresent) {
+      // 已存在（含只补了空格）的行同样算已处理：续填内核必须据此推进游标，
+      // 否则外层会对同一行空转直至误判失败并丢弃剩余条目（合工大奖励地点漏填的根因）。
+      onProcessed?.(i + 1);
+      continue;
+    }
     if (!row) break;
     const found2 = findAwardTable(doc);
     if (!found2) break;
@@ -1432,123 +1892,240 @@ export async function fillAwardRows(profile: Profile, doc: Document, startIndex 
     setCell(found2.reasonIdx, a.level || '');
     setCell(found2.nameIdx, name);
     filled++;
+    onProcessed?.(i + 1); // 本条已完整写入：显式推进断点（n 计数不含"已存在跳过"的条目，单靠 n 会使游标滞后）
   }
   return filled;
 }
 
-/** 外语/计算机水平表格：表头为"名称/成绩/时间"结构，用档案四六级数据填充第一二行 */
-function fillCetTables(profile: Profile, doc: Document, handled: Set<Element>, items: FillItem[], stats: { filled: number; profileEmpty: number }): void {
-  const cet4 = profile.education.cet4 ? profile.education.cet4.trim() : '';
-  const cet6 = profile.education.cet6 ? profile.education.cet6.trim() : '';
-  if (!cet4) return;
-  for (const table of Array.from(doc.querySelectorAll<HTMLTableElement>('table'))) {
-    const allRows = Array.from(table.rows);
-    if (allRows.length < 2) continue;
-    const first = rowTexts(allRows[0]);
-    const isCetHeader = first.some((h) => /名称|类别/.test(h)) && first.some((h) => h.includes('成绩')) && first.some((h) => /外语|计算机/.test(h));
-    if (!isCetHeader) continue;
-    markGridHandled(table, handled); // 整表控件标记"已处理"，空行不参与通用匹配
-    const nameIdx = first.findIndex((h) => /名称|类别/.test(h));
-    const scoreIdx = first.findIndex((h) => h.includes('成绩') && !/时间|日期/.test(h));
-    const dateIdx = first.findIndex((h) => /时间|日期/.test(h));
-    if (nameIdx < 0 || scoreIdx < 0) continue;
-    const fullDateHint = first.some((h) => /日期格式|20\d{2}-\d{1,2}-\d{1,2}/.test(h));
-    const fillRow = (row: HTMLTableRowElement, score: string, date: string | undefined, nameText: string, field: string) => {
-      const cellInput = (i: number): HTMLInputElement | null => (i >= 0 && row.cells[i] ? row.cells[i].querySelector('input') : null);
-      const nameEl = cellInput(nameIdx);
-      const scoreEl = cellInput(scoreIdx);
-      const dateEl = cellInput(dateIdx);
-      if (!nameEl || !scoreEl) return false;
-      // 已有内容且与档案不一致：不覆盖（保护用户已填/已改数据）
-      const existingName = (nameEl.value || '').trim();
-      const existingScore = (scoreEl.value || '').trim();
-      if (existingName || existingScore) {
-        if (existingName === nameText && existingScore === score) {
-          // 已是我们填过的行：仅更新日期（或补日期缺失提醒），不重写其它格
-          if (dateEl) {
-            const nm = date && date.trim() ? normalizeMonth(date) : null;
-            if (nm) {
-              const dv = fullDateHint ? `${nm}-01` : nm;
-              setInputValue(dateEl, dv);
-              if (dateEl.readOnly) {
-                syncReadonlyPicker(dateEl, doc);
-                restoreAfterPickerSync(dateEl, dv, doc); // 日历重置成当前月份时自动恢复
-              }
-              handled.add(dateEl);
-              markEl(dateEl, 'filled');
-            } else {
-              handled.add(dateEl);
-              markEl(dateEl, 'empty');
-              stats.profileEmpty++;
-              items.push({
-                label: '外语水平取得时间（请在档案「教育背景-四级/六级取得时间」补充）',
-                field: `${field}Date`,
-                status: 'profileEmpty',
-                el: dateEl,
-              });
-            }
-          }
-          return true;
-        }
-        return false; // 用户改过的内容：保留原样
-      }
-      setInputValue(nameEl, nameText);
-      setInputValue(scoreEl, score);
-      handled.add(nameEl);
-      handled.add(scoreEl);
-      markEl(nameEl, 'filled');
-      markEl(scoreEl, 'filled');
-      if (dateEl) {
-        const nm = date && date.trim() ? normalizeMonth(date) : null;
-        if (nm) {
-          const dv = fullDateHint ? `${nm}-01` : nm;
-          setInputValue(dateEl, dv);
-          // 时间框有弹窗（只读）→ 补一次"打开-收起"同步页面状态；没弹窗 → 直接注入即可
-          if (dateEl.readOnly) {
-            syncReadonlyPicker(dateEl, doc);
-            restoreAfterPickerSync(dateEl, dv, doc); // 日历重置成当前月份时自动恢复
-          }
-          handled.add(dateEl);
-          markEl(dateEl, 'filled');
-        } else {
-          // 档案未填取得时间：黄色标记提醒 + 计入漏填清单，而不是无声跳过
-          handled.add(dateEl);
-          markEl(dateEl, 'empty');
-          stats.profileEmpty++;
-          items.push({
-            label: '外语水平取得时间（请在档案「教育背景-四级/六级取得时间」补充）',
-            field: `${field}Date`,
-            status: 'profileEmpty',
-            el: dateEl,
-          });
-        }
-      }
-      stats.filled++;
-      items.push({ label: `外语水平：${nameText} ${score}`, field, status: 'filled', valuePreview: score, el: nameEl });
-      return true;
-    };
-    const dataRows = allRows.filter((r) => r !== allRows[0]);
-    // 按内容匹配：已有"四级/六级"行则只更新日期/提醒；否则写入第一个全空行（防止重复行、防覆盖已有内容）
-    const nameElOf = (r: HTMLTableRowElement): HTMLInputElement | null => (r.cells[nameIdx] ? r.cells[nameIdx].querySelector('input') : null);
-    const rowHasCat = (kw: string): HTMLTableRowElement | undefined =>
-      dataRows.find((r) => {
-        const el = nameElOf(r);
-        return !!el && new RegExp(kw, 'i').test(normalizeText(el.value || ''));
-      });
-    const emptyRow = (): HTMLTableRowElement | undefined => dataRows.find((r) => rowFullyEmpty(r, [nameIdx, scoreIdx, dateIdx]));
-    const handleCat = (kw: string, score: string, date: string | undefined, nameText: string, field: string) => {
-      if (!score) return;
-      const existing = rowHasCat(kw);
-      if (existing) {
-        fillRow(existing, score, date, nameText, field); // 已有我们填过的行 → 只更新日期/补提醒，不重写其它格
-        return;
-      }
-      const r = emptyRow();
-      if (r) fillRow(r, score, date, nameText, field);
-    };
-    handleCat('四级|cet4|cet-4', cet4, profile.education.cet4Date, '大学英语四级（CET-4）', 'education.cet4');
-    handleCat('六级|cet6|cet-6', cet6, profile.education.cet6Date, '大学英语六级（CET-6）', 'education.cet6');
+interface LanguageTableInfo {
+  table: HTMLTableElement;
+  typeIdx: number;
+  scoreIdx: number;
+  dateIdx: number;
+  noteIdx: number;
+  fullDateHint: boolean;
+}
+
+interface LanguageEntry {
+  kind: string;
+  score: string;
+  date: string;
+  field: string;
+}
+
+/** 功能：把档案考试名称规范成高校页面常见选项；必须精确区分 CET 与英语专业等级。 */
+function languageKindAliases(raw: string): { page: string; display: string; known: boolean } {
+  const kind = (raw || '').trim();
+  const low = normalizeText(kind).toLowerCase().replace(/[－—_\s]/g, '-');
+  if (/专业.*八级|tem-?8|temⅷ/i.test(low)) return { page: '英语专业八级', display: '英语专业八级（TEM-8）', known: true };
+  if (/专业.*四级|tem-?4|temⅳ/i.test(low)) return { page: '英语专业四级', display: '英语专业四级（TEM-4）', known: true };
+  if (/六级|cet-?6/i.test(low)) return { page: '六级', display: '大学英语六级（CET-6）', known: true };
+  if (/四级|cet-?4/i.test(low)) return { page: '四级', display: '大学英语四级（CET-4）', known: true };
+  if (/托福|toefl/i.test(low)) return { page: '托福', display: '托福（TOEFL）', known: true };
+  if (/雅思|ielts/i.test(low)) return { page: '雅思', display: '雅思（IELTS）', known: true };
+  return { page: kind, display: kind, known: false };
+}
+
+/** 功能：生成考试类型、成绩和日期不可拆分的原子记录，防止六级类型误配四级成绩。 */
+function languageEntries(profile: Profile): LanguageEntry[] {
+  const entries: LanguageEntry[] = [];
+  for (let i = 0; i < profile.languageExams.length; i++) {
+    const exam = profile.languageExams[i];
+    const kind = (exam.kind || exam.level || '').trim();
+    const score = (exam.score || '').trim();
+    if (!kind || !score || /^0(?:\.0+)?$/.test(score)) continue;
+    entries.push({ kind, score, date: (exam.date || '').trim(), field: `languageExams[${i}]` });
   }
+  const addLegacy = (kind: string, scoreRaw: string | undefined, dateRaw: string | undefined, field: string) => {
+    const score = (scoreRaw || '').trim();
+    if (!score || /^0(?:\.0+)?$/.test(score)) return;
+    const alias = languageKindAliases(kind).page;
+    // V2 原子表是权威来源：同一考试类型已经存在时，不再混入旧教育字段中的另一个成绩。
+    if (entries.some((entry) => languageKindAliases(entry.kind).page === alias)) return;
+    entries.push({ kind, score, date: (dateRaw || '').trim(), field });
+  };
+  addLegacy('CET-4', profile.education.cet4, profile.education.cet4Date, 'education.cet4');
+  addLegacy('CET-6', profile.education.cet6, profile.education.cet6Date, 'education.cet6');
+  return entries.slice(0, 10);
+}
+
+/** 功能：供页面任务调度器读取本次需要填写的有效语言考试条数。 */
+export function languageExamEntryCount(profile: Profile): number {
+  return languageEntries(profile).length;
+}
+
+/** 功能：识别“外语水平/英语等级 + 成绩 + 时间”表格，首列允许 input 或 select。 */
+export function findLanguageTable(doc: Document): LanguageTableInfo | null {
+  for (const table of Array.from(doc.querySelectorAll<HTMLTableElement>('table'))) {
+    if (table.rows.length < 2) continue;
+    const header = rowTexts(table.rows[0]);
+    const typeIdx = header.findIndex((text) => /外语水平|英语等级|外语等级|考试类型|名称|类别/.test(text));
+    const scoreIdx = header.findIndex((text) => /成绩|分数/.test(text) && !/时间|日期/.test(text));
+    if (typeIdx < 0 || scoreIdx < 0 || !header.some((text) => /外语|英语|考试/.test(text))) continue;
+    const typeControl = table.rows[1]?.cells[typeIdx]?.querySelector('input:not([type="hidden"]),select');
+    const scoreControl = table.rows[1]?.cells[scoreIdx]?.querySelector('input:not([type="hidden"]),select');
+    if (!typeControl || !scoreControl) continue;
+    return {
+      table,
+      typeIdx,
+      scoreIdx,
+      dateIdx: header.findIndex((text) => /时间|日期/.test(text)),
+      noteIdx: header.findIndex((text) => /备注|说明/.test(text)),
+      fullDateHint: header.some((text) => /日期格式|20\d{2}-\d{1,2}-\d{1,2}/.test(text)),
+    };
+  }
+  return null;
+}
+
+function languageTypeText(control: HTMLInputElement | HTMLSelectElement): string {
+  return control.tagName === 'SELECT'
+    ? normalizeText((control as HTMLSelectElement).selectedOptions[0]?.text || control.value || '')
+    : normalizeText(control.value || '');
+}
+
+/** 功能：严格设置外语考试选项；目标选项不存在时只允许回退“其它”，并把真实考试名写入备注。 */
+function setLanguageType(control: HTMLInputElement | HTMLSelectElement, kind: string): { ok: boolean; usedOther: boolean; display: string } {
+  const alias = languageKindAliases(kind);
+  if (control.tagName === 'SELECT') {
+    const select = control as HTMLSelectElement;
+    if (setSelectValue(select, alias.page)) return { ok: true, usedOther: false, display: alias.page };
+    if (setSelectValue(select, '其它') || setSelectValue(select, '其他')) return { ok: true, usedOther: true, display: kind };
+    return { ok: false, usedOther: false, display: kind };
+  }
+  setInputValue(control as HTMLInputElement, alias.display);
+  return { ok: normalizeText(control.value) === normalizeText(alias.display), usedOther: false, display: alias.display };
+}
+
+function fillLanguageRow(
+  row: HTMLTableRowElement,
+  info: LanguageTableInfo,
+  entry: LanguageEntry,
+  doc: Document,
+  handled?: Set<Element>,
+  items?: FillItem[],
+  stats?: { filled: number; profileEmpty: number },
+): boolean {
+  const controlAt = <T extends Element>(idx: number, selector: string): T | null =>
+    idx >= 0 && row.cells[idx] ? row.cells[idx].querySelector<T>(selector) : null;
+  const typeEl = controlAt<HTMLInputElement | HTMLSelectElement>(info.typeIdx, 'input:not([type="hidden"]),select');
+  const scoreEl = controlAt<HTMLInputElement>(info.scoreIdx, 'input:not([type="hidden"])');
+  const dateEl = controlAt<HTMLInputElement>(info.dateIdx, 'input:not([type="hidden"])');
+  const noteEl = controlAt<HTMLInputElement | HTMLTextAreaElement>(info.noteIdx, 'input:not([type="hidden"]),textarea');
+  if (!typeEl || !scoreEl) return false;
+
+  const alias = languageKindAliases(entry.kind);
+  const currentType = languageTypeText(typeEl);
+  const currentScore = (scoreEl.value || '').trim();
+  const typeMatches = currentType === normalizeText(alias.page) || currentType === normalizeText(alias.display) ||
+    (/^(其它|其他)$/.test(currentType) && !!noteEl && normalizeText(noteEl.value).includes(normalizeText(entry.kind)));
+  if ((currentType && !/请选择/.test(currentType)) || currentScore) {
+    if (!typeMatches || currentScore !== entry.score) return false; // 用户已有不同内容：整行保护，不覆盖。
+  } else {
+    const selected = setLanguageType(typeEl, entry.kind);
+    if (!selected.ok) return false;
+    setInputValue(scoreEl, entry.score);
+    if (selected.usedOther && noteEl && !(noteEl.value || '').trim()) setInputValue(noteEl, entry.kind);
+  }
+
+  handled?.add(typeEl);
+  handled?.add(scoreEl);
+  markEl(typeEl, 'filled');
+  markEl(scoreEl, 'filled');
+  if (noteEl && (noteEl.value || '').trim()) {
+    handled?.add(noteEl);
+    markEl(noteEl, 'filled');
+  }
+  if (dateEl) {
+    const month = entry.date ? normalizeMonth(entry.date) : null;
+    if (month) {
+      const value = info.fullDateHint ? `${month}-01` : month;
+      setInputValue(dateEl, value);
+      if (dateEl.readOnly) {
+        syncReadonlyPicker(dateEl, doc);
+        restoreAfterPickerSync(dateEl, value, doc);
+      }
+      handled?.add(dateEl);
+      markEl(dateEl, 'filled');
+    } else if (handled && items && stats) {
+      handled.add(dateEl);
+      markEl(dateEl, 'empty');
+      stats.profileEmpty++;
+      const dateField = entry.field.startsWith('languageExams[') ? `${entry.field}.date` : `${entry.field}Date`;
+      items.push({ label: `外语水平取得时间（请在档案“语言考试”补充 ${entry.kind} 时间）`, field: dateField, status: 'profileEmpty', el: dateEl });
+    }
+  }
+  if (items && stats) {
+    stats.filled++;
+    items.push({ label: `外语水平：${alias.page} ${entry.score}`, field: entry.field, status: 'filled', valuePreview: entry.score, el: typeEl });
+  }
+  return true;
+}
+
+/** 外语水平表即时填充：已有几行就先安全填写几条，其余交给异步加行任务。 */
+function fillCetTables(profile: Profile, doc: Document, handled: Set<Element>, items: FillItem[], stats: { filled: number; profileEmpty: number }): void {
+  const entries = languageEntries(profile);
+  const info = entries.length ? findLanguageTable(doc) : null;
+  if (!info) return;
+  markGridHandled(info.table, handled);
+  const rows = validDataRows(info.table);
+  for (const entry of entries) {
+    const existing = rows.find((row) => fillLanguageRow(row, info, entry, doc));
+    if (existing) {
+      fillLanguageRow(existing, info, entry, doc, handled, items, stats);
+      continue;
+    }
+    const empty = rows.find((row) => rowFullyEmpty(row, [info.typeIdx, info.scoreIdx, info.dateIdx, info.noteIdx]));
+    if (empty) fillLanguageRow(empty, info, entry, doc, handled, items, stats);
+  }
+}
+
+/** 功能：外语表安全加行并逐条填写；只点击语义明确的“新增一行”，不点击保存或下一步。 */
+export async function fillLanguageExams(
+  profile: Profile,
+  doc: Document,
+  startIndex = 0,
+  beforeAdd?: (nextIndex: number) => number | void,
+  maxAddAttempts = 10,
+  allowCommitActions = false,
+): Promise<number> {
+  const entries = languageEntries(profile);
+  let processed = 0;
+  for (let i = startIndex; i < entries.length; i++) {
+    let info = findLanguageTable(doc);
+    if (!info) break;
+    const entry = entries[i];
+    const rows = validDataRows(info.table);
+    const existing = rows.find((row) => fillLanguageRow(row, info!, entry, doc));
+    if (existing) {
+      fillLanguageRow(existing, info, entry, doc);
+      processed++;
+      continue;
+    }
+    let empty = rows.find((row) => rowFullyEmpty(row, [info!.typeIdx, info!.scoreIdx, info!.dateIdx, info!.noteIdx]));
+    if (!empty) {
+      const addButton = findAddButton(info.table);
+      if (!addButton || (!allowCommitActions && !isExplicitAddRowAction(addButton)) || i - startIndex >= maxAddAttempts) break;
+      const beforeRows = validDataRows(info.table).length;
+      const dialogsBefore = visibleDialogRoots(doc);
+      // 验证式点击：单策略生效即停，确认未增长才换策略
+      if (!(await clickAddRowVerified(doc, addButton, findLanguageTable, beforeRows, beforeAdd, i))) {
+        const limit = detectRowLimitBlocked(doc);
+        if (limit) {
+          logRowDecision(doc, { kind: 'language', index: i, decision: 'limit-blocked', reason: limit });
+          break;
+        }
+        if ((await handleDialogAfterClick(doc, dialogsBefore, 'language', i)) !== 'none') break;
+        logRowDecision(doc, { kind: 'language', index: i, decision: 'no-growth' });
+        break;
+      }
+      info = findLanguageTable(doc);
+      if (!info) break;
+      empty = validDataRows(info.table).find((row) => rowFullyEmpty(row, [info!.typeIdx, info!.scoreIdx, info!.dateIdx, info!.noteIdx]));
+    }
+    if (!empty || !fillLanguageRow(empty, info, entry, doc)) break;
+    processed++;
+  }
+  return processed;
 }
 
 /** 家庭成员表格信息（列头：姓名/关系/单位/电话/政治面貌） */
@@ -1758,7 +2335,15 @@ function fillFamilyTables(profile: Profile, doc: Document, handled: Set<Element>
  * 家庭成员全自动填写：按姓名匹配去重，行数不够时自动点击"新增一行/保存"扩展（含整页回发后的断点续填）。
  * 北邮式逐行网格：填完立即点行内「添加」落库（自动换行），输入行里残留的未保存内容也会被补点「添加」保存。
  */
-export async function fillFamilyMembers(profile: Profile, doc: Document, startIndex = 0, beforeAdd?: (i: number) => void | number, maxAddAttempts = 10): Promise<number> {
+export async function fillFamilyMembers(
+  profile: Profile,
+  doc: Document,
+  startIndex = 0,
+  beforeAdd?: (i: number) => void | number,
+  maxAddAttempts = 10,
+  allowCommitActions = true,
+  onProcessed?: (nextIndex: number) => void,
+): Promise<number> {
   const members = profile.familyMembers.filter((m) => m.name && m.name.trim()).slice(0, 10);
   if (!members.length) return 0;
   let filled = 0;
@@ -1782,7 +2367,7 @@ export async function fillFamilyMembers(profile: Profile, doc: Document, startIn
         }
         // 输入行里已填但未落库（上次「添加」没生效）→ 点本行 DoPostback「添加」保存，实现自动换行
         const rowBtn = findAddButton(info.table, existingRow);
-        if (rowBtn && isDoPostbackAction(rowBtn)) {
+        if (allowCommitActions && rowBtn && isDoPostbackAction(rowBtn)) {
           if (attempt >= maxAddAttempts) break;
           await clickPageAction(rowBtn, clickAttempt(beforeAdd, i, attempt));
           await sleep(1500); // 北邮等服务器回发较慢：给足新行出现的时间再继续
@@ -1799,15 +2384,23 @@ export async function fillFamilyMembers(profile: Profile, doc: Document, startIn
       }
       if (attempt >= maxAddAttempts) break; // 纯填充模式不点按钮
       const addBtn = findAddButton(info.table);
-      if (addBtn) {
+      if (addBtn && (allowCommitActions || isExplicitAddRowAction(addBtn))) {
         const rowsBefore = validDataRows(info.table).length;
-        await clickPageAction(addBtn, clickAttempt(beforeAdd, i, attempt));
-        if (await waitForRowGrowth(doc, findFamilyTable, rowsBefore)) continue;
+        const dialogsBefore = visibleDialogRoots(doc);
+        // 验证式点击：单策略生效即停，确认未增长才换策略；行数上限弹窗出现即停止
+        if (await clickAddRowVerified(doc, addBtn, findFamilyTable, rowsBefore, beforeAdd, i)) continue;
         if (!docAlive(doc)) continue; // 整页回发已刷新：断点续填接管
+        const limit = detectRowLimitBlocked(doc);
+        if (limit) {
+          logRowDecision(doc, { kind: 'family', index: i, decision: 'limit-blocked', reason: limit });
+          break;
+        }
+        if ((await handleDialogAfterClick(doc, dialogsBefore, 'family', i)) !== 'none') break;
+        logRowDecision(doc, { kind: 'family', index: i, decision: 'no-growth' });
         break; // 行数未增长：停止连点，防「无限新增一行」
       }
       // 南理工式：保存后服务器才多出一行
-      const saveBtn = findSaveButton(info.table);
+      const saveBtn = allowCommitActions ? findSaveButton(info.table) : null;
       if (saveBtn) {
         const rowsBefore = validDataRows(info.table).length;
         await clickPageAction(saveBtn, clickAttempt(beforeAdd, i, attempt));
@@ -1817,7 +2410,10 @@ export async function fillFamilyMembers(profile: Profile, doc: Document, startIn
       }
       break;
     }
-    if (alreadyPresent) continue;
+    if (alreadyPresent) {
+      onProcessed?.(i + 1); // 已存在的家庭成员行也必须推进断点，防止外层空转误判失败
+      continue;
+    }
     if (!row) break;
     const info = findFamilyTable(doc);
     if (!info) break;
@@ -1830,8 +2426,9 @@ export async function fillFamilyMembers(profile: Profile, doc: Document, startIn
     }
     if (!fillFamilyRow(row, m, info)) break;
     filled++;
+    onProcessed?.(i + 1); // 本条已完整写入：显式推进断点（n 计数不含"已存在跳过"的条目）
     // 北邮式逐行网格：填完立即点本行 DoPostback「添加」落库（自动换行/自动添加）
-    if (maxAddAttempts > 0) {
+    if (allowCommitActions && maxAddAttempts > 0) {
       const rowBtn = findAddButton(info.table, row);
       if (rowBtn && isDoPostbackAction(rowBtn)) {
         await clickPageAction(rowBtn, clickAttempt(beforeAdd, i, 0));
@@ -1912,6 +2509,13 @@ function normalizeMonth(text: string): string | null {
   const m = /^(\d{4})\s*[-/.]\s*(\d{1,2})$/.exec(t) || /^(\d{4})\s*年\s*(\d{1,2})\s*月?$/.exec(t);
   if (!m) return null;
   return `${m[1]}-${m[2].padStart(2, '0')}`;
+}
+
+/** 功能：奖励去重键用的月份规范形——兼容页面紧凑格式（202410）与分隔格式（2024-10）互认；无法解析时退回归一化原文本。 */
+function monthKeyOf(text: string): string {
+  const t = (text || '').trim();
+  const m = /^(\d{4})\D?(\d{1,2})/.exec(t);
+  return m ? `${m[1]}-${m[2].padStart(2, '0')}` : normalizeText(t);
 }
 
 /** 高校名称片段 → 所在省份（按列表顺序取首个命中，越具体越靠前） */
@@ -2474,7 +3078,7 @@ async function pickCodeTree(doc: Document, el: Element, value: string): Promise<
   return 'none';
 }
 
-async function pickSelectorWindow(doc: Document, el: Element, value: string, isAborted?: () => boolean): Promise<'picked' | 'none'> {
+async function pickSelectorWindow(doc: Document, el: Element, value: string, isAborted?: () => boolean, context?: PopupPickContext): Promise<'picked' | 'none'> {
   const aborted = isAborted || (() => false);
   const want = normalizeText(value);
   if (!want) return 'none';
@@ -2487,30 +3091,11 @@ async function pickSelectorWindow(doc: Document, el: Element, value: string, isA
     writePickDebug(doc, el, steps, false, result);
     return result;
   };
-  // 与当前字段同表单的"代码+名称"输入对（代码框名以 dm/bm/wm/cm 结尾，名称框 *mc）
-  const pairInputs = (): { code: HTMLInputElement | null; name: HTMLInputElement | null } => {
-    try {
-      const form = el.closest('form') || doc;
-      const inputs = Array.from(form.querySelectorAll<HTMLInputElement>('input')).filter(
-        (i) => i.type !== 'hidden' && isVisible(i),
-      );
-      // 邮编/电话/邮箱等常用字段名也以 bm/mc 结尾：排除，防止把行码写进邮编、把值写进电话框
-      const notContact = (i: HTMLInputElement): boolean => !/yzbm|postcode|zip|phone|mobile|sjh|tel|dh|email|mail/i.test((i.name || '') + (i.id || ''));
-      const code =
-        inputs.find((i) => notContact(i) && (/(dm|bm|wm|cm)$/i.test(i.name || '') || /(dm|bm|wm|cm)$/i.test(i.id || ''))) || null;
-      const name =
-        inputs.find((i) => i !== code && /mc$/i.test((i.name || i.id || '').replace(/^\$/, ''))) ||
-        null;
-      return { code, name };
-    } catch {
-      return { code: null, name: null };
-    }
-  };
+  // 精确绑定当前字段自己的代码/名称框；禁止退化为“整个表单的第一个 dm + 第一个 mc”。
+  const pairInputs = () => resolveCodeNameBinding(doc, el, context);
   const pairReady = (): boolean => {
-    const { code, name } = pairInputs();
-    const c = ((code && code.value) || '').trim();
-    const n = ((name && name.value) || '').trim();
-    return /^\d{4,8}$/.test(c) && /[\u4e00-\u9fff]{2,}/.test(n);
+    const binding = pairInputs();
+    return !!binding && verifyCodeNameBinding(binding, value, context);
   };
   const findRowControl = (scope: HTMLElement, needle: string): { control: HTMLElement; text: string; code: string } | null => {
     const rows = Array.from(scope.querySelectorAll<HTMLTableRowElement>('tr')).filter((r) => {
@@ -2580,14 +3165,14 @@ async function pickSelectorWindow(doc: Document, el: Element, value: string, isA
       await sleep(500);
     }
     // 明文兜底：行文本取码 + 档案值取名，成对写入（弹窗失败时的最后一手）
-    const { code, name } = pairInputs();
+    const binding = pairInputs();
     let wrote = false;
-    if (code && hit.code) {
-      setInputValue(code, hit.code);
+    if (binding?.code && hit.code) {
+      setInputValue(binding.code, hit.code);
       wrote = true;
     }
-    if (name) {
-      setInputValue(name, value.trim());
+    if (binding?.name) {
+      setInputValue(binding.name, value.trim());
       wrote = true;
     }
     if (wrote) steps.push('plaintext-fallback:' + hit.code);
@@ -2605,7 +3190,10 @@ async function pickSelectorWindow(doc: Document, el: Element, value: string, isA
   // 关键字阶梯：地区值按数据生成短关键字（市/区/市+区，最多 3 个）；其余全名 → 前 6 字 → 前 4 字。
   // 带"类别"下拉的选择器（南理工专业选择器 SelBkdzZydm）：先按门类设置类别再查询，否则关键字查不出结果
   const keywords: string[] = [];
-  const candKws = regionToks.length ? regionKeywords(value) : [full, full.slice(0, 6), full.slice(0, 4)];
+  // 学校/专业优先按目标系统代码查询，再尝试国家标准/新旧目录别名，最后才按名称模糊查询。
+  // 代码查询可避免同名院校、专业简称和名称变更造成误选。
+  const codeKws = [context?.expectedCode || '', ...(context?.codeAliases || [])].filter((item) => /^[a-z0-9._-]{2,20}$/i.test(item));
+  const candKws = regionToks.length ? regionKeywords(value) : [...codeKws, full, full.slice(0, 6), full.slice(0, 4)];
   for (const k of candKws) {
     if (k && k.length >= 2 && keywords.indexOf(k) < 0) keywords.push(k);
   }
@@ -2840,7 +3428,20 @@ async function tryOpenPicker(doc: Document, inputEl: Element, trigger: Element):
 }
 
 /** 弹窗选择框半自动：点「选择」按钮打开选择器，若浮层选项可定位则自动点选；必要时先在弹层搜索框输入关键字过滤 */
-export async function pickInPage(doc: Document, el: Element, value: string): Promise<'picked' | 'opened' | 'none'> {
+export async function pickInPage(doc: Document, el: Element, value: string, context?: PopupPickContext): Promise<'picked' | 'opened' | 'none'> {
+  // 本科院校和本科专业先进入各自独立内核；不适用时才回落到通用地区树/浮层流程。
+  if (context?.profilePath === 'education.university') {
+    const result = await pickSchool(doc, el, value, context);
+    if (result !== 'not-applicable') return result === 'failed' ? 'none' : result;
+  }
+  if (context?.profilePath === 'education.major') {
+    const result = await pickMajor(doc, el, value, context);
+    if (result !== 'not-applicable') return result === 'failed' ? 'none' : result;
+  }
+  if (context?.componentDriver) {
+    const component = await pickComponentOption(el, value, context);
+    if (component.status !== 'not-applicable') return component.status === 'failed' ? 'none' : component.status;
+  }
   // Element-UI 等组件无独立"选择"按钮：点输入框自身即可展开下拉（海大式 el-select）
   const trigger = findPickerTrigger(el) || (el.closest('.el-select, [class*="el-select"]') ? (el as Element) : null);
   if (!trigger) return 'none';
@@ -2853,14 +3454,14 @@ export async function pickInPage(doc: Document, el: Element, value: string): Pro
     }, 30_000);
   });
   try {
-    return await Promise.race([pickInPageInner(doc, el, trigger, value, () => aborted), timed]);
+    return await Promise.race([pickInPageInner(doc, el, trigger, value, () => aborted, context), timed]);
   } catch (e) {
     writePickDebug(doc, el, ['pick-exception:' + String((e as Error).message || e).slice(0, 60)], false, 'none');
     return 'none';
   }
 }
 
-async function pickInPageInner(doc: Document, el: Element, trigger: Element, value: string, isAborted: () => boolean): Promise<'picked' | 'opened' | 'none'> {
+async function pickInPageInner(doc: Document, el: Element, trigger: Element, value: string, isAborted: () => boolean, context?: PopupPickContext): Promise<'picked' | 'opened' | 'none'> {
   await tryOpenPicker(doc, el, trigger); // 多策略点开弹层（检测不到也不中断）
   if (isAborted()) return 'none';
   writePickDebug(doc, el, ['flow:open-done'], true, 'none');
@@ -2889,7 +3490,9 @@ async function pickInPageInner(doc: Document, el: Element, trigger: Element, val
         // 忽略
       }
       await sleep(450);
-      if ((inputEl.value || '').trim()) {
+      const binding = resolveCodeNameBinding(doc, el, context);
+      const committed = binding ? verifyCodeNameBinding(binding, value, context) : !!(inputEl.value || '').trim();
+      if (committed) {
         writePickDebug(doc, el, ['opt-click'], false, 'picked');
         return 'picked';
       }
@@ -2918,7 +3521,7 @@ async function pickInPageInner(doc: Document, el: Element, trigger: Element, val
     if ((await pickCodeTree(doc, el, value)) === 'picked') return finish('picked');
     return finish('opened');
   }
-  if ((await pickSelectorWindow(doc, el, value, isAborted)) === 'picked') return finish('picked');
+  if ((await pickSelectorWindow(doc, el, value, isAborted, context)) === 'picked') return finish('picked');
   if (isAborted()) return finish('opened');
   if ((await pickRegionTree(doc, el, value)) === 'picked') return finish('picked');
   return finish('opened');

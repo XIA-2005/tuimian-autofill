@@ -4,14 +4,23 @@ import { Profile } from '../core/profile';
 import { loadProfile, saveProfile } from '../core/storage';
 import { generateTestProfile } from '../core/testdata';
 import { importFromPage } from '../core/importer';
+import { addSnapshot, applicationChoicesFromPage, captureCurrentPage, commitCrawlMerge, crawlDeclaredReadOnlyPages, loadCrawlSession, previewCrawlMerge, rememberApplicationChoice, saveCrawlSession } from '../core/crawl';
 import { scanSite } from '../core/scanner';
 import { runPreSubmitCheck } from '../core/checker';
 import { loadRemoteRules } from '../core/rulesync';
 import { DetectedField, detectAllFields, FIELD_RULES, FieldRule } from '../core/matcher';
-import { clearHighlights, closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, FillItem, FillResult, FillStats, findAchievementTable, findAwardTable, findExperienceTable, findFamilyTable, markEl, pickInPage, sleep, snapshotFillState, trySetSelect } from '../core/filler';
+import { clearHighlights, closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, fillLanguageExams, FillItem, FillResult, FillStats, findAchievementTable, findAwardTable, findExperienceTable, findFamilyTable, findLanguageTable, languageExamEntryCount, markEl, pickInPage, sleep, snapshotFillState, trySetSelect } from '../core/filler';
 import { ADAPTERS, AUTO_SHOW_PATTERN, allAdapters, extraRulesFor, matchAdapter, PlatformAdapter } from '../core/adapters';
-import { SCHOOLS } from '../core/schools';
-import { initPanel, PanelHandlers, setPanelStatus, showPanel } from './panel';
+import { matchAdapterPackage, matchAdapterPage, SCHOOL_ADAPTER_PACKAGES } from '../core/adapter-packages';
+import { SCHOOLS_WITH_PROGRAMS } from '../core/school-programs';
+import { projectProfile } from '../core/projection';
+import { fillAdapterContract } from '../core/control-drivers';
+import { fillDateControlAsync } from '../core/date-drivers';
+import { autoAdvancePageKey, clickDeclaredNext, findDeclaredNextButton, visibleValidationErrors } from '../core/auto-advance';
+import { decideRowJobRound, nextRowJobIndex, ROW_JOB_FAIL_CAP } from '../core/row-job-progress';
+import { detectFakeSave, snapshotTableEvidence, TableEvidence } from '../core/save-guard';
+import { applyFillTelemetryCounts, createFillTelemetryState, FillTelemetryEventInput, FillTelemetryStage, FillTelemetryState, reduceFillTelemetry, restoreFillTelemetryState } from '../core/fill-telemetry';
+import { initPanel, PanelHandlers, renderPanelTelemetry, setPanelStatus, showPanel } from './panel';
 
 // ===================== 醒目填充横幅 + 进度条 =====================
 let fillBanner: HTMLElement | null = null;
@@ -23,8 +32,100 @@ let pickersDepth = 0;
 let activePick: { key: string; at: number } | null = null;
 // 行任务互斥：防止延时补填轮次与主流程并发重跑（重复点"添加"）
 let rowJobsRunning = false;
+let activeCrawlController: AbortController | null = null;
+
+/** 根据当前学校适配包，把八类原子表投影为旧填充内核可消费的临时视图。 */
+function profileForCurrentPage(profile: Profile): Profile {
+  const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
+  return projectProfile(profile, adapterPackage?.projectionPolicy).profile;
+}
 
 const PROGRESS_KEY = 'tui-fill-progress';
+const TELEMETRY_KEY = 'tui-fill-telemetry-v1';
+const AUTO_WIZARD_KEY = 'tui-auto-wizard-v1';
+
+let telemetryState: FillTelemetryState = (() => {
+  try { return restoreFillTelemetryState(sessionStorage.getItem(TELEMETRY_KEY)) || createFillTelemetryState(); }
+  catch { return createFillTelemetryState(); }
+})();
+
+/** 功能：持久化脱敏运行状态，使 ASP.NET 回发或页面刷新后仍能继续展示当前任务。 */
+function persistTelemetry(): void {
+  try { sessionStorage.setItem(TELEMETRY_KEY, JSON.stringify(telemetryState)); } catch { /* 忽略禁用会话存储的页面 */ }
+}
+
+/** 功能：发布一条统一运行事件，并同步刷新面板与紧凑横幅的数据源。 */
+function emitTelemetry(event: FillTelemetryEventInput, render = true): void {
+  if (window !== window.top) return;
+  telemetryState = reduceFillTelemetry(telemetryState, event);
+  persistTelemetry();
+  if (render) renderPanelTelemetry(telemetryState);
+}
+
+/** 功能：开始新一轮填写，清空上一轮日志和统计。 */
+function beginFillTelemetry(autoNext: boolean): void {
+  telemetryState = createFillTelemetryState();
+  emitTelemetry({
+    stage: 'identifying',
+    level: 'info',
+    action: autoNext ? '正在启动连续填写' : '正在识别当前页面',
+    reason: autoNext ? '校验通过后将自动进入下一步，最终提交仍需人工完成' : '正在读取适配包与可写字段',
+  });
+}
+
+/** 功能：将旧进度调用映射为统一的有限状态，逐步兼容现有学校专项流程。 */
+function telemetryStageFromText(stage: string): FillTelemetryStage {
+  if (/弹窗|选择/.test(stage)) return 'picking';
+  if (/加行|表格/.test(stage)) return 'addingRows';
+  if (/纠正|补填|恢复/.test(stage)) return 'correcting';
+  if (/校验|回读/.test(stage)) return 'verifying';
+  if (/下一步|进入/.test(stage)) return 'navigating';
+  if (/完成/.test(stage)) return 'succeeded';
+  if (/人工|停止|阻断/.test(stage)) return 'blocked';
+  if (/扫描|识别/.test(stage)) return 'identifying';
+  return 'filling';
+}
+
+interface AutoWizardState {
+  active: boolean;
+  startedAt: number;
+  steps: number;
+  attempts: Record<string, number>;
+}
+
+let autoAdvanceRunning = false;
+
+/** 功能：读取当前标签页的连续填写状态；超过 30 分钟自动失效。 */
+function readAutoWizard(): AutoWizardState | null {
+  try {
+    const state = JSON.parse(sessionStorage.getItem(AUTO_WIZARD_KEY) || 'null') as AutoWizardState | null;
+    if (!state?.active || Date.now() - state.startedAt > 30 * 60_000 || state.steps >= 20) return null;
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+function writeAutoWizard(state: AutoWizardState | null): void {
+  try {
+    if (state) sessionStorage.setItem(AUTO_WIZARD_KEY, JSON.stringify(state));
+    else sessionStorage.removeItem(AUTO_WIZARD_KEY);
+  } catch {
+    // 忽略禁用 sessionStorage 的特殊环境。
+  }
+}
+
+function startAutoWizard(): void {
+  writeAutoWizard({ active: true, startedAt: Date.now(), steps: 0, attempts: {} });
+}
+
+function stopAutoWizard(message?: string): void {
+  writeAutoWizard(null);
+  if (message && isTop) {
+    setPanelStatus(message);
+    if (/连续填写已停止|最终页|未验收/.test(message)) emitTelemetry({ stage: 'blocked', level: 'warning', action: '连续填写已安全停止', reason: message.replace(/^连续填写已停止：?/, ''), recoverable: true });
+  }
+}
 
 /** 落盘进度：整页回发刷新后，新文档据此恢复横幅与进度条 */
 function persistProgress(pct: number, stage: string, sub: string): void {
@@ -35,19 +136,42 @@ function persistProgress(pct: number, stage: string, sub: string): void {
   }
 }
 
-/** 大号醒目横幅 + 进度条：pct 0-100，stage 主标题，sub 副说明（可为空） */
-function setFillProgress(pct: number, stage: string, sub?: string): void {
+interface FillProgressMeta {
+  telemetryStage?: FillTelemetryStage;
+  targetLabel?: string;
+  field?: string | null;
+  current?: number;
+  total?: number;
+  level?: 'info' | 'success' | 'warning' | 'error';
+}
+
+/** 紧凑横幅 + 统一操作中心：优先显示真实项目数量，旧 pct 仅作为尚无明细时的阶段提示。 */
+function setFillProgress(pct: number, stage: string, sub?: string, meta: FillProgressMeta = {}): void {
   if (!isTop || fillFinished) return;
   const p = Math.max(0, Math.min(100, Math.round(pct)));
   const subText = sub || '';
+  emitTelemetry({
+    stage: meta.telemetryStage || telemetryStageFromText(stage),
+    level: meta.level || (/人工|失败|异常/.test(stage + subText) ? 'warning' : 'info'),
+    action: stage.replace(/^[^\p{L}\p{N}]+/u, ''),
+    targetLabel: meta.targetLabel,
+    field: meta.field,
+    reason: subText,
+    current: meta.current,
+    total: meta.total,
+  });
   persistProgress(p, stage, subText);
   if (!fillBanner || !fillBanner.isConnected) {
     fillBanner = document.createElement('div');
     fillBanner.className = 'tui-fill-banner';
+    fillBanner.setAttribute('role', 'status');
+    fillBanner.setAttribute('aria-live', 'polite');
+    fillBanner.setAttribute('aria-atomic', 'true');
     fillBanner.innerHTML =
       `<div class="tui-banner-head"><span class="tui-banner-spin"></span><span class="tui-banner-title"></span><span class="tui-banner-pct"></span></div>` +
       `<div class="tui-banner-track"><div class="tui-banner-fill"></div></div>` +
-      `<div class="tui-banner-sub"></div>`;
+      `<div class="tui-banner-sub"></div>` +
+      `<div class="tui-banner-notice">⏳ 正在自动处理，请勿刷新页面、关闭选择弹窗或重复点击按钮。<br>🛡️ 插件会逐项回读并尝试纠错；密码、验证码、文件上传和最终提交始终由你操作。</div>`;
     (document.body || document.documentElement).appendChild(fillBanner);
   }
   fillBanner.classList.remove('tui-banner-done');
@@ -55,10 +179,12 @@ function setFillProgress(pct: number, stage: string, sub?: string): void {
   const pctEl = fillBanner.querySelector('.tui-banner-pct');
   const fillEl = fillBanner.querySelector('.tui-banner-fill') as HTMLElement | null;
   const subEl = fillBanner.querySelector('.tui-banner-sub') as HTMLElement | null;
-  if (title) title.textContent = stage;
-  if (pctEl) pctEl.textContent = `${p}%`;
-  if (fillEl) fillEl.style.width = `${p}%`;
-  if (subEl) subEl.textContent = subText;
+  const hasExact = telemetryState.progress.total > 0;
+  const exactPct = hasExact ? Math.round((100 * telemetryState.progress.current) / telemetryState.progress.total) : p;
+  if (title) title.textContent = telemetryState.title;
+  if (pctEl) pctEl.textContent = hasExact ? `${telemetryState.progress.current}/${telemetryState.progress.total}` : '处理中';
+  if (fillEl) fillEl.style.width = `${exactPct}%`;
+  if (subEl) subEl.textContent = telemetryState.currentLabel || telemetryState.detail || subText;
 }
 
 /** 完成态：100% 绿色，短暂停留后自动收起；此后本页延时轮次不再弹出横幅。弹窗点选进行中不宣告完成 */
@@ -66,6 +192,15 @@ function finishFillBanner(summary: string, sub?: string): void {
   if (!isTop || fillFinished || pickersDepth > 0) return;
   const hint = '若资料未完全填写，请再次点击「一键填充」';
   setFillProgress(100, `✅ ${summary}`, sub ? `${sub}；${hint}` : hint);
+  const partial = telemetryState.counts.failed > 0 || telemetryState.counts.waiting > 0 || telemetryState.counts.skipped > 0;
+  emitTelemetry({
+    stage: partial ? 'partial' : 'succeeded',
+    level: partial ? 'warning' : 'success',
+    action: partial ? '本轮填写已结束，仍有项目需要核对' : '本轮填写完成',
+    reason: `成功 ${telemetryState.counts.filled} 项，跳过 ${telemetryState.counts.skipped} 项，失败 ${telemetryState.counts.failed} 项，待处理 ${telemetryState.counts.waiting} 项`,
+    current: telemetryState.counts.completed,
+    total: telemetryState.counts.total,
+  });
   fillFinished = true;
   try {
     sessionStorage.removeItem(PROGRESS_KEY);
@@ -74,6 +209,8 @@ function finishFillBanner(summary: string, sub?: string): void {
   }
   if (fillBanner) {
     fillBanner.classList.add('tui-banner-done');
+    const notice = fillBanner.querySelector('.tui-banner-notice');
+    if (notice) notice.textContent = '✅ 本轮自动填写已经结束。请核对绿色项目以及红色、黄色提醒；确认无误后再手动保存或最终提交。';
     const el = fillBanner;
     setTimeout(() => {
       if (fillBanner === el) {
@@ -100,13 +237,69 @@ function restoreProgressBanner(): void {
 
 const isTop = window === window.top;
 let adapters: PlatformAdapter[] = ADAPTERS;
+let adapterPackages = SCHOOL_ADAPTER_PACKAGES;
 let activeRules: FieldRule[] = [...FIELD_RULES, ...extraRulesFor(location.href)];
+
+function fillCurrentDocument(profile: Profile): FillResult {
+  const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
+  const contractItems = fillAdapterContract(profile, document, location.href, adapterPackage);
+  const result = fillAll(profile, document, activeRules);
+  for (const item of contractItems) {
+    if (item.status !== 'skipped' || !item.el || !item.pickerContext || result.items.some((existing) => existing.el === item.el && existing.status === 'picker')) continue;
+    result.items.push({
+      label: item.profilePath,
+      field: item.profilePath,
+      status: 'picker',
+      reason: item.reason,
+      valuePreview: item.valuePreview,
+      el: item.el,
+      pickerContext: item.pickerContext,
+    });
+    result.stats.total += 1;
+    result.stats.picker += 1;
+  }
+  return result;
+}
 let lastResult: FillResult | null = null;
+
+/** 功能：把普通字段填充结果批量写入实时日志；不写 valuePreview，避免泄露档案真实值。 */
+function recordFillResultTelemetry(items: FillItem[], stats: FillStats): void {
+  if (!isTop) return;
+  const statusText: Record<FillItem['status'], { level: 'info' | 'success' | 'warning' | 'error'; action: string }> = {
+    filled: { level: 'success', action: '已填写并回读通过' },
+    picker: { level: 'info', action: '等待弹窗精确选择' },
+    profileEmpty: { level: 'warning', action: '档案没有可用数据' },
+    noMatch: { level: 'warning', action: '未匹配到安全填写规则' },
+    skipped: { level: 'warning', action: '已按安全规则跳过' },
+    failed: { level: 'error', action: '写入或回读失败' },
+  };
+  for (const item of items.slice(0, 100)) {
+    const display = statusText[item.status];
+    telemetryState = reduceFillTelemetry(telemetryState, {
+      stage: item.status === 'picker' ? 'picking' : 'filling',
+      level: display.level,
+      action: display.action,
+      targetLabel: item.label,
+      field: item.field,
+      reason: item.reason,
+    });
+  }
+  telemetryState = applyFillTelemetryCounts(telemetryState, {
+    total: stats.total,
+    filled: stats.filled,
+    skipped: stats.skipped + stats.noMatch,
+    failed: stats.failed,
+    waiting: stats.profileEmpty + stats.picker,
+  });
+  persistTelemetry();
+  renderPanelTelemetry(telemetryState);
+}
 
 // 远程规则（默认关闭，需用户在设置中授权）：异步合并，合并后刷新规则集
 void loadRemoteRules().then((remote) => {
   if (!remote) return;
   adapters = allAdapters(remote);
+  adapterPackages = remote?.packages?.length ? [...SCHOOL_ADAPTER_PACKAGES, ...remote.packages] : SCHOOL_ADAPTER_PACKAGES;
   activeRules = [...FIELD_RULES, ...extraRulesFor(location.href, adapters), ...(remote.extraFieldRules || [])];
 });
 
@@ -165,10 +358,11 @@ function buildMissingText(res: FillResult, profile: Profile): string {
       lines.push(`${i.label}（${hint}）`);
     });
   }
-  if (profile.selfStatements.length) {
+  const statements = profile.essays.length ? profile.essays.map((essay) => ({ title: `${essay.kind}${essay.charLimit ? `（上限 ${essay.charLimit} 字）` : ''}`, content: essay.content })) : profile.selfStatements;
+  if (statements.length) {
     lines.push('');
     lines.push('【自我陈述版本速查】');
-    profile.selfStatements.forEach((s) => lines.push(`${s.title}：${s.content ? s.content.length : 0} 字`));
+    statements.forEach((s) => lines.push(`${s.title}：${s.content ? s.content.length : 0} 字`));
   }
   return lines.join('\n') || '没有漏填项 🎉';
 }
@@ -176,42 +370,29 @@ function buildMissingText(res: FillResult, profile: Profile): string {
 /** 不包含任何填写值，仅结构与匹配结果，用于反馈给开发者改进规则 */
 function buildReport(): string {
   const fields = detect();
+  const safeUrl = (() => { try { const u = new URL(location.href); return `${u.origin}${u.pathname}`; } catch { return ''; } })();
+  const fillSummary = (() => {
+    try {
+      const raw = sessionStorage.getItem('tui-fill-summary');
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed ? { at: parsed.at, stats: parsed.stats, items: Array.isArray(parsed.items) ? parsed.items.map((item: any) => ({ label: item.label, field: item.field, status: item.status, reason: item.reason || '' })) : [] } : null;
+    } catch { return null; }
+  })();
+  const siteStructure = scanSite(document);
+  siteStructure.url = safeUrl;
+  siteStructure.gridTables.forEach((table) => { table.samples = []; });
   return JSON.stringify(
     {
-      url: location.href,
+      url: safeUrl,
       title: document.title,
       adapter: matchAdapter(location.href, adapters) ? matchAdapter(location.href, adapters)!.id : null,
-      // 上次填充后的表单值快照（保存失败清空页面后仍能还原"保存前"的值，定位截断字段用）
-      fillSnapshot: (() => {
-        try {
-          const raw = sessionStorage.getItem('tui-fill-snapshot');
-          return raw ? JSON.parse(raw) : null;
-        } catch {
-          return null;
-        }
-      })(),
-      // 上次填充的逐字段结果（filled/profileEmpty/picker/failed/noMatch 等）
-      fillSummary: (() => {
-        try {
-          const raw = sessionStorage.getItem('tui-fill-summary');
-          return raw ? JSON.parse(raw) : null;
-        } catch {
-          return null;
-        }
-      })(),
+      adapterPackage: matchAdapterPackage(location.href, adapterPackages)?.id || null,
+      // 只保留状态和字段名，不包含档案值、姓名、证件、电话、邮箱或真实表格内容。
+      fillSummary,
       // 弹窗点选调试记录（trigger 命中/点击策略/是否弹出/最终结果）
       pickDebug: (() => {
         try {
           const raw = sessionStorage.getItem('tui-pick-debug');
-          return raw ? JSON.parse(raw) : null;
-        } catch {
-          return null;
-        }
-      })(),
-      // 家庭成员表格填充诊断（成员清单/页面行名/可写行数/填充数——网格异步渲染时定位用）
-      familyDebug: (() => {
-        try {
-          const raw = sessionStorage.getItem('tui-family-debug');
           return raw ? JSON.parse(raw) : null;
         } catch {
           return null;
@@ -267,7 +448,7 @@ function buildReport(): string {
         }
       })(),
       // 站点架构扫描：网格表格列头/数据行 HTML 样例/加行按钮/弹窗触发器（"先读架构再操作"）
-      siteScan: scanSite(document),
+      siteScan: siteStructure,
       total: fields.length,
       fields: fields.map((f) => ({
         label: f.label,
@@ -279,31 +460,17 @@ function buildReport(): string {
         hasPickerTrigger: !!f.pickerTrigger,
         matched: f.skip ? 'SKIP:' + f.skip : f.rule ? f.rule.field : 'NO_MATCH',
         options: f.el.tagName === 'SELECT' ? Array.from((f.el as HTMLSelectElement).options).map((o) => o.text).join(' | ').slice(0, 200) : '',
-        // 仅对无标签的匿名输入框附值快照（调试网格填充用，截断显示）
-        value: f.label && !/^ctl|^txt|^[a-zA-Z]+\d*$/.test(f.label) ? '' : String((f.el as HTMLInputElement).value || '').slice(0, 24),
       })),
       tables: Array.from(document.querySelectorAll('table'))
         .slice(0, 20)
         .map((t) => {
-          const headerText = Array.from(t.rows[0] ? t.rows[0].cells : []).map((c) => (c.textContent || '').trim()).join(' ');
-          const isGrid = /学习或工作|学习工作|工作经历|成果名称|成果|论文/.test(headerText);
           return {
             rows: t.rows.length,
             hasThead: !!t.querySelector('thead'),
             hasTbody: !!t.querySelector('tbody'),
             inputCount: t.querySelectorAll('input, select, textarea').length,
             headerCells: Array.from(t.rows[0] ? t.rows[0].cells : []).map((c) => (c.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 24)),
-            // 仅对经历/成果类表格附数据行值快照（调试用，截断显示）
-            dataRows: isGrid
-              ? Array.from(t.rows)
-                  .slice(1, 6)
-                  .map((r) =>
-                    Array.from(r.cells).map((c) => {
-                      const el = c.querySelector('input, textarea') as HTMLInputElement | HTMLTextAreaElement | null;
-                      return el ? String(el.value || '').slice(0, 20) : (c.textContent || '').trim().slice(0, 20);
-                    }),
-                  )
-              : [],
+            dataRows: [],
           };
         }),
       buttons: Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"], input[type="image"], span, i, div[role="button"]'))
@@ -315,11 +482,11 @@ function buildReport(): string {
           alt: (b.getAttribute('alt') || '').slice(0, 24),
           cls: (b.getAttribute('class') || '').slice(0, 40),
           name: (b.getAttribute('name') || '').slice(0, 60),
-          href: (b.getAttribute('href') || '').slice(0, 80),
+          hrefKind: /^javascript:/i.test(b.getAttribute('href') || '') ? 'javascript' : b.hasAttribute('href') ? 'link' : '',
           disabled: !!(b as HTMLButtonElement).disabled,
-          onclick: (b.getAttribute('onclick') || '').slice(0, 60),
+          hasOnclick: b.hasAttribute('onclick'),
         }))
-        .filter((b) => b.text || b.value || b.alt || /add|new|btn|insert|新增|添加|增加|保存|提交|doPostBack/i.test(b.cls + b.name + b.href)),
+        .filter((b) => b.text || b.value || b.alt || /add|new|btn|insert|新增|添加|增加|保存|提交/i.test(b.cls + b.name)),
     },
     null,
     2,
@@ -341,9 +508,20 @@ function controlEmpty(el: Element): boolean {
   return i.value.trim() === '' && !i.checked;
 }
 
-/** 联动下拉自动重试：上级字段选定后选项异步加载，延时重试几次 */
+function hasDeferredFillWork(): boolean {
+  if (pickersDepth > 0 || activePick || rowJobsRunning || readRowJobs().length) return true;
+  const pendingPicker = Array.from(document.querySelectorAll<HTMLElement>('[data-tui-picker-profile]')).some((el) => controlEmpty(el));
+  if (pendingPicker) return true;
+  return Array.from(document.querySelectorAll<HTMLSelectElement>('select')).some((el) => {
+    const value = el.value;
+    return !value && el.options.length <= 1 && !el.disabled;
+  });
+}
+
+/** 联动下拉自动重试：目标选项一旦出现立即填充；仅在仍有未完成项时保留兜底轮次。 */
 function scheduleCascadeRetries(items: FillItem[]): void {
   const retrySelects = () => {
+    let pending = false;
     for (const it of items) {
       if (it.status !== 'failed') continue;
       const el = it.el as HTMLSelectElement | undefined;
@@ -351,15 +529,49 @@ function scheduleCascadeRetries(items: FillItem[]): void {
       if (it.valuePreview && trySetSelect(el, it.valuePreview)) {
         it.status = 'filled';
         markEl(el, 'filled');
+      } else {
+        pending = true;
       }
     }
+    return pending;
   };
-  [900, 1800, 3000].forEach((delay) => setTimeout(retrySelects, delay));
-  setTimeout(() => void attemptPickers(items), 1200);
+  const pendingNow = retrySelects();
+  // 选项尚未异步加载时才安排重试；选项已出现则不再空等三轮。
+  if (pendingNow) [450, 1200, 2400].forEach((delay) => setTimeout(retrySelects, delay));
+  // 日期组件在 blur 后可能异步重置；用独立日期内核做第二阶段面板交互和完整回读。
+  const dateItems = items.filter((it) => /^(basic\.birthday|education\.(startDate|endDate))$/.test(it.field || '') && it.valuePreview);
+  if (dateItems.length) setTimeout(() => {
+    for (const it of dateItems) {
+      const input = it.el as HTMLInputElement | undefined;
+      if (!input || input.tagName !== 'INPUT' || !document.documentElement.contains(input) || !it.valuePreview) continue;
+      const readList = (name: string): string[] => {
+        try {
+          const parsed = JSON.parse(input.getAttribute(name) || '[]');
+          return Array.isArray(parsed) && parsed.every((value) => typeof value === 'string') ? parsed : [];
+        } catch { return []; }
+      };
+      const precision = input.getAttribute('data-tui-date-precision');
+      const format = input.getAttribute('data-tui-date-format');
+      void fillDateControlAsync(input, it.valuePreview, {
+        precision: precision === 'year' || precision === 'month' || precision === 'day' ? precision : undefined,
+        format: format === 'yyyy' || format === 'yyyyMM' || format === 'yyyy-MM' || format === 'yyyy/MM' || format === 'yyyy年MM月' || format === 'yyyyMMdd' || format === 'yyyy-MM-dd' || format === 'yyyy/MM/dd' || format === 'yyyy年MM月dd日' ? format : undefined,
+        hiddenValueSelectors: readList('data-tui-date-model-selectors'),
+        panelSelectors: readList('data-tui-date-panel-selectors'),
+      }).then((result) => {
+        it.status = result.ok ? 'filled' : 'failed';
+        it.reason = result.reason;
+        markEl(input, result.ok ? 'filled' : 'missing');
+      });
+    }
+  }, 350);
+  // 弹窗驱动本身带有 iframe/结果回读等待；先快速尝试，未完成时再保留 1200ms 兜底，减少稳定页面空等。
+  setTimeout(() => void attemptPickers(items), 80);
 }
 
 /** 弹窗选择框自动点选一次（已填的不动，无法匹配的留给人工） */
 async function attemptPickers(items: FillItem[]): Promise<void> {
+  // 全局互斥：多个延时补填轮次不得同时运行不同字段的弹窗任务。
+  if (pickersDepth > 0 || activePick) return;
   pickersDepth += 1;
   let manualHint: string | null = null;
   try {
@@ -439,8 +651,10 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
     if (wasProcessed(it.field, scopeKey)) continue;
     markProcessed(it.field, scopeKey);
     if (cell) {
-      // 同单元格任一输入已有值（弹窗点选常同时写代码+名称两个框）→ 跳过
-      if (Array.from(cell.querySelectorAll('input, select, textarea')).some((x) => !controlEmpty(x))) continue;
+      // 同单元格中"同字段"的其他控件已有值（弹窗点选常同时写代码+名称两个框）→ 该弹窗已选过，跳过。
+      // 必须限定同字段：无单元格布局下父容器可能是 body，日期等其他字段先被填好时，
+      // 院校/专业弹窗不得被误判为"已选"而永久跳过（合工大向导教育步骤）。
+      if (Array.from(cell.querySelectorAll('input, select, textarea')).some((x) => x !== el && !controlEmpty(x) && items.some((o) => o.el === x && o.field === it.field))) continue;
     }
     // 同一字段弹窗自动尝试最多 3 次；超限转人工引导，不再反复弹窗打扰
     let fails: Record<string, number> = {};
@@ -472,12 +686,18 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
     if (activePick && activePick.key === failKey && Date.now() - activePick.at < 90_000) continue;
     if (activePick && Date.now() - activePick.at >= 90_000) activePick = null;
     // 逐个处理（弹窗不能同时开多个）
-    if (isTop) setFillProgress(40 + Math.round(10 * (pickIdx / pickTotal)), '🎯 正在自动选择弹窗', `${Math.min(pickIdx + 1, pickTotal)}/${pickTotal} ${it.label}`);
+    if (isTop) setFillProgress(40 + Math.round(10 * (pickIdx / pickTotal)), '🎯 正在自动选择弹窗', '正在搜索并确认匹配项', {
+      telemetryStage: 'picking',
+      targetLabel: it.label,
+      field: it.field,
+      current: Math.min(pickIdx + 1, pickTotal),
+      total: pickTotal,
+    });
     pickIdx++;
     activePick = { key: failKey, at: Date.now() };
     let res: 'picked' | 'opened' | 'none' = 'none';
     try {
-      res = await pickInPage(document, el, it.valuePreview || '');
+      res = await pickInPage(document, el, it.valuePreview || '', it.pickerContext);
     } finally {
       if (activePick && activePick.key === failKey) activePick = null;
     }
@@ -485,6 +705,7 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
     if (!controlEmpty(el)) {
       it.status = 'filled';
       markEl(el, 'filled');
+      if (isTop) emitTelemetry({ stage: 'picking', level: 'success', action: '弹窗选中并确认完成', targetLabel: it.label, field: it.field, current: pickIdx, total: pickTotal });
       fails[failKey] = 0;
       try {
         const r2 = JSON.parse(sessionStorage.getItem('tui-pick-rounds') || '{}');
@@ -498,6 +719,7 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
       if (!controlEmpty(el)) {
         it.status = 'filled';
         markEl(el, 'filled');
+        if (isTop) emitTelemetry({ stage: 'picking', level: 'success', action: '弹窗回填并回读通过', targetLabel: it.label, field: it.field, current: pickIdx, total: pickTotal });
         fails[failKey] = 0;
         try {
           const r2 = JSON.parse(sessionStorage.getItem('tui-pick-rounds') || '{}');
@@ -509,13 +731,42 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
       } else if (res === 'opened') {
         // 弹窗已打开并填好（服务器结果慢/需人工点对勾）：不记失败，提示人工两步，弹窗保持打开
         manualHint = it.label;
+        if (isTop) emitTelemetry({
+          stage: 'picking',
+          level: 'warning',
+          action: '弹窗已打开，等待人工确认',
+          targetLabel: it.label,
+          field: it.field,
+          reason: '请在当前弹窗选择匹配项并确认，完成后插件将继续',
+          current: pickIdx,
+          total: pickTotal,
+          recoverable: true,
+        });
         fails[failKey] = 0;
         deadFields.add(it.field);
+        // 当前弹窗仍占用页面：必须停止整条队列，禁止专业任务把关键字写进院校弹窗。
+        try {
+          sessionStorage.setItem('tui-pick-fails', JSON.stringify(fails));
+        } catch {
+          // 忽略
+        }
+        break;
       } else if (res === 'picked') {
         // 已点选但值未回填（服务器慢/页面被回发清空）：不记失败，允许下一轮再试
         fails[failKey] = 0;
       } else {
         fails[failKey] = (fails[failKey] || 0) + 1;
+        if (isTop) emitTelemetry({
+          stage: 'picking',
+          level: 'error',
+          action: '未能完成弹窗选择',
+          targetLabel: it.label,
+          field: it.field,
+          reason: '没有找到可安全确认的匹配结果',
+          current: pickIdx,
+          total: pickTotal,
+          recoverable: true,
+        });
         deadFields.add(it.field);
       }
     }
@@ -531,7 +782,8 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
 /** 保存回发后分多次补填（EasyUI 字段异步就绪需延时重试）；仅第一轮尝试自动点选弹窗字段 */
 function scheduleRestorePasses(profile: Profile): void {
   const run = (attemptPickersToo: boolean) => {
-    const res = fillAll(profile, document, activeRules);
+    const res = fillCurrentDocument(profile);
+    writeTableEvidence(document); // 补填后的表格状态是下一次保存的比对基线
     if (isTop && pickersDepth === 0) setFillProgress(93, '🔁 保存后自动补填', '恢复被回发清空的字段…');
     if (attemptPickersToo) scheduleCascadeRetries(res.items);
   };
@@ -585,6 +837,134 @@ function showCheckReport(): void {
   box.querySelector('.tui-cr-close')?.addEventListener('click', closeCheckReport);
 }
 
+/**
+ * 功能：在用户主动开启连续填写后，纠正当前页、严格验收并点击适配包声明的下一步。
+ * 安全边界：同一步最多点击三次、纠错最多两轮、全流程最多二十步；永不匹配最终提交、上传或锁定按钮。
+ */
+async function runValidatedAutoAdvance(profile: Profile): Promise<void> {
+  if (!isTop || autoAdvanceRunning || !readAutoWizard()) return;
+  autoAdvanceRunning = true;
+  try {
+    // 先给日期二次回读、弹窗选择和动态表格任务完成的机会；忙碌时持续等待而不是抢点下一步。
+    for (let round = 0; round < 80; round++) {
+      const state = readAutoWizard();
+      if (!state) return;
+      const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
+      if (!adapterPackage || adapterPackage.commitPolicy !== 'validated-next-only') {
+        stopAutoWizard('连续填写已停止：当前学校尚未声明安全的“下一步”契约');
+        return;
+      }
+      const matched = matchAdapterPage(adapterPackage, document, location.href);
+      const page = matched.allowed && matched.page?.role === 'form' ? matched.page : undefined;
+      if (!page?.nextSelectors?.length) {
+        stopAutoWizard('连续填写已到达最终页或未验收页面，未执行提交');
+        return;
+      }
+      if (pickersDepth > 0 || activePick || rowJobsRunning || readRowJobs().length) {
+        setPanelStatus('🚀 连续填写：等待弹窗选择或表格加行完成…');
+        await sleep(750);
+        continue;
+      }
+
+      // 每轮重新按档案写入，直接纠正被页面脚本清空、格式化错误或服务器驳回的字段。
+      emitTelemetry({ stage: 'verifying', level: 'info', action: '正在回读并校验当前页', targetLabel: page.name });
+      const corrected = fillCurrentDocument(profile);
+      lastResult = corrected;
+      if (corrected.items.some((item) => item.status === 'picker')) {
+        await attemptPickers(corrected.items);
+        if (pickersDepth > 0 || activePick) {
+          await sleep(600);
+          continue;
+        }
+      }
+      await sleep(500);
+
+      // 适配包字段再次回读；代码名称不成对、日期格式不精确等都视为阻断错误。
+      const contractResults = fillAdapterContract(profile, document, location.href, adapterPackage);
+      const contractFailures = contractResults.filter((item) => item.status === 'failed');
+      const unresolvedPickers = corrected.items.filter((item) =>
+        item.status === 'picker' && item.el instanceof HTMLElement && document.documentElement.contains(item.el) && controlEmpty(item.el),
+      );
+      const check = runPreSubmitCheck(document, activeRules);
+      const semanticProblems = check.items.filter((item) => item.level === 'error' || /格式|不一致|大于总人数/.test(item.title));
+      const serverErrors = visibleValidationErrors(document, page);
+
+      const hardProblems = contractFailures.length || unresolvedPickers.length || semanticProblems.length;
+      if (hardProblems) {
+        const pageKey = autoAdvancePageKey(document, page);
+        const corrections = state.attempts[`fix:${pageKey}`] || 0;
+        if (corrections < 2) {
+          state.attempts[`fix:${pageKey}`] = corrections + 1;
+          writeAutoWizard(state);
+          setPanelStatus(`🚀 检测到填写错误，正在自动纠正（${corrections + 1}/2）…`);
+          emitTelemetry({ stage: 'correcting', level: 'warning', action: `正在执行第 ${corrections + 1}/2 轮自动纠正`, reason: '检测到必填、格式或组件回读异常', recoverable: true });
+          await sleep(900);
+          continue;
+        }
+        stopAutoWizard('连续填写已停止：仍有无法自动纠正的必填、格式或组件错误');
+        showCheckReport();
+        return;
+      }
+      if (serverErrors.length) {
+        const pageKey = autoAdvancePageKey(document, page);
+        const corrections = state.attempts[`server-fix:${pageKey}`] || 0;
+        if (corrections < 1) {
+          state.attempts[`server-fix:${pageKey}`] = corrections + 1;
+          writeAutoWizard(state);
+          setPanelStatus('🚀 检测到服务器校验提示，已重新填写，准备再次验证…');
+          emitTelemetry({ stage: 'correcting', level: 'warning', action: '正在处理服务器校验提示', reason: '已按档案重新填写，随后再次回读', recoverable: true });
+          await sleep(900);
+          continue;
+        }
+        // 部分站点只有再次点击下一步才会清除旧错误提示；字段回读已全部通过时允许有限重试。
+      }
+
+      const nextButton = findDeclaredNextButton(document, page);
+      if (!nextButton) {
+        stopAutoWizard('连续填写已停止：未找到经过适配包验收的“下一步”按钮');
+        return;
+      }
+      const pageKey = autoAdvancePageKey(document, page);
+      const clicks = state.attempts[`next:${pageKey}`] || 0;
+      if (clicks >= 3) {
+        stopAutoWizard('连续填写已停止：同一页面连续三次未能进入下一步');
+        showCheckReport();
+        return;
+      }
+      state.attempts[`next:${pageKey}`] = clicks + 1;
+      state.steps += 1;
+      writeAutoWizard(state); // 点击前落盘，整页导航后可继续。
+      setFillProgress(100, '🚀 当前页校验通过，正在进入下一步', `连续填写第 ${state.steps} 步；最终提交仍需人工确认`, {
+        telemetryStage: 'navigating',
+        targetLabel: page.name,
+        level: 'success',
+      });
+      setPanelStatus('🚀 当前页已回读通过，正在自动点击“下一步”…');
+      clickDeclaredNext(nextButton);
+      await sleep(2600);
+
+      // 整页导航时当前脚本会卸载，新页面由持久状态继续；原地校验失败则进入纠错重试。
+      if (!document.documentElement.contains(nextButton)) {
+        setTimeout(() => {
+          if (readAutoWizard()) void chrome.runtime.sendMessage({ type: 'PANEL_FILL' }).catch(() => {});
+        }, 500);
+        return;
+      }
+      if (visibleValidationErrors(document, page).length) {
+        setPanelStatus('🚀 下一步返回校验错误，正在按档案纠正…');
+        emitTelemetry({ stage: 'correcting', level: 'warning', action: '下一步返回校验错误，正在纠正', targetLabel: page.name, recoverable: true });
+        await sleep(700);
+        continue;
+      }
+      // 按钮仍在且没有明确成功证据，保守等待后再有限重试，不把一次 click 当成导航成功。
+      await sleep(900);
+    }
+    stopAutoWizard('连续填写已停止：等待页面响应超时');
+  } finally {
+    autoAdvanceRunning = false;
+  }
+}
+
 // ===================== 学校目录（报名入口导航） =====================
 type SchoolStatus = 'done' | 'doing';
 
@@ -609,13 +989,13 @@ function closeSchoolDirectory(): void {
   document.getElementById('tui-schools')?.remove();
 }
 
-/** 学校目录浮层：82 所高校报名入口 + 每校"未开始/进行中/已填"状态标记（本地保存） */
+/** 学校目录浮层：学校与夏令营/预推免/优本计划分支分别展示并独立记录状态。 */
 function showSchoolDirectory(): void {
   closeSchoolDirectory();
   const box = document.createElement('div');
   box.id = 'tui-schools';
   box.innerHTML =
-    `<div class="tui-schools-head">🏫 学校目录 · 预推免报名入口<span class="tui-schools-sub">共 ${SCHOOLS.length} 所 · 点「去填写」打开报名页</span><span class="tui-cr-close" title="关闭">✕</span></div>` +
+    `<div class="tui-schools-head">🏫 学校目录 · 分项目报名入口<span class="tui-schools-sub">共 ${SCHOOLS_WITH_PROGRAMS.length} 所 · 夏令营/预推免分支互不串用</span><span class="tui-cr-close" title="关闭">✕</span></div>` +
     `<div class="tui-schools-toolbar"><input id="tui-schools-search" type="text" placeholder="搜索学校名 / 网址…"><span id="tui-schools-count"></span></div>` +
     `<div class="tui-schools-list" id="tui-schools-list"></div>`;
   (document.body || document.documentElement).appendChild(box);
@@ -628,35 +1008,40 @@ function showSchoolDirectory(): void {
   const statusLabel: Record<string, string> = { done: '✓ 已填', doing: '▶ 进行中' };
   const render = () => {
     const f = (searchEl.value || '').trim().toLowerCase();
-    const hits = SCHOOLS.filter((s) => !f || s.name.toLowerCase().includes(f) || s.host.toLowerCase().includes(f) || s.entry.toLowerCase().includes(f));
+    const hits = SCHOOLS_WITH_PROGRAMS.filter((s) => !f || s.name.toLowerCase().includes(f) || s.host.toLowerCase().includes(f) || s.entry.toLowerCase().includes(f) || s.programs?.some((p) => `${p.name} ${p.host} ${p.entry}`.toLowerCase().includes(f)));
     const doneN = Object.values(statuses).filter((v) => v === 'done').length;
     const doingN = Object.values(statuses).filter((v) => v === 'doing').length;
     countEl.textContent = `匹配 ${hits.length} 所 · 已填 ${doneN} · 进行中 ${doingN}`;
     list.innerHTML = '';
     hits.forEach((s) => {
-      const st = statuses[s.name] || '';
       const row = document.createElement('div');
-      row.className = 'tui-school-item' + (st ? ` st-${st}` : '') + (s.host === curHost ? ' current' : '');
+      row.className = 'tui-school-item' + (s.host === curHost || s.programs?.some((p) => p.host === curHost) ? ' current' : '');
       const badges: string[] = [];
       if (s.adapter) badges.push('<span class="tui-school-badge adapter" title="有专项适配">已适配</span>');
-      if (s.host === curHost) badges.push('<span class="tui-school-badge current">当前站点</span>');
+      if (s.host === curHost || s.programs?.some((p) => p.host === curHost)) badges.push('<span class="tui-school-badge current">当前站点</span>');
+      const programs = s.programs || [];
       row.innerHTML =
         `<div class="tui-school-info"><div class="tui-school-name">${escapeHtml(s.name)}${badges.join('')}</div>` +
         `<div class="tui-school-host">${escapeHtml(s.host)}</div></div>` +
-        `<div class="tui-school-actions"><button type="button" class="tui-school-open">去填写 ↗</button>` +
-        `<button type="button" class="tui-school-status">${st ? statusLabel[st] : '◌ 未开始'}</button></div>`;
-      (row.querySelector('.tui-school-open') as HTMLButtonElement).addEventListener('click', (e) => {
+        `<div class="tui-school-actions">${programs.map((p) => {
+          const st = statuses[p.id] || '';
+          const level = p.capabilities.formFill === 'verified' ? '已验证' : p.capabilities.formFill === 'experimental' ? '实验性' : '仅目录';
+          return `<span class="tui-school-program"><button type="button" class="tui-school-open" data-program="${escapeHtml(p.id)}">${escapeHtml(p.name)} ↗</button><button type="button" class="tui-school-status" data-status="${escapeHtml(p.id)}">${st ? statusLabel[st] : level}</button></span>`;
+        }).join('')}</div>`;
+      row.querySelectorAll<HTMLButtonElement>('[data-program]').forEach((button) => button.addEventListener('click', (e) => {
         e.stopPropagation();
-        window.open(s.entry, '_blank');
-      });
-      (row.querySelector('.tui-school-status') as HTMLButtonElement).addEventListener('click', (e) => {
+        const program = programs.find((p) => p.id === button.dataset.program);
+        if (program) window.open(program.entry, '_blank');
+      }));
+      row.querySelectorAll<HTMLButtonElement>('[data-status]').forEach((button) => button.addEventListener('click', (e) => {
         e.stopPropagation();
-        const cur: SchoolStatus | '' = (statuses[s.name] as SchoolStatus | undefined) || '';
+        const key = button.dataset.status!;
+        const cur: SchoolStatus | '' = (statuses[key] as SchoolStatus | undefined) || '';
         const next: SchoolStatus | '' = cur === '' ? 'doing' : cur === 'doing' ? 'done' : '';
-        if (next) statuses[s.name] = next;
-        else delete statuses[s.name];
+        if (next) statuses[key] = next;
+        else delete statuses[key];
         void saveSchoolStatus(statuses).then(render);
-      });
+      }));
       list.appendChild(row);
     });
   };
@@ -668,19 +1053,30 @@ function showSchoolDirectory(): void {
 }
 
 // ===================== 自动加行断点续填（ASP.NET 整页回发场景） =====================
-const RESUME_KEY = 'tui-pending-rows';
+const LEGACY_RESUME_KEY = 'tui-pending-rows';
+/** 每个页面独立保存安全加行任务，避免同源 iframe 与顶层页面互相覆盖。 */
+function rowResumeKey(): string {
+  return `tui-pending-rows-v2:${location.origin}${location.pathname}`;
+}
 /** 标记本标签页已一键填充过的页面 URL：保存回发刷新后据此自动补填被清空的字段 */
 const REFILL_KEY = 'tui-refill-url';
 
 interface RowJob {
-  type: 'achievements' | 'experiences' | 'family' | 'awards';
+  type: 'achievements' | 'experiences' | 'family' | 'awards' | 'language';
   startIndex: number;
   attempt: number;
+  /** 连续无进展轮数：有行增长或条目推进即清零；达到上限才放弃任务（不再按总点击数计） */
+  fails?: number;
+}
+
+/** 功能：把内部动态表任务类型转换为用户可理解且不包含真实内容的名称。 */
+function rowJobLabel(type: RowJob['type']): string {
+  return ({ achievements: '科研成果', experiences: '学习/工作经历', family: '家庭成员', awards: '奖励情况', language: '外语水平' })[type];
 }
 
 function readRowJobs(): RowJob[] {
   try {
-    const s = sessionStorage.getItem(RESUME_KEY);
+    const s = sessionStorage.getItem(rowResumeKey());
     return s ? (JSON.parse(s) as RowJob[]) : [];
   } catch {
     return [];
@@ -689,10 +1085,27 @@ function readRowJobs(): RowJob[] {
 
 function writeRowJobs(jobs: RowJob[]): void {
   try {
-    if (jobs.length) sessionStorage.setItem(RESUME_KEY, JSON.stringify(jobs));
-    else sessionStorage.removeItem(RESUME_KEY);
+    if (jobs.length) sessionStorage.setItem(rowResumeKey(), JSON.stringify(jobs));
+    else sessionStorage.removeItem(rowResumeKey());
   } catch {
     // 忽略
+  }
+}
+
+/** 表格内容证据（只含表格类型与行数/非空行数，不含任何档案值）：保存回发后做假保存比对用 */
+function writeTableEvidence(doc: Document): void {
+  try {
+    sessionStorage.setItem('tui-table-evidence', JSON.stringify(snapshotTableEvidence(doc)));
+  } catch {
+    // 忽略
+  }
+}
+
+function readTableEvidence(): TableEvidence[] {
+  try {
+    return JSON.parse(sessionStorage.getItem('tui-table-evidence') || '[]') as TableEvidence[];
+  } catch {
+    return [];
   }
 }
 
@@ -726,7 +1139,7 @@ async function processRowJobs(profile: Profile): Promise<void> {
 async function processRowJobsInner(profile: Profile): Promise<void> {
   const jobs = readRowJobs();
   // 等网格稳定（回发后 datagrid 异步渲染，过早填充会被抹掉/找不到表）：
-  // 四类网格（经历/成果/奖励/家庭）都参与探测；表已出现且行数连续两次一致才开填；
+  // 五类网格（经历/成果/奖励/家庭/语言考试）都参与探测；表已出现且行数连续两次一致才开填；
   // 页面还没有网格时最多等 3 秒（防止"页面未渲染完就点击填充"→ 前几次点了没反应）
   let lastCount = -1;
   let zeroRounds = 0;
@@ -735,7 +1148,8 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
       findExperienceTable(document) ||
       findAchievementTable(document) ||
       findAwardTable(document) ||
-      findFamilyTable(document);
+      findFamilyTable(document) ||
+      findLanguageTable(document);
     const count = info ? info.table.rows.length : 0;
     if (count > 0 && count === lastCount) break;
     lastCount = count;
@@ -751,6 +1165,8 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
         return profile.familyMembers.filter((m) => m.name && m.name.trim()).slice(0, 10);
       case 'awards':
         return profile.awards.filter((a) => a.content && a.content.trim()).slice(0, 20);
+      case 'language':
+        return Array.from({ length: languageExamEntryCount(profile) });
       default:
         return profile.experiences.filter((e) => (e.org && e.org.trim()) || (e.start && e.start.trim())).slice(0, 20);
     }
@@ -766,14 +1182,24 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
       sumDone += Math.min(j.startIndex, len);
     }
     const ratio = sumTotal ? sumDone / sumTotal : 1;
-    setFillProgress(50 + Math.round(45 * ratio), stage, '逐行添加并自动保存；页面自动刷新属正常现象');
+    const current = jobs[0];
+    const currentEntries = current ? entriesOf(current.type, profile) : [];
+    const targetLabel = current ? `${rowJobLabel(current.type)} · 第 ${Math.min(current.startIndex + 1, Math.max(1, currentEntries.length))} 行` : '动态表格';
+    setFillProgress(50 + Math.round(45 * ratio), stage, readAutoWizard() ? '逐行新增并填写；完成后将自动校验并进入下一步' : '逐行新增并填写；保存、下一步和提交仍由你操作', {
+      telemetryStage: 'addingRows',
+      targetLabel,
+      current: sumDone,
+      total: sumTotal,
+    });
   };
-  for (let round = 0; round < 15 && jobs.length; round++) {
+  // 轮次预算与剩余条目挂钩：14 条成果需要逐条加行，固定 15 轮可能不够
+  const maxRounds = Math.max(15, jobs.reduce((sum, j) => sum + entriesOf(j.type, profile).length, 0) + 4);
+  for (let round = 0; round < maxRounds && jobs.length; round++) {
     const job = jobs[0];
-    if (job.attempt > 12) {
+    if ((job.fails || 0) >= ROW_JOB_FAIL_CAP) {
       jobs.shift();
       writeRowJobs(jobs);
-      if (isTop) setPanelStatus('自动加行多次未成功：请手动点一次「新增一行」后再次「一键填充」');
+      if (isTop) setPanelStatus('自动加行连续未成功：请手动点一次「新增一行」后再次「一键填充」');
       break;
     }
     const entries = entriesOf(job.type, profile);
@@ -787,6 +1213,8 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
     const infoOf = (type: RowJob['type']) =>
       type === 'family'
         ? findFamilyTable(document)
+        : type === 'language'
+          ? findLanguageTable(document)
         : type === 'awards'
           ? findAwardTable(document)
           : type === 'achievements'
@@ -794,6 +1222,8 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
             : findExperienceTable(document);
     const infoBefore = infoOf(job.type);
     const rowsBefore = infoBefore ? infoBefore.table.rows.length : -1;
+    // 本轮起点必须在 beforeAdd 修改断点前冻结；否则 callback 写入 i 后再 +n 会把进度重复累加并跳过记录。
+    const callStart = job.startIndex;
     let clicked = false;
     const beforeAdd = (i: number): number => {
       clicked = true;
@@ -804,15 +1234,23 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
       return job.attempt - 1; // 返回 0 起点击序号：clickPageAction 按序号轮换回发方式（0 标准回发 / 1 location 求值 / 2 原生点击）
     };
     let n = 0;
+    let observedNextIndex = callStart;
+    const observeProcessed = (nextIndex: number): void => {
+      observedNextIndex = Math.max(observedNextIndex, nextIndex);
+    };
+    // 单轮加行失败预算与剩余条目挂钩（此前固定 10/12 次，14 条成果常因预算耗尽停在 10 条附近）
+    const addBudget = Math.min(Math.max(entries.length - job.startIndex, 1) + 2, 25);
     try {
       n =
         job.type === 'achievements'
-          ? await fillAchievements(profile, document, job.startIndex, beforeAdd)
+          ? await fillAchievements(profile, document, job.startIndex, beforeAdd, addBudget, false, observeProcessed)
+          : job.type === 'language'
+            ? await fillLanguageExams(profile, document, job.startIndex, beforeAdd, addBudget, false)
           : job.type === 'family'
-            ? await fillFamilyMembers(profile, document, job.startIndex, beforeAdd)
+            ? await fillFamilyMembers(profile, document, job.startIndex, beforeAdd, addBudget, false, observeProcessed)
             : job.type === 'awards'
-              ? await fillAwardRows(profile, document, job.startIndex, beforeAdd)
-              : await fillExperiences(profile, document, job.startIndex, beforeAdd);
+              ? await fillAwardRows(profile, document, job.startIndex, beforeAdd, addBudget, false, observeProcessed)
+              : await fillExperiences(profile, document, job.startIndex, beforeAdd, addBudget, false, observeProcessed);
     } catch (e) {
       n = 0;
       try {
@@ -823,20 +1261,49 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
         // 忽略
       }
     }
-    const next = job.startIndex + n;
-    if (next >= entries.length) {
+    const next = nextRowJobIndex(callStart, n, observedNextIndex);
+    if (isTop && next > callStart) emitTelemetry({
+      stage: 'addingRows',
+      level: 'success',
+      action: next - callStart > 1 ? `已填写 ${next - callStart} 行并完成回读` : '本行已填写并完成回读',
+      targetLabel: `${rowJobLabel(job.type)} · 第 ${Math.min(next, entries.length)} 行`,
+      current: Math.min(next, entries.length),
+      total: entries.length,
+    });
+    // 本轮走向判定：只有"目标表确实不在本页"才按无表放弃；表格在但加行无效时保留任务并累计连续失败
+    const infoAfter = infoOf(job.type);
+    const rowsAfter = infoAfter ? infoAfter.table.rows.length : -1;
+    const decision = decideRowJobRound({
+      callStart,
+      nextIndex: next,
+      clicked,
+      processed: n,
+      rowsBefore,
+      rowsAfter,
+      failsBefore: job.fails || 0,
+      entriesLength: entries.length,
+      tablePresentNow: !!infoAfter,
+    });
+    if (decision.action === 'complete') {
+      // 本类型条目已全部处理（等价于 next >= entries.length）
       jobs.shift();
       writeRowJobs(jobs);
       continue;
     }
-    // 无进展且没点过按钮（该类型表格在本页不存在，如北邮无"学术成果"表）→ 放弃本任务，继续下一个，
-    // 否则队列永远卡在第一个任务上（v1.12.2 重写时丢失的关键分支）
-    if (!clicked && n === 0) {
+    if (decision.action === 'drop-no-table') {
+      // 该类型表格不在本页（如已翻到下一步）：放弃任务，但明确告知剩余条数，不再静默丢弃
+      if (isTop) emitTelemetry({
+        stage: 'addingRows',
+        level: 'warning',
+        action: `${rowJobLabel(job.type)}还有 ${decision.remaining} 条未填`,
+        reason: '目标页面没有对应表格；请返回对应页面再次「一键填充」',
+        recoverable: true,
+      });
       jobs.shift();
       writeRowJobs(jobs);
       try {
         const dbg = JSON.parse(sessionStorage.getItem('tui-rowjobs-debug') || '[]');
-        dbg.push({ at: Date.now(), type: job.type, note: 'dropped-no-table-on-page' });
+        dbg.push({ at: Date.now(), type: job.type, note: 'dropped-no-table-on-page', remaining: decision.remaining });
         sessionStorage.setItem('tui-rowjobs-debug', JSON.stringify(dbg.slice(-20)));
       } catch {
         // 忽略
@@ -844,14 +1311,34 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
       updateRowJobsProgress('🔄 正在自动加行');
       continue;
     }
-    const infoAfter = infoOf(job.type);
-    const rowsAfter = infoAfter ? infoAfter.table.rows.length : -1;
-    job.startIndex = next;
+    if (decision.action === 'drop-fails') {
+      jobs.shift();
+      writeRowJobs(jobs);
+      if (isTop) setPanelStatus(`${rowJobLabel(job.type)}自动加行未成功${decision.remaining > 0 ? `（剩余 ${decision.remaining} 条）` : ''}：请手动新增一行后再次「一键填充」`);
+      try {
+        const dbg = JSON.parse(sessionStorage.getItem('tui-rowjobs-debug') || '[]');
+        dbg.push({ at: Date.now(), type: job.type, note: 'dropped-fail-cap', remaining: decision.remaining });
+        sessionStorage.setItem('tui-rowjobs-debug', JSON.stringify(dbg.slice(-20)));
+      } catch {
+        // 忽略
+      }
+      updateRowJobsProgress('🔄 正在自动加行');
+      continue;
+    }
+    job.fails = decision.fails;
+    job.startIndex = decision.startIndex;
     writeRowJobs(jobs);
+    if (isTop && decision.warn) emitTelemetry({
+      stage: 'addingRows',
+      level: 'warning',
+      action: `${rowJobLabel(job.type)}加行未生效（连续 ${decision.fails} 轮）`,
+      reason: '页面可能已达行数上限或加行按钮无响应；请核对页面后手动新增一行',
+      recoverable: true,
+    });
     updateRowJobsProgress('🔄 正在自动加行');
     try {
       const dbg = JSON.parse(sessionStorage.getItem('tui-rowjobs-debug') || '[]');
-      dbg.push({ at: Date.now(), type: job.type, startIndex: job.startIndex, n, clicked, rowsBefore, rowsAfter });
+      dbg.push({ at: Date.now(), type: job.type, startIndex: job.startIndex, n, clicked, rowsBefore, rowsAfter, fails: job.fails });
       sessionStorage.setItem('tui-rowjobs-debug', JSON.stringify(dbg.slice(-20)));
     } catch {
       // 忽略
@@ -861,12 +1348,13 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
     continue;
   }
   if (isTop && !jobs.length) {
-    setPanelStatus('表格自动加行填写完成 ✅（绿色高亮，请核对后提交）');
-    finishFillBanner('表格自动加行填写完成', '绿色高亮，请核对后提交');
+    setPanelStatus(readAutoWizard() ? '表格自动加行完成，正在等待连续填写校验…' : '表格自动加行填写完成 ✅（绿色高亮，请核对后提交）');
+    finishFillBanner('表格自动加行填写完成', readAutoWizard() ? '即将自动校验并进入下一步' : '绿色高亮，请核对后提交');
   } else {
     updateRowJobsProgress('🔄 正在自动加行');
   }
   snapshotFillState(document);
+  writeTableEvidence(document);
   // 回发型页面：写完后定时补写（纯填充、不点按钮），防止网格重新渲染抹掉内容；网格异步渲染慢，末尾再补一轮
   void (async () => {
     await sleep(2500);
@@ -877,24 +1365,53 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
     await fillAwardRows(profile, document, 0, undefined, 0);
     await fillExperiences(profile, document, 0, undefined, 0);
     snapshotFillState(document);
+    writeTableEvidence(document);
     await sleep(6000);
     await fillFamilyMembers(profile, document, 0, undefined, 0);
     await fillAwardRows(profile, document, 0, undefined, 0);
     snapshotFillState(document);
+    writeTableEvidence(document);
   })();
+}
+
+/**
+ * 为当前 frame 中实际存在的动态表建立任务。任务只允许点击“新增一行”，
+ * 不允许借“保存/添加落库”换行，也不会点击下一步或提交。
+ */
+function startSafeRowJobs(profile: Profile): void {
+  const jobs: RowJob[] = [];
+  if (findAchievementTable(document) && profile.research.some((row) => row.title?.trim())) jobs.push({ type: 'achievements', startIndex: 0, attempt: 0 });
+  if (findAwardTable(document) && profile.awards.some((row) => row.content?.trim())) jobs.push({ type: 'awards', startIndex: 0, attempt: 0 });
+  if (findExperienceTable(document) && profile.experiences.some((row) => row.org?.trim() || row.start?.trim())) jobs.push({ type: 'experiences', startIndex: 0, attempt: 0 });
+  if (findFamilyTable(document) && profile.familyMembers.some((row) => row.name?.trim())) jobs.push({ type: 'family', startIndex: 0, attempt: 0 });
+  if (findLanguageTable(document) && languageExamEntryCount(profile)) jobs.push({ type: 'language', startIndex: 0, attempt: 0 });
+  writeRowJobs(jobs);
+  if (jobs.length) void processRowJobs(profile);
 }
 
 const handlers: PanelHandlers = {
   onAction: async (act: string) => {
-    if (act === 'fill') {
-      setPanelStatus('正在填充…');
+    if (act === 'fill' || act === 'autofill') {
+      beginFillTelemetry(act === 'autofill');
+      if (act === 'autofill') startAutoWizard();
+      else stopAutoWizard();
+      setPanelStatus(act === 'autofill' ? '🚀 连续填写已启动：正在填写并校验当前页…' : '正在填充本页…');
       try {
         const resp = await chrome.runtime.sendMessage({ type: 'PANEL_FILL' });
         if (resp && resp.ok) setPanelStatus(formatStats(resp.stats));
-        else setPanelStatus('填充失败：请确认已登录并停留在报名填表页');
+        else {
+          if (act === 'autofill') stopAutoWizard();
+          emitTelemetry({ stage: 'failed', level: 'error', action: '无法开始填写', reason: '请确认已登录并停留在报名填表页', recoverable: true });
+          setPanelStatus('填充失败：请确认已登录并停留在报名填表页');
+        }
       } catch {
+        if (act === 'autofill') stopAutoWizard();
+        emitTelemetry({ stage: 'failed', level: 'error', action: '扩展后台未就绪', reason: '请刷新页面后重试', recoverable: true });
         setPanelStatus('扩展后台未就绪：请刷新页面后重试');
       }
+    } else if (act === 'stopauto') {
+      stopAutoWizard('已停止连续填写；当前页面内容不会被清除');
+      emitTelemetry({ stage: 'cancelled', level: 'warning', action: '已停止连续填写', reason: '当前页面已经填写的内容不会被清除', recoverable: true });
     } else if (act === 'schools') {
       showSchoolDirectory();
     } else if (act === 'check') {
@@ -902,12 +1419,77 @@ const handlers: PanelHandlers = {
     } else if (act === 'importprofile') {
       try {
         const profile = await loadProfile();
-        const res = importFromPage(profile, document, activeRules);
+        const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
+        if (!adapterPackage) {
+          const res = importFromPage(profile, document, activeRules);
+          await saveProfile(profile);
+          if (!res.summary.length) setPanelStatus('本页没有可提取的已填信息（当前站点尚无适配包，已使用兼容提取器）');
+          else setPanelStatus(`兼容提取器已保存 ${res.summary.length} 项空缺字段，请在档案编辑器中核对。`);
+          return;
+        }
+        const snapshot = captureCurrentPage(document, location.href, activeRules, [adapterPackage]);
+        let session = addSnapshot(await loadCrawlSession(), snapshot, adapterPackage);
+        if (adapterPackage.id === 'minimal-bupt-mastertm' && snapshot.pageId === 'selection') {
+          const choices = applicationChoicesFromPage(document);
+          if (choices.length > 1 && !session.selectedApplicationKey) {
+            const answer = window.prompt(`检测到 ${choices.length} 条报名记录。请输入序号确认（默认 1，但不会自动切换）：\n${choices.map((choice, index) => `${index + 1}. ${choice.label}`).join('\n')}`, '1');
+            if (answer == null) throw new Error('用户取消了报名记录选择');
+            session = rememberApplicationChoice(session, choices, Number(answer) - 1);
+          } else {
+            session = rememberApplicationChoice(session, choices);
+          }
+        }
+        await saveCrawlSession(session);
+        const preview = previewCrawlMerge(profile, session);
+        const newFields = preview.items.filter((x) => x.kind === 'new').length;
+        const conflicts = preview.items.filter((x) => x.kind === 'conflict' || x.kind === 'locked').length;
+        const newRows = Object.values(preview.newRows).reduce((n, rows) => n + (rows?.length || 0), 0);
+        const pendingRows = preview.pendingClassifications.length;
+        const collected = Object.keys(session.snapshots).length;
+        const pending = session.expectedPages.filter((id) => !session.snapshots[id]).length;
+        const confirmed = window.confirm(`采集预览（${adapterPackage.schoolName} · ${snapshot.pageName}）\n已累计 ${collected} 个步骤，待采集 ${pending} 个步骤。\n新增字段 ${newFields}，新增表格行 ${newRows}，待分类 ${pendingRows}，冲突/锁定 ${conflicts}。\n\n确认后仅合并新增内容并锁定；冲突保留原档案值。`);
+        if (!confirmed) {
+          setPanelStatus(`本页已加入爬取会话但尚未合并：新增字段 ${newFields}、新增行 ${newRows}、待分类 ${pendingRows}、冲突 ${conflicts}。`);
+          return;
+        }
+        commitCrawlMerge(profile, session, { lockImported: true });
         await saveProfile(profile);
-        if (!res.summary.length) setPanelStatus('本页没有可提取的已填信息（可能没有匹配到档案字段，或本页表单不在顶层/同源框架内）');
-        else setPanelStatus(`已从本页（含同源子框架）提取 ${res.summary.length} 项到档案并保存（仅覆盖空项），请在档案编辑器中核对：\n${res.summary.slice(0, 14).join('；')}`);
-      } catch {
-        setPanelStatus('提取失败：请刷新页面后重试');
+        setPanelStatus(`已合并并锁定新增字段 ${newFields} 项、表格行 ${newRows} 行；${pendingRows} 行进入待分类，${conflicts} 个冲突保留原值。`);
+      } catch (error) {
+        setPanelStatus(`提取已停止：${error instanceof Error ? error.message : '请刷新页面后重试'}`);
+      }
+    } else if (act === 'sessioncrawl') {
+      if (activeCrawlController) {
+        activeCrawlController.abort();
+        activeCrawlController = null;
+        setPanelStatus('正在取消会话爬取…');
+        return;
+      }
+      const crawlController = new AbortController();
+      activeCrawlController = crawlController;
+      try {
+        const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
+        if (!adapterPackage) throw new Error('当前站点没有声明式适配包');
+        if (adapterPackage.crawl.mode !== 'session' || !adapterPackage.crawl.readOnlyPaths?.length) throw new Error('该项目未声明可读取的只读页面；请逐页使用“从本页提取档案”');
+        setPanelStatus('正在读取白名单内的只读页面；再次点击“登录后会话爬取”可取消…');
+        const result = await crawlDeclaredReadOnlyPages(adapterPackage, location.href, fetch, { signal: crawlController.signal, timeoutMs: 12000, minIntervalMs: 350 });
+        const profile = await loadProfile();
+        const preview = previewCrawlMerge(profile, result.session);
+        const newFields = preview.items.filter((x) => x.kind === 'new').length;
+        const conflicts = preview.items.filter((x) => x.kind === 'conflict' || x.kind === 'locked').length;
+        const newRows = Object.values(preview.newRows).reduce((n, rows) => n + (rows?.length || 0), 0);
+        const pendingRows = preview.pendingClassifications.length;
+        if (!window.confirm(`会话爬取完成：成功读取 ${result.fetched} 页，失败 ${result.failures.length} 页。\n新增字段 ${newFields}，新增表格行 ${newRows}，待分类 ${pendingRows}，冲突/锁定 ${conflicts}。\n\n确认后只合并新增内容并锁定。`)) {
+          setPanelStatus('会话爬取结果已暂存，尚未合并到档案。');
+          return;
+        }
+        commitCrawlMerge(profile, result.session, { lockImported: true });
+        await saveProfile(profile);
+        setPanelStatus(`会话爬取已合并：${newFields} 个字段、${newRows} 行；冲突未覆盖。`);
+      } catch (error) {
+        setPanelStatus(`会话爬取已停止：${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        if (activeCrawlController === crawlController) activeCrawlController = null;
       }
     } else if (act === 'copymissing') {
       if (!lastResult) {
@@ -929,9 +1511,10 @@ const handlers: PanelHandlers = {
           return;
         }
         const full = {
-          url: location.href,
+          url: (() => { try { const u = new URL(location.href); return `${u.origin}${u.pathname}`; } catch { return ''; } })(),
           title: document.title,
           adapter: matchAdapter(location.href, adapters) ? matchAdapter(location.href, adapters)!.id : null,
+          adapterPackage: matchAdapterPackage(location.href, adapterPackages)?.id || null,
           frames: resp.reports || [],
         };
         const ok = await copyText(JSON.stringify(full, null, 2));
@@ -940,6 +1523,7 @@ const handlers: PanelHandlers = {
         setPanelStatus('字段报告生成失败，请刷新页面重试');
       }
     } else if (act === 'clear') {
+      stopAutoWizard();
       clearHighlights(document);
       closeCheckReport();
       try {
@@ -960,6 +1544,7 @@ const handlers: PanelHandlers = {
 
 if (isTop) {
   initPanel(handlers);
+  renderPanelTelemetry(telemetryState);
   try {
     sessionStorage.removeItem('tui-pb-fired'); // 新文档已载入：上一文档的卸载信号作废，避免阻断本页自动加行
     // 弹窗失败计数只在单页生命周期内有效：每次页面载入都给选择器全新机会（旧版本失败不得拖累新版本；成熟填表软件同款——失败防护不跨会话）
@@ -974,14 +1559,31 @@ if (isTop) {
   if (matchAdapter(url, adapters)?.autoShow || AUTO_SHOW_PATTERN.test(url) || (fields.length >= 12 && matched >= 5)) {
     showPanel();
   }
+  // 连续填写只在同一标签页、同源报名向导内延续；最终页或未声明页面会由安全控制器立即停止。
+  if (readAutoWizard()) {
+    setPanelStatus('🚀 检测到连续填写任务，正在继续当前步骤…');
+    setTimeout(() => {
+      const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
+      const page = adapterPackage ? matchAdapterPage(adapterPackage, document, location.href) : null;
+      if (adapterPackage?.commitPolicy === 'validated-next-only' && page?.allowed && page.page?.role === 'form') {
+        void chrome.runtime.sendMessage({ type: 'PANEL_FILL' }).catch(() => stopAutoWizard('连续填写已停止：扩展后台未就绪'));
+      } else {
+        stopAutoWizard('连续填写已到达最终页或未验收页面，未执行提交');
+      }
+    }, 800);
+  }
   // 恢复未完成的自动加行任务（页面整页刷新后继续），并补回可能被失败回发清空的基本字段
   void (async () => {
+    try {
+      // 旧键中的任务可能包含自动保存动作，升级后只清理一次，不影响新版安全加行任务。
+      sessionStorage.removeItem(LEGACY_RESUME_KEY);
+    } catch {
+      // 忽略
+    }
     if (readRowJobs().length) {
-      const profile = await loadProfile();
-      fillFinished = false;
-      setFillProgress(52, '🔄 继续未完成的自动加行', '页面刷新后自动续填…');
-      setPanelStatus('🔄 继续未完成的自动加行填写…');
-      fillAll(profile, document, activeRules); // 恢复被清空的常规字段
+      restoreProgressBanner();
+      const profile = profileForCurrentPage(await loadProfile());
+      setPanelStatus('🔄 正在继续未完成的表格自动加行…');
       await processRowJobs(profile);
     } else {
       restoreProgressBanner(); // 回发刷新后恢复进度条显示（行任务刚起步或延时补填中）
@@ -999,13 +1601,33 @@ if (isTop) {
     restoreProgressBanner(); // 保存回发刷新：先恢复进度条，随后补填轮次再更新
     void loadProfile().then((profile) => {
       setPanelStatus('🔄 检测到保存后页面刷新：正在恢复被清空的字段…');
-      scheduleRestorePasses(profile);
+      // 假保存比对：填写过的表格在保存回发后内容全空 → 明确告警（"接口成功但刷新整表空=毁档"同款教训）。
+      // 手动删除过内容属于误报，文案中已说明可忽略。
+      const beforeEvidence = readTableEvidence();
+      const fakeKind = beforeEvidence.length ? detectFakeSave(beforeEvidence, document) : null;
+      if (fakeKind && !sessionStorage.getItem('tui-fake-save-warned')) {
+        try {
+          sessionStorage.setItem('tui-fake-save-warned', '1');
+        } catch {
+          // 忽略
+        }
+        setPanelStatus(`⚠️ 上次保存可能未生效：${rowJobLabel(fakeKind)}表格在保存后为空。若非你手动删除，请重新填写并再次保存`);
+        emitTelemetry({
+          stage: 'failed',
+          level: 'error',
+          action: '检测到疑似未生效的保存',
+          reason: `${rowJobLabel(fakeKind)}表格在保存回发后内容为空；请核对页面，必要时重新填写并保存`,
+          recoverable: true,
+        });
+      }
+      scheduleRestorePasses(profileForCurrentPage(profile));
     });
   }
   // 调试钩子：?tui-autotest=1 用本地档案自动填充；?tui-autotest=2 用随机测试档案填充（供自动化测试与商店截图）
   if (/[?&]tui-autotest=[12]/.test(location.search)) {
-    const run = (profile: Profile) => {
-      const res = fillAll(profile, document, activeRules);
+    const run = (rawProfile: Profile) => {
+      const profile = profileForCurrentPage(rawProfile);
+      const res = fillCurrentDocument(profile);
       const marker = document.createElement('div');
       marker.id = 'tui-autotest-result';
       marker.textContent = JSON.stringify({ ...res.stats, extId: chrome.runtime.id || '' });
@@ -1021,6 +1643,13 @@ if (isTop) {
   }
 }
 
+// 同源/跨域子框架若因“新增一行”的服务器回发而单独刷新，也要在自己的页面继续任务。
+if (!isTop && readRowJobs().length) {
+  void loadProfile()
+    .then((profile) => processRowJobs(profileForCurrentPage(profile)))
+    .catch(() => writeRowJobs([]));
+}
+
 chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any): boolean => {
   switch (msg && msg.type) {
     case 'FILL': {
@@ -1034,16 +1663,19 @@ chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any)
         sessionStorage.removeItem('tui-pick-rounds');
         // 清除过期回发信号：上一次导航的 pagehide 时间戳不得让本轮点击被"回发刚发生"误拦 8 秒
         sessionStorage.removeItem('tui-pb-fired');
+        // 新一轮填写开始：上一次的假保存告警清零（本页再次保存时会重新比对）
+        sessionStorage.removeItem('tui-fake-save-warned');
       } catch {
         // 忽略
       }
       loadProfile()
-        .then((profile) => {
+        .then((rawProfile) => {
+          const profile = profileForCurrentPage(rawProfile);
           if (isTop) {
             fillFinished = false;
             setFillProgress(2, '⚡ 正在扫描页面并填充', '请稍候…');
           }
-          lastResult = fillAll(profile, document, activeRules);
+          lastResult = fillCurrentDocument(profile);
           if (isTop) {
             const t = lastResult.stats.total || 1;
             const done = lastResult.stats.filled + lastResult.stats.skipped + lastResult.stats.failed;
@@ -1055,51 +1687,26 @@ chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any)
             // 忽略
           }
           scheduleCascadeRetries(lastResult.items);
+          // 常规字段先落入当前空行，再按“点击新增 → 等待可见行增长 → 填下一条”的顺序续填。
+          startSafeRowJobs(profile);
+          if (isTop && readAutoWizard()) void runValidatedAutoAdvance(profile);
           const finalStats = lastResult.stats; // 闭包内引用快照，避免 TS 无法收窄 lastResult 非空
-          // 弹窗点选可能触发页面脚本清空联动字段（如选择本科学校后清空院系/专业）；且网格异步渲染较慢，多轮延时补填
-          [6500, 12000, 20000, 30000].forEach((delay, idx) =>
+          // 仅在仍有异步工作时补填：稳定页面不再无条件等待并重复扫描 6.5/12/20/30 秒。
+          const followupDelays = [2500, 7000, 15000];
+          followupDelays.forEach((delay, idx) =>
             setTimeout(() => {
-              fillAll(profile, document, activeRules);
-              // 行任务若因异常/上下文丢失而死掉：延时轮次将其唤醒重跑（互斥保证不并发）
-              if (readRowJobs().length && !rowJobsRunning) {
-                void processRowJobs(profile);
-              }
+              if (!hasDeferredFillWork() && idx < followupDelays.length - 1) return;
+              fillCurrentDocument(profile);
+              writeTableEvidence(document);
               if (isTop) {
                 if (pickersDepth > 0) setFillProgress(98, '🔁 自动选择弹窗仍在进行', '请稍候，不要手动关闭弹窗…');
-                else if (idx < 3) setFillProgress(96 + idx, '🔁 自动补填进行中…', '等待页面渲染，防止字段被脚本清空');
-                else if (!readRowJobs().length) finishFillBanner(`填充完成：已填 ${finalStats.filled} 项`, '请核对绿色高亮后保存');
-                else setFillProgress(99, '🔁 自动加行仍在进行', '表格行尚未全部添加，稍后自动继续');
+                else if (readRowJobs().length || rowJobsRunning) setFillProgress(99, '🔁 自动加行仍在进行', '表格行尚未全部添加，稍后自动继续');
+                else if (idx < followupDelays.length - 1 && hasDeferredFillWork()) setFillProgress(96 + idx, '🔁 自动补填进行中…', '检测到异步控件，等待页面完成渲染');
+                else finishFillBanner(`填充完成：已填 ${finalStats.filled} 项`, readAutoWizard() ? '正在执行连续填写校验' : '请核对绿色高亮后保存');
               }
             }, delay),
           );
-          // 学术成果表 / 学习工作经历表 / 家庭成员 / 奖励情况：自动"新增一行"并逐条填写（含整页回发后的断点续填）
-          void (async () => {
-            writeRowJobs([
-              { type: 'achievements', startIndex: 0, attempt: 0 },
-              { type: 'experiences', startIndex: 0, attempt: 0 },
-              { type: 'family', startIndex: 0, attempt: 0 },
-              { type: 'awards', startIndex: 0, attempt: 0 },
-            ]);
-            await processRowJobs(profile);
-          })();
-          // 兜底第二遍：首遍点击常因整页回发刷新丢上下文而漏行（实测"再点一次一键填充"即可补全）→ 35 秒后自动等价重跑一次
-          setTimeout(() => {
-            if (rowJobsRunning) return; // 首遍还在推进则不打扰；结束后 rerun 标记也会接力
-            try {
-              const dbg = JSON.parse(sessionStorage.getItem('tui-rowjobs-debug') || '[]');
-              dbg.push({ at: Date.now(), type: 'queue', note: 'second-pass' });
-              sessionStorage.setItem('tui-rowjobs-debug', JSON.stringify(dbg.slice(-20)));
-            } catch {
-              // 忽略
-            }
-            writeRowJobs([
-              { type: 'achievements', startIndex: 0, attempt: 0 },
-              { type: 'experiences', startIndex: 0, attempt: 0 },
-              { type: 'family', startIndex: 0, attempt: 0 },
-              { type: 'awards', startIndex: 0, attempt: 0 },
-            ]);
-            void processRowJobs(profile);
-          }, 35000);
+          // 安全加行任务只点击明确的“新增一行”；保存、下一步与提交仍由用户完成。
           try {
             // DOM 元素无法跨消息序列化，剥离后再上报后台聚合
             const plainItems = lastResult.items.map(({ el, ...rest }) => rest);
@@ -1127,6 +1734,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any)
     case 'FILL_DONE':
       if (isTop) {
         lastResult = { stats: msg.stats, items: msg.items || [] };
+        recordFillResultTelemetry(lastResult.items, lastResult.stats);
         setPanelStatus(formatStats(msg.stats));
       }
       sendResponse({ ok: true });

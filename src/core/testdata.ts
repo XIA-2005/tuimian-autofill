@@ -113,11 +113,19 @@ export function generateTestProfile(): Profile {
   };
   p.awards.push({ date: `${y}-09`, place: '西安理工大学（测试数据）', content: '校级一等奖学金（测试数据）' });
   p.awards.push({ date: `${y - 1}-09`, place: '西安理工大学（测试数据）', content: '国家励志奖学金（测试数据）' });
+  p.honorsScholarships.push(
+    { kind: '奖学金', time: `${y}-09`, name: '校级一等奖学金（测试数据）', issuer: '西安理工大学（测试数据）', place: '', level: '校级', grade: '一等奖', rank: '', content: '' },
+    { kind: '奖学金', time: `${y - 1}-09`, name: '国家励志奖学金（测试数据）', issuer: '西安理工大学（测试数据）', place: '', level: '国家级', grade: '', rank: '', content: '' },
+  );
   p.research.push({ title: '校级大学生创新创业训练计划项目（测试数据）', type: '项目', date: `${y - 2}-${y - 1}`, role: '主要成员', description: '负责文献综述与数据整理工作。' });
   p.research.push({ title: '学科竞赛省级二等奖（测试数据）', type: '竞赛', date: `${y - 1}-06`, role: '队长', description: '负责方案设计与答辩。' });
+  p.academicProjects.push({ kind: '科研项目', start: `${y - 2}-09`, end: `${y - 1}-06`, title: '校级大学生创新创业训练计划项目（测试数据）', source: '校级大创', role: '主要成员', authors: '', itemType: '创新训练', level: '校级', status: '结题', summary: '负责文献综述与数据整理工作。', advisor: '', partition: '' });
+  p.academicCompetitions.push({ kind: '学术竞赛', time: `${y - 1}-06`, name: '学科竞赛省级二等奖（测试数据）', issuer: '竞赛组委会', place: '', level: '省级', grade: '二等奖', rank: '队长', content: '负责方案设计与答辩。' });
   p.socialPractice.push({ date: `${y - 3}-${y - 2}`, name: '院学生会（测试数据）', role: '宣传部干事', detail: '负责活动宣传与推文撰写。' });
   p.socialPractice.push({ date: `${y - 2}-07`, name: '乡村支教社会实践（测试数据）', role: '志愿者', detail: '暑期支教并获评优秀实践个人。' });
   p.experiences.push({ start: `${y - 3}-09`, end: `${y + 1}-06`, org: school, role: '学生' });
+  p.studentWorkExperiences.push({ kind: '学生工作', start: `${y - 3}-09`, end: `${y - 2}-06`, org: '院学生会（测试数据）', role: '宣传部干事', place: '', content: '负责活动宣传与推文撰写。' });
+  p.socialService.push({ kind: '志愿服务', start: `${y - 2}-07`, end: `${y - 2}-07`, org: '乡村支教社会实践（测试数据）', role: '志愿者', place: '', content: '暑期支教并获评优秀实践个人。' });
   p.familyMembers.push({ name: `${pick(SURNAMES)}${pick(GIVEN)}`, relation: '父女', org: '某单位职员', phone: genPhone(), politicalStatus: '群众' });
   p.familyMembers.push({ name: `${pick(SURNAMES)}${pick(GIVEN)}`, relation: '母女', org: '某单位职员', phone: genPhone(), politicalStatus: '群众' });
   p.selfStatements.push({
@@ -127,6 +135,7 @@ export function generateTestProfile(): Profile {
       '在校期间积极参与科研与学科竞赛，培养了文献调研、实验设计与团队协作能力。希望进入贵校继续深造，在导师指导下开展深入研究。' +
       '（此为随机生成的测试文本，请替换为真实个人陈述。）',
   });
+  p.essays.push({ kind: '个人陈述（测试数据）', content: p.selfStatements[0].content, charLimit: 500 });
   p.applications.push({ school: '测试大学', college: '测试学院', major: major, direction: '测试方向', degreeType: '学术型硕士', supervisor: '', note: '测试数据，请修改' });
   return p;
 }

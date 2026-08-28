@@ -14,7 +14,7 @@ export async function loadProfile(): Promise<Profile> {
 }
 
 export async function saveProfile(p: Profile): Promise<void> {
-  await chrome.storage.local.set({ [PROFILE_KEY]: p });
+  await chrome.storage.local.set({ [PROFILE_KEY]: normalizeProfile(p) });
 }
 
 export async function ensureSeed(): Promise<void> {

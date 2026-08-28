@@ -1,16 +1,35 @@
 // 本地冒烟测试：用 jsdom 加载模拟报名表，验证匹配与填充逻辑。
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
-import { emptyProfile, normalizeProfile } from '../src/core/profile';
-import { closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, FillItem, findAchievementTable, findAwardTable, findExperienceTable, findPickerOption, pickInPage, sleep } from '../src/core/filler';
+import { canLockProfileRow, createRowState, emptyProfile, moveAtomicRow, normalizeProfile, setProfileCode, writeProfileValue } from '../src/core/profile';
+import { closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, fillLanguageExams, FillItem, findAchievementTable, findAwardTable, findExperienceTable, findPickerOption, pickInPage, sleep, trySetSelect } from '../src/core/filler';
 import { scanSite } from '../src/core/scanner';
 import { importFromPage } from '../src/core/importer';
 import { findPickerTrigger } from '../src/core/matcher';
 import { generateTestProfile } from '../src/core/testdata';
 import { isValidIdCard, runPreSubmitCheck } from '../src/core/checker';
-import { ADAPTERS, allAdapters } from '../src/core/adapters';
+import { ADAPTERS, allAdapters, declarativeMatchUrl } from '../src/core/adapters';
 import { isRegionLike, regionCode6, regionFromIdCard, regionKeywords, regionMatchTokens, regionNameFromCode, regionTreeTokens, splitRegion } from '../src/core/regionutil';
 import { SCHOOLS } from '../src/core/schools';
+import { matchAdapterPackage, matchAdapterPage, SCHOOL_ADAPTER_PACKAGES, validateAdapterPackage } from '../src/core/adapter-packages';
+import { SCHOOLS_WITH_PROGRAMS } from '../src/core/school-programs';
+import { projectProfile } from '../src/core/projection';
+import { addSnapshot, applicationChoicesFromPage, commitCrawlMerge, createCrawlSession, previewCrawlMerge, rememberApplicationChoice } from '../src/core/crawl';
+import { fillAdapterContract } from '../src/core/control-drivers';
+import { validateRemoteRules } from '../src/core/rulesync';
+import { fillDateControl, fillDateControlAsync } from '../src/core/date-drivers';
+import { resolveCodeNameBinding, verifyCodeNameBinding } from '../src/core/popup-binding';
+import { pickComponentOption } from '../src/core/component-select-drivers';
+import { pickSchool } from '../src/core/school-picker-driver';
+import { pickMajor } from '../src/core/major-picker-driver';
+import { autoAdvancePageKey, findDeclaredNextButton, visibleValidationErrors } from '../src/core/auto-advance';
+import { decideRowJobRound, nextRowJobIndex, ROW_JOB_FAIL_CAP } from '../src/core/row-job-progress';
+import { applyFillTelemetryCounts, createFillTelemetryState, redactTelemetryText, reduceFillTelemetry, restoreFillTelemetryState, safeTelemetryLabel } from '../src/core/fill-telemetry';
+import { installMainWorldBridge } from '../src/world/main-world';
+import { mainWorldJqueryClick, mainWorldReady, mainWorldVueModelWrite, requestMainWorld } from '../src/core/world-bridge';
+import { isLockedControl, withUnlocked } from '../src/core/unlock';
+import { detectFakeSave, snapshotTableEvidence } from '../src/core/save-guard';
+import { handleDialogAfterClick, visibleDialogRoots } from '../src/core/filler';
 
 const html = readFileSync('test/fixture-form.html', 'utf8');
 const dom = new JSDOM(html, { url: 'https://example.edu.cn/gsapp/sys/wdyjsbm/tmybm/tbgrxx.do', runScripts: 'dangerously' });
@@ -369,6 +388,155 @@ void (async () => {
   );
 }
 
+// 统一填写遥测：真实计数、脱敏、动态行安全标签和跨回发恢复。
+let telemetry = createFillTelemetryState(1_000);
+telemetry = reduceFillTelemetry(telemetry, { stage: 'filling', level: 'success', action: '已填写并回读通过', targetLabel: '手机号 13812345678', field: 'basic.phone', timestamp: 1_100 });
+telemetry = applyFillTelemetryCounts(telemetry, { total: 4, filled: 2, skipped: 1, failed: 0, waiting: 1 });
+check(telemetry.progress.current === 3 && telemetry.progress.total === 4, '填写遥测使用真实完成数而非估算百分比');
+check(!JSON.stringify(telemetry).includes('13812345678'), '填写遥测自动脱敏手机号');
+check(safeTelemetryLabel('奖励情况 1：真实奖项名称', 'awards[0]') === '奖励情况 · 第 1 行', '动态表格日志不记录真实内容');
+check(redactTelemetryText('邮箱 zhangsan@example.com') === '邮箱 [已脱敏]', '填写遥测自动脱敏邮箱');
+const storedTelemetry = { ...telemetry, updatedAt: 1_100 };
+check(restoreFillTelemetryState(JSON.stringify(storedTelemetry), 2_000)?.runId === telemetry.runId, '填写遥测可在页面回发后恢复');
+check(restoreFillTelemetryState(JSON.stringify(storedTelemetry), 31 * 60_000) === null, '过期填写遥测不会恢复幽灵忙碌状态');
+
+// ===== V2 档案、锁定、投影、适配包与爬取合并 =====
+{
+  const v1 = normalizeProfile({
+    version: 1,
+    basic: { name: '迁移测试' },
+    education: {},
+    research: [
+      { title: '联邦学习论文', type: '论文', date: '2025-03', role: '一作' },
+      { title: '创新训练项目', type: '科研项目', date: '2024-05', role: '负责人' },
+      { title: '类型未知记录', type: '其他', date: '2024-01', role: '成员' },
+    ],
+  });
+  check(v1.academicPapers.length === 1 && v1.academicProjects.length === 1, 'V1→V2：类型明确记录进入论文/项目原子表');
+  check(v1.pendingClassifications.length === 1 && v1.migration.confirmed === false && !!v1.migration.v1Backup, 'V1→V2：不明确记录进入待分类并保留旧档案备份');
+
+  const lockedProfile = emptyProfile();
+  const manual = writeProfileValue(lockedProfile, 'basic.name', '手工值', 'manual');
+  const crawlOverwrite = writeProfileValue(lockedProfile, 'basic.name', '爬取值', 'crawl', 'demo', 'basic');
+  check(manual.ok && lockedProfile.fieldStates['basic.name'].locked, '锁定：手工修改自动锁定标量字段');
+  check(!crawlOverwrite.ok && crawlOverwrite.conflict && lockedProfile.basic.name === '手工值', '锁定：爬取不得覆盖已锁字段');
+  const rankProfile = emptyProfile();
+  writeProfileValue(rankProfile, 'education.rank', '3', 'manual');
+  check(!rankProfile.fieldStates['education.rank'].locked, '字段组锁定：排名未填写总人数时暂不锁定');
+  writeProfileValue(rankProfile, 'education.rankBase', '120', 'manual');
+  check(rankProfile.fieldStates['education.rank'].locked && rankProfile.fieldStates['education.rankBase'].locked, '字段组锁定：排名与总人数共同锁定');
+  check(!canLockProfileRow({ title: '日期错误', end: '2025-02-31' }), '锁定校验：非法日期不能锁定');
+
+  const projectionSource = emptyProfile();
+  projectionSource.academicPapers.push({ kind: '论文', start: '', end: '2025-01', title: '论文 A', source: '期刊', role: '一作', authors: '', itemType: '', level: '', status: '', summary: '', advisor: '', partition: '', state: createRowState('manual', 'paper-a') });
+  projectionSource.academicCompetitions.push({ kind: '创新创业', time: '2024-01', name: '竞赛 A', issuer: '组委会', place: '', level: '国家级', grade: '一等奖', rank: '1/3', content: '', state: createRowState('manual', 'competition-a') });
+  projectionSource.honorsScholarships.push({ kind: '奖学金', time: '2024-09', name: '奖学金 A', issuer: '学校', place: '', level: '校级', grade: '一等奖', rank: '', content: '', state: createRowState('manual', 'honor-a') });
+  const blueProjection = projectProfile(projectionSource, 'blue');
+  check(blueProjection.profile.research.length === 2 && blueProjection.profile.awards.length === 1, '八表投影：蓝色系统竞赛进学术成果、奖学金进奖励情况');
+  const hitProjection = projectProfile(projectionSource, 'hit');
+  check(hitProjection.profile.research.length === 1 && hitProjection.profile.awards.length === 2, '八表投影：哈工大竞赛与荣誉进入获奖路由');
+  projectionSource.academicPapers[0].state!.locked = false;
+  check(moveAtomicRow(projectionSource, 'academicPapers', 0, 'academicPatents') && projectionSource.academicPatents[0].title === '论文 A', '原子表路由纠正：解锁后可人工移动并保留核心字段');
+
+  check(!!matchAdapterPackage('https://yjszs.lzu.edu.cn/lzuyjsytms/info/edit')?.id.includes('lzu'), '适配包：识别兰州大学专项路径');
+  check(matchAdapterPackage('https://yjsy.ustb.edu.cn/ksxt/ssxly/example')?.id === 'ustb-blue-xly', '适配包：北科大夏令营优先命中蓝色三联专项契约');
+  const ustbPackage = matchAdapterPackage('https://yjsy.ustb.edu.cn/ksxt/ssxly/example')!;
+  check(ustbPackage.commitPolicy === 'validated-next-only' && !!ustbPackage.pages[0].nextSelectors?.length, '连续填写：北科大只开放经过验收的自动下一步契约');
+  const ustbLanguageDom = new JSDOM('<select id="lbmc0"></select><input id="cj0"><input id="sj0">', { url: 'https://yjsy.ustb.edu.cn/ksxt/ssxly/token' });
+  check(matchAdapterPage(ustbPackage, ustbLanguageDom.window.document, ustbLanguageDom.window.location.href).page?.id === 'language', '北科大适配包：独立识别外语水平选项页');
+  const ustbAchievementDom = new JSDOM('<table><tr><th>学术成果</th></tr></table><button id="addNewRow" class="button bg-sub">新增一行</button><button class="button bg-sub">下一步</button>', { url: 'https://yjsy.ustb.edu.cn/ksxt/ssxly/token' });
+  check(matchAdapterPage(ustbPackage, ustbAchievementDom.window.document, ustbAchievementDom.window.location.href).page?.id === 'safe-form-step', '北科大适配包：学术成果等加密 URL 步骤进入安全连续填写契约');
+  const ustbUploadDom = new JSDOM('<input type="file"><button class="button bg-sub">下一步</button>', { url: 'https://yjsy.ustb.edu.cn/ksxt/ssxly/token' });
+  check(matchAdapterPage(ustbPackage, ustbUploadDom.window.document, ustbUploadDom.window.location.href).allowed === false, '北科大适配包：上传步骤禁止自动下一步');
+  const hfutPackage = matchAdapterPackage('https://yzbm.hfut.edu.cn/sstm/encrypted-token')!;
+  check(hfutPackage?.id === 'hfut-blue-tm' && hfutPackage.commitPolicy === 'validated-next-only', '合工大适配包：加密 /sstm/ 路径启用校验后自动下一步');
+  const hfutBasicDom = new JSDOM('<input id="xm"><input id="xmpy"><select id="mz"></select><a class="button bg-sub">显示敏感信息</a><button class="button bg-sub">下一步</button>', { url: 'https://yzbm.hfut.edu.cn/sstm/encrypted-token' });
+  hfutBasicDom.window.Element.prototype.getBoundingClientRect = rect as never;
+  const hfutBasicPage = matchAdapterPage(hfutPackage, hfutBasicDom.window.document, hfutBasicDom.window.location.href).page;
+  check(hfutBasicPage?.id === 'basic' && findDeclaredNextButton(hfutBasicDom.window.document, hfutBasicPage)?.textContent === '下一步', '合工大连续填写：基本信息页只选择真实 button 下一步，不误点显示敏感信息');
+  const hfutEducationDom = new JSDOM(
+    '<input id="bydwm" type="hidden"><input id="bydw" type="hidden"><input id="bkbydwShow"><span class="addon">选择</span>' +
+    '<input id="byzydm" type="hidden"><input id="byzymc" type="hidden"><input id="bkbyzyShow"><span class="addon">选择</span>' +
+    '<input id="rxny"><input id="byny"><button class="button bg-sub">下一步</button>',
+    { url: 'https://yzbm.hfut.edu.cn/sstm/encrypted-education-step' },
+  );
+  const hfutEducationPage = matchAdapterPage(hfutPackage, hfutEducationDom.window.document, hfutEducationDom.window.location.href).page;
+  const hfutContractItems = fillAdapterContract(profile, hfutEducationDom.window.document, hfutEducationDom.window.location.href, hfutPackage);
+  const hfutSchoolContract = hfutContractItems.find((item) => item.profilePath === 'education.university');
+  const hfutMajorContract = hfutContractItems.find((item) => item.profilePath === 'education.major');
+  check(hfutEducationPage?.id === 'education', '合工大适配包：学习信息页优先命中院校/专业专项契约');
+  check(!!(hfutSchoolContract?.pickerContext?.pickerProtocol === 'blue-flat' && hfutSchoolContract.pickerContext.codeSelectors?.includes('#bydwm')), '合工大本科院校：绑定 bydwm/bydw/bkbydwShow 三联字段');
+  check(!!(hfutMajorContract?.pickerContext?.pickerProtocol === 'blue-flat' && hfutMajorContract.pickerContext.codeSelectors?.includes('#byzydm')), '合工大本科专业：绑定 byzydm/byzymc/bkbyzyShow 三联字段并与院校隔离');
+  const hfutUploadDom = new JSDOM('<input type="file"><button class="button bg-sub">下一步</button>', { url: 'https://yzbm.hfut.edu.cn/sstm/upload-token' });
+  check(matchAdapterPage(hfutPackage, hfutUploadDom.window.document, hfutUploadDom.window.location.href).allowed === false, '合工大连续填写：上传照片和上传材料页禁止自动下一步');
+  const hfutSubmitDom = new JSDOM('<button class="button bg-sub">确认提交</button>', { url: 'https://yzbm.hfut.edu.cn/sstm/submit-token' });
+  hfutSubmitDom.window.Element.prototype.getBoundingClientRect = rect as never;
+  const hfutSubmitPage = matchAdapterPage(hfutPackage, hfutSubmitDom.window.document, hfutSubmitDom.window.location.href).page!;
+  check(findDeclaredNextButton(hfutSubmitDom.window.document, hfutSubmitPage) === null, '合工大连续填写：申请信息提交页绝不点击确认提交');
+  check(nextRowJobIndex(0, 3) === 3 && nextRowJobIndex(3, 3) === 6, '动态表格进度：按本轮起点累计，新增行断点不得造成双重加法');
+  check(nextRowJobIndex(0, 5, 13) === 13, '动态表格进度：页面已有行的完成证据能够推进断点');
+  check(matchAdapterPackage('https://zhaosheng.eol.cn/99999/user/apply')?.id !== 'shmtu-sszs', '适配包：上海海事大学严格隔离 /10254/');
+  check(declarativeMatchUrl({ hosts: ['*.example.edu.cn'], pathPatterns: ['*/apply*'] }, 'https://yz.example.edu.cn/user/apply?id=1'), '声明式 URL 匹配支持子域名和路径 glob');
+  const lzuPackage = SCHOOL_ADAPTER_PACKAGES.find((item) => item.id === 'lzu-ytms')!;
+  const blockedPage = new JSDOM('<title>材料上传</title><input type="file">', { url: 'https://yjszs.lzu.edu.cn/lzuyjsytms/upload' });
+  check(!matchAdapterPage(lzuPackage, blockedPage.window.document, blockedPage.window.location.href).allowed, '页面门禁：上传页不允许专项采集');
+
+  const njustPrograms = SCHOOLS_WITH_PROGRAMS.find((school) => school.name === '南京理工大学')?.programs || [];
+  check(njustPrograms.length === 2 && njustPrograms[0].entry !== njustPrograms[1].entry, '学校目录 V2：南理工预推免与夏令营分支完全隔离');
+
+  const crawlProfile = emptyProfile();
+  crawlProfile.basic.email = 'old@example.com';
+  crawlProfile.fieldStates['basic.email'] = { locked: true, source: 'manual', updatedAt: new Date().toISOString(), confidence: 'verified' };
+  const crawlSession = createCrawlSession(lzuPackage);
+  const snapshot = {
+    id: 'snapshot-test', adapterId: lzuPackage.id, schoolName: lzuPackage.schoolName, pageId: 'information', pageName: '信息填报', url: 'https://yjszs.lzu.edu.cn/lzuyjsytms/info', fingerprint: 'fixture', capturedAt: new Date().toISOString(),
+    values: { 'basic.phone': '13800000000', 'basic.email': 'new@example.com' }, codebook: {}, tables: { academicPapers: [{ kind: '论文', start: '', end: '', title: '爬取论文', source: '', role: '', authors: '', itemType: '', level: '', status: '', summary: '', advisor: '', partition: '' }] }, warnings: [],
+  };
+  const mergedSession = addSnapshot(crawlSession, snapshot, lzuPackage);
+  const preview = previewCrawlMerge(crawlProfile, mergedSession);
+  check(preview.items.some((item) => item.path === 'basic.phone' && item.kind === 'new') && preview.items.some((item) => item.path === 'basic.email' && item.kind === 'locked'), '爬取预览：区分新增字段和锁定冲突');
+  commitCrawlMerge(crawlProfile, mergedSession, { lockImported: true });
+  check(crawlProfile.basic.phone === '13800000000' && crawlProfile.fieldStates['basic.phone'].locked && crawlProfile.basic.email === 'old@example.com', '爬取合并：新增内容可锁定，冲突保留原档案值');
+  check(crawlProfile.academicPapers.length === 1 && !!crawlProfile.academicPapers[0].state?.locked, '爬取合并：新增原子表行带来源并锁定');
+
+  const choiceDom = new JSDOM('<table><tr><th>报名记录</th><th>操作</th></tr><tr><td>计算机学院</td><td><a href="Apply.aspx?id=1">查看</a></td></tr><tr><td>软件学院</td><td><a href="Apply.aspx?id=2">查看</a></td></tr></table>');
+  const choices = applicationChoicesFromPage(choiceDom.window.document);
+  let choiceBlocked = false;
+  try { rememberApplicationChoice(crawlSession, choices); } catch { choiceBlocked = true; }
+  const selectedSession = rememberApplicationChoice(crawlSession, choices, 0);
+  check(choices.length === 2 && choiceBlocked && !!selectedSession.selectedApplicationKey, '北邮报名记录：多行必须用户确认并记住所选分支');
+
+  const contractDom = new JSDOM('<input id="xm"><select id="bkbyxx"><option value="10001">北京大学</option><option value="10610">四川大学</option></select>', { url: 'https://yjszs.lzu.edu.cn/lzuyjsytms/info' });
+  const contractProfile = emptyProfile();
+  contractProfile.education.university = '四川大学';
+  setProfileCode(contractProfile, 'education.university', 'moe.school', '10610', '四川大学');
+  const contractResults = fillAdapterContract(contractProfile, contractDom.window.document, contractDom.window.location.href, lzuPackage);
+  check((contractDom.window.document.getElementById('bkbyxx') as HTMLSelectElement).value === '10610' && contractResults.some((item) => item.profilePath === 'education.university' && item.status === 'filled'), '控件驱动：学校代码与显示名称成对写入并回读');
+  setProfileCode(contractProfile, 'education.university', 'moe.school', '10001', '四川大学');
+  const mismatchResults = fillAdapterContract(contractProfile, contractDom.window.document, contractDom.window.location.href, lzuPackage);
+  check(mismatchResults.some((item) => item.profilePath === 'education.university' && item.status === 'failed'), '控件驱动：代码与名称不一致时停止写入');
+
+  let executableRejected = false;
+  try { validateAdapterPackage({ ...lzuPackage, bad: () => true } as any); } catch { executableRejected = true; }
+  check(executableRejected, '远程适配包：拒绝函数和远程可执行代码');
+  let coreRejected = false;
+  try { validateRemoteRules({ schemaVersion: 1, minCoreVersion: '99.0.0', adapters: [], packages: [] }); } catch { coreRejected = true; }
+  check(coreRejected, '规则候选校验：最低核心版本不满足时拒绝切换');
+
+  const navDom = new JSDOM(
+    '<button class="button bg-sub">下一步</button><button class="button bg-sub">最终提交</button><span class="field-validation-error">日期格式错误</span>',
+    { url: 'https://yjsy.ustb.edu.cn/ksxt/ssxly/example' },
+  );
+  navDom.window.Element.prototype.getBoundingClientRect = rect as never;
+  const navPage = ustbPackage.pages[0];
+  const safeNext = findDeclaredNextButton(navDom.window.document, navPage);
+  check(safeNext?.textContent === '下一步', '连续填写：只选择适配包声明且文案精确匹配的下一步按钮');
+  safeNext?.remove();
+  check(findDeclaredNextButton(navDom.window.document, navPage) === null, '连续填写：最终提交即使命中同一 CSS 选择器也绝不点击');
+  check(visibleValidationErrors(navDom.window.document, navPage).length === 1, '连续填写：点击前可识别服务器返回的可见校验错误');
+  check(!autoAdvancePageKey(navDom.window.document, navPage).includes('日期格式错误'), '连续填写：步骤签名不记录字段值或错误内容');
+}
+
 // 导入家庭成员按姓名合并，不覆盖已有成员
 (['f0x', 'f1x'] as const).forEach((n) => {
   (w.document.querySelector(`[name="${n}"]`) as HTMLInputElement).value = '';
@@ -588,6 +756,469 @@ void (async () => {
   check(foundA, '首行已填入第一条成果');
   check(foundB, '自动新增的行已填入第二条成果');
 
+  // 北科大回归：页面已有 8 条服务器展示行时，仍须补齐后续 6 条，并把断点推进到第 14 条。
+  {
+    const existingRows = Array.from({ length: 8 }, (_, index) =>
+      `<tr><td>2025-01</td><td>测试来源</td><td>成果${index + 1}</td><td>1/1</td></tr>`,
+    ).join('');
+    const wUstbRows = new JSDOM(
+      '<body><table id="ustbAchievements"><tbody>' +
+        '<tr><th>时间</th><th>发表刊物或出版社</th><th>标题</th><th>作者排名</th></tr>' +
+        existingRows +
+        '<tr><td><input></td><td><input></td><td><input></td><td><input></td></tr>' +
+        '</tbody></table><button id="ustbAdd">新增一行</button></body>',
+    );
+    const dUstbRows = wUstbRows.window.document;
+    wUstbRows.window.Element.prototype.getBoundingClientRect = rect as never;
+    dUstbRows.getElementById('ustbAdd')!.addEventListener('click', () => {
+      const row = (dUstbRows.getElementById('ustbAchievements') as HTMLTableElement).querySelector('tbody')!.insertRow();
+      row.innerHTML = '<td><input></td><td><input></td><td><input></td><td><input></td>';
+    });
+    const pUstbRows = emptyProfile();
+    for (let index = 0; index < 14; index++) {
+      pUstbRows.research.push({ title: `成果${index + 1}`, type: '竞赛', date: '2025-01', role: '1/1', description: '测试来源' });
+    }
+    let observedNextIndex = 0;
+    const filledUstbRows = await fillAchievements(
+      pUstbRows,
+      dUstbRows,
+      0,
+      undefined,
+      10,
+      false,
+      (nextIndex) => { observedNextIndex = Math.max(observedNextIndex, nextIndex); },
+    );
+    const allTitles = (Array.from(dUstbRows.querySelectorAll('#ustbAchievements tr')) as HTMLTableRowElement[])
+      .slice(1)
+      .map((row) => ((row.cells[2].querySelector('input') as HTMLInputElement | null)?.value || row.cells[2].textContent || '').trim());
+    check(filledUstbRows === 6 && allTitles.length === 14 && new Set(allTitles).size === 14, '北科大学术成果：已有 8 条时补齐到 14 条且不重复');
+    check(observedNextIndex === 14 && nextRowJobIndex(0, filledUstbRows, observedNextIndex) === 14, '北科大学术成果：已有行与新增行共同推进续填断点');
+  }
+
+  // v2.0.1 回归：14 项成果、仅 1 行预置数据、加行按钮在表格外（合工大字段报告同款形态）→ 必须全部填满，每个条目恰好一次加行
+  {
+    const w14 = new JSDOM(
+      '<body><table id="a14"><tbody>' +
+        '<tr><th>时间</th><th>发表刊物或出版社</th><th>标题</th><th>作者排名</th></tr>' +
+        '<tr><td>2025-02</td><td>预置来源</td><td>预置行</td><td>1/1</td></tr>' +
+        '</tbody></table><button id="addNewRow">新增一行</button></body>',
+      { url: 'https://x.example.edu.cn/fill' },
+    );
+    const d14 = w14.window.document;
+    w14.window.Element.prototype.getBoundingClientRect = rect as never;
+    let addClicks = 0;
+    d14.getElementById('addNewRow')!.addEventListener('click', () => {
+      addClicks += 1;
+      const row = (d14.getElementById('a14') as HTMLTableElement).querySelector('tbody')!.insertRow();
+      row.innerHTML = '<td><input></td><td><input></td><td><input></td><td><input></td>';
+    });
+    const p14 = emptyProfile();
+    for (let index = 0; index < 14; index++) {
+      p14.research.push({ title: `成果${index + 1}`, type: '竞赛', date: '2025-01', role: '1/1', description: '测试来源' });
+    }
+    const filled14 = await fillAchievements(p14, d14, 0, undefined, 25, false);
+    const table14 = d14.getElementById('a14') as HTMLTableElement;
+    const rows14 = table14.querySelectorAll('tr').length;
+    const titles14 = Array.from(table14.querySelectorAll('tr'))
+      .slice(1)
+      .map((row) => ((row.cells[2].querySelector('input') as HTMLInputElement | null)?.value || row.cells[2].textContent || '').trim());
+    check(filled14 === 14, `14 项成果全部填满，不再停在 10 条（实际 ${filled14}）`);
+    check(rows14 === 16, `表头 + 预置行 + 14 条新行（实际数据行 ${rows14 - 1}）`);
+    check(addClicks === 14, `验证式加行：每个条目恰好一次点击（实际 ${addClicks}）`);
+    check(new Set(titles14).size === 15 && titles14.includes('预置行'), '预置行保留且 14 条标题不重复');
+  }
+
+  // 同名成果按标题去重（巨能填同款语义）：页面已有同题名行即跳过，宁可不填也不产生重复行；
+  // 被跳过的条目会写入 duplicate 决策日志，字段报告可直接定位
+  {
+    const wDup = new JSDOM(
+      '<body><table id="dupT"><tbody>' +
+        '<tr><th>时间</th><th>发表刊物或出版社</th><th>标题</th><th>作者排名</th></tr>' +
+        '<tr><td>2024-01</td><td>某期刊</td><td>同题成果</td><td>1/3</td></tr>' +
+        '</tbody></table><button id="dupAdd">新增一行</button></body>',
+      { url: 'https://x.example.edu.cn/dup' },
+    );
+    const dDup = wDup.window.document;
+    wDup.window.Element.prototype.getBoundingClientRect = rect as never;
+    let dupAdds = 0;
+    dDup.getElementById('dupAdd')!.addEventListener('click', () => {
+      dupAdds += 1;
+      const row = (dDup.getElementById('dupT') as HTMLTableElement).querySelector('tbody')!.insertRow();
+      row.innerHTML = '<td><input></td><td><input></td><td><input></td><td><input></td>';
+    });
+    const pDup = emptyProfile();
+    pDup.research.push({ title: '同题成果', type: '论文', date: '2024-01', role: '1/3', description: '某期刊' });
+    pDup.research.push({ title: '同题成果', type: '论文', date: '2025-06', role: '1/2', description: '另一期刊' });
+    const filledDup = await fillAchievements(pDup, dDup, 0, undefined, 5, false);
+    const rowsDup = (dDup.getElementById('dupT') as HTMLTableElement).querySelectorAll('tr').length;
+    const dupDecisions = JSON.parse(wDup.window.sessionStorage.getItem('tui-row-decision') || '[]') as Array<{ decision: string }>;
+    check(filledDup === 0 && rowsDup === 2 && dupAdds === 0, '同名成果按标题去重，不产生重复行');
+    check(dupDecisions.filter((d) => d.decision === 'duplicate').length === 2, '被去重跳过的条目写入 duplicate 决策日志');
+  }
+
+  // 表格存在但无加行按钮：立即停止、不悬挂、决策日志记录 no-add-btn（供字段报告定位）
+  {
+    const wNoBtn = new JSDOM(
+      '<body><table id="nbT"><tbody>' +
+        '<tr><th>时间</th><th>发表刊物或出版社</th><th>标题</th><th>作者排名</th></tr>' +
+        '<tr><td>2025-02</td><td>来源</td><td>已有一条</td><td>1/1</td></tr>' +
+        '</tbody></table></body>',
+      { url: 'https://x.example.edu.cn/nobtn' },
+    );
+    const dNoBtn = wNoBtn.window.document;
+    wNoBtn.window.Element.prototype.getBoundingClientRect = rect as never;
+    const pNoBtn = emptyProfile();
+    for (let index = 0; index < 3; index++) pNoBtn.research.push({ title: `条目${index + 1}`, type: '竞赛', date: '2025-03', role: '1/1', description: '' });
+    const startedAt = Date.now();
+    const filledNoBtn = await fillAchievements(pNoBtn, dNoBtn, 0, undefined, 5, false);
+    const decisions = JSON.parse(wNoBtn.window.sessionStorage.getItem('tui-row-decision') || '[]') as Array<{ decision: string }>;
+    check(filledNoBtn === 0 && Date.now() - startedAt < 5000, '无加行按钮时立即停止不悬挂');
+    check(decisions.some((d) => d.decision === 'no-add-btn'), '无加行按钮写入 no-add-btn 决策日志');
+  }
+
+  // 系统行数上限：弹窗提示后停止连点，决策日志记录 limit-blocked（巨能填 known_table_row_limits 同款停止条件）
+  {
+    const wCap = new JSDOM(
+      '<body><table id="capT"><tbody>' +
+        '<tr><th>时间</th><th>发表刊物或出版社</th><th>标题</th><th>作者排名</th></tr>' +
+        '<tr><td>2025-02</td><td>来源</td><td>预置</td><td>1/1</td></tr>' +
+        '</tbody></table><button id="capAdd">新增一行</button><div id="capDialog" class="layui-layer" style="display:none"></div></body>',
+      { url: 'https://x.example.edu.cn/cap' },
+    );
+    const dCap = wCap.window.document;
+    wCap.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dialog = dCap.getElementById('capDialog')!;
+    dCap.getElementById('capAdd')!.addEventListener('click', () => {
+      const table = dCap.getElementById('capT') as HTMLTableElement;
+      if (table.querySelectorAll('tr').length - 1 >= 3) {
+        dialog.textContent = '很抱歉，记录数已达上限，不能超过3条！';
+        dialog.style.display = 'block';
+        return;
+      }
+      const row = table.querySelector('tbody')!.insertRow();
+      row.innerHTML = '<td><input></td><td><input></td><td><input></td><td><input></td>';
+    });
+    const pCap = emptyProfile();
+    for (let index = 0; index < 5; index++) pCap.research.push({ title: `上限条目${index + 1}`, type: '竞赛', date: '2025-04', role: '1/1', description: '' });
+    const filledCap = await fillAchievements(pCap, dCap, 0, undefined, 5, false);
+    const capRows = (dCap.getElementById('capT') as HTMLTableElement).querySelectorAll('tr').length;
+    const capDecisions = JSON.parse(wCap.window.sessionStorage.getItem('tui-row-decision') || '[]') as Array<{ decision: string }>;
+    check(filledCap === 2 && capRows === 4, `达上限后优雅停止（填 ${filledCap} 条、${capRows - 1} 行）`);
+    check(capDecisions.some((d) => d.decision === 'limit-blocked'), '行数上限写入 limit-blocked 决策日志');
+  }
+
+  // 首选点击策略无效（原生序列被页面忽略）：跨轮轮换到裸 click 策略后仍能加行填写
+  {
+    const wEsc = new JSDOM(
+      '<body><table id="escT"><tbody>' +
+        '<tr><th>时间</th><th>发表刊物或出版社</th><th>标题</th><th>作者排名</th></tr>' +
+        '<tr><td>2025-02</td><td>来源</td><td>预置</td><td>1/1</td></tr>' +
+        '</tbody></table><button id="escAdd">新增一行</button></body>',
+      { url: 'https://x.example.edu.cn/esc' },
+    );
+    const dEsc = wEsc.window.document;
+    wEsc.window.Element.prototype.getBoundingClientRect = rect as never;
+    const escBtn = dEsc.getElementById('escAdd') as HTMLElement & { _sawMousedown?: boolean };
+    // 模拟只响应"裸 click"的按钮：原生点击序列（带 mousedown 前导）被忽略，仅 dispatch 策略生效
+    escBtn.addEventListener('mousedown', () => {
+      escBtn._sawMousedown = true;
+    });
+    escBtn.addEventListener('click', () => {
+      const sawMousedown = escBtn._sawMousedown;
+      escBtn._sawMousedown = false;
+      if (sawMousedown) return;
+      const row = (dEsc.getElementById('escT') as HTMLTableElement).querySelector('tbody')!.insertRow();
+      row.innerHTML = '<td><input></td><td><input></td><td><input></td><td><input></td>';
+    });
+    const pEsc = emptyProfile();
+    pEsc.research.push({ title: '升级策略条目', type: '竞赛', date: '2025-05', role: '1/1', description: '' });
+    // 模拟外层轮次重试：全局点击序号逐轮递增 → 策略 0（原生，被忽略）→ 策略 1 → 策略 2（裸 click，生效）
+    let escSeq = 0;
+    const round1 = await fillAchievements(pEsc, dEsc, 0, () => escSeq++, 5, false);
+    const round2 = await fillAchievements(pEsc, dEsc, 0, () => escSeq++, 5, false);
+    const round3 = await fillAchievements(pEsc, dEsc, 0, () => escSeq++, 5, false);
+    const escRows = (dEsc.getElementById('escT') as HTMLTableElement).querySelectorAll('tr').length;
+    check(round1 === 0 && round2 === 0, '被页面忽略的点击策略不误报成功');
+    check(round3 === 1 && escRows === 3, `策略跨轮轮换到裸 click 后加行填写成功（填 ${round3}，${escRows - 1} 行）`);
+  }
+
+  // 行任务走向判定（纯函数）：成功清零连续失败；表格在但无效时保留任务；表格消失才按无表放弃
+  {
+    const keep = decideRowJobRound({ callStart: 10, nextIndex: 10, clicked: true, processed: 0, rowsBefore: 11, rowsAfter: 11, failsBefore: 1, entriesLength: 14, tablePresentNow: true });
+    check(keep.action === 'keep' && keep.fails === 2 && !keep.warn, '加行无效但表格在：保留任务并累计连续失败');
+    const keepWarn = decideRowJobRound({ callStart: 10, nextIndex: 10, clicked: false, processed: 0, rowsBefore: 11, rowsAfter: 11, failsBefore: 2, entriesLength: 14, tablePresentNow: true });
+    check(keepWarn.action === 'keep' && keepWarn.warn, '连续失败达阈值时给出可恢复告警');
+    const dropNoTable = decideRowJobRound({ callStart: 10, nextIndex: 10, clicked: false, processed: 0, rowsBefore: 11, rowsAfter: -1, failsBefore: 0, entriesLength: 14, tablePresentNow: false });
+    check(dropNoTable.action === 'drop-no-table' && dropNoTable.remaining === 4, '目标表确实不在本页才按无表放弃并报告剩余条数');
+    const dropFails = decideRowJobRound({ callStart: 10, nextIndex: 10, clicked: true, processed: 0, rowsBefore: 11, rowsAfter: 11, failsBefore: ROW_JOB_FAIL_CAP - 1, entriesLength: 14, tablePresentNow: true });
+    check(dropFails.action === 'drop-fails' && dropFails.remaining === 4, `连续 ${ROW_JOB_FAIL_CAP} 轮无进展才放弃任务`);
+    const progressed = decideRowJobRound({ callStart: 10, nextIndex: 12, clicked: true, processed: 2, rowsBefore: 11, rowsAfter: 13, failsBefore: 4, entriesLength: 14, tablePresentNow: true });
+    check(progressed.action === 'keep' && progressed.fails === 0 && progressed.startIndex === 12, '有进展即清零连续失败并推进断点');
+    const complete = decideRowJobRound({ callStart: 12, nextIndex: 14, clicked: true, processed: 2, rowsBefore: 13, rowsAfter: 15, failsBefore: 0, entriesLength: 14, tablePresentNow: true });
+    check(complete.action === 'complete', '条目全部处理后任务完成');
+  }
+
+  // 奖励情况：页面已有"时间+内容"但缺"地点"的行 → 只补空白地点、不覆盖已有内容，并推进断点（合工大"尚真笃学"漏填地点的根因）
+  {
+    const wAg = new JSDOM(
+      '<body><table><tbody><tr><td>何时何地何原因受过何种奖励（内容中不得含有|等字符）</td></tr></tbody></table>' +
+        '<table id="agT"><tbody>' +
+        '<tr><th>时间（日期格式：2018-11）</th><th>地点</th><th>内容</th></tr>' +
+        '<tr><td><input value="2024-10"></td><td><input></td><td><input value="尚真笃学奖学金"></td></tr>' +
+        '</tbody></table><button id="agAdd">新增一行</button></body>',
+      { url: 'https://x.example.edu.cn/award' },
+    );
+    const dAg = wAg.window.document;
+    wAg.window.Element.prototype.getBoundingClientRect = rect as never;
+    dAg.getElementById('agAdd')!.addEventListener('click', () => {
+      const row = (dAg.getElementById('agT') as HTMLTableElement).querySelector('tbody')!.insertRow();
+      row.innerHTML = '<td><input></td><td><input></td><td><input></td>';
+    });
+    const pAg = emptyProfile();
+    pAg.awards.push({ date: '2024-10', place: '合肥', content: '尚真笃学奖学金' });
+    pAg.awards.push({ date: '2025-01', place: '芜湖', content: 'ents 竞赛奖学金'.slice(5) });
+    const processedAg: number[] = [];
+    const filledAg = await fillAwardRows(pAg, dAg, 0, undefined, 5, false, (next) => processedAg.push(next));
+    const agRows = (dAg.getElementById('agT') as HTMLTableElement).querySelectorAll('tr');
+    const place1 = (agRows[1].cells[1].querySelector('input') as HTMLInputElement).value;
+    const content1 = (agRows[1].cells[2].querySelector('input') as HTMLInputElement).value;
+    const time1 = (agRows[1].cells[0].querySelector('input') as HTMLInputElement).value;
+    const place2 = (agRows[2].cells[1].querySelector('input') as HTMLInputElement).value;
+    const content2 = (agRows[2].cells[2].querySelector('input') as HTMLInputElement).value;
+    check(place1 === '合肥' && content1 === '尚真笃学奖学金' && time1 === '2024-10', '已有奖励行只补空白地点，不覆盖时间和内容');
+    check(filledAg === 1 && agRows.length === 3, `第二条奖励正常新增一行（填 ${filledAg}，共 ${agRows.length - 1} 个数据行）`);
+    check(place2 === '芜湖' && content2 === '竞赛奖学金', '新增奖励行时间、地点、内容完整');
+    check(processedAg.join(',') === '1,2' && nextRowJobIndex(0, filledAg, processedAg[processedAg.length - 1]) === 2, '已存在行也推进续填断点，不会原地空转');
+  }
+
+  // 奖励情况：所有条目在页面均已存在（服务器文本行）→ 不再点击加行，断点直接推进到末尾并完成任务
+  {
+    const wAg2 = new JSDOM(
+      '<body><table><tbody><tr><td>何时何地何原因受过何种奖励（内容中不得含有|等字符）</td></tr></tbody></table>' +
+        '<table id="ag2T"><tbody>' +
+        '<tr><th>时间（日期格式：2018-11）</th><th>地点</th><th>内容</th></tr>' +
+        '<tr><td>2024-10</td><td>合肥</td><td>尚真笃学奖学金</td></tr>' +
+        '<tr><td>2025-01</td><td>芜湖</td><td>竞赛奖学金</td></tr>' +
+        '</tbody></table></body>',
+      { url: 'https://x.example.edu.cn/award2' },
+    );
+    const dAg2 = wAg2.window.document;
+    wAg2.window.Element.prototype.getBoundingClientRect = rect as never;
+    const pAg2 = emptyProfile();
+    pAg2.awards.push({ date: '2024-10', place: '合肥', content: '尚真笃学奖学金' });
+    pAg2.awards.push({ date: '2025-01', place: '芜湖', content: '竞赛奖学金' });
+    const processedAg2: number[] = [];
+    const startedAg2 = Date.now();
+    const filledAg2 = await fillAwardRows(pAg2, dAg2, 0, undefined, 5, false, (next) => processedAg2.push(next));
+    check(filledAg2 === 0 && processedAg2.join(',') === '1,2' && Date.now() - startedAg2 < 5000, '全部已存在的奖励不再加行且断点直达末尾，不空转');
+  }
+
+  // 主世界桥：白名单命令在页面自身 JS 环境执行；危险全局拒绝；未装桥时快速失败不空等
+  {
+    const wB = new JSDOM('<body><div id="bHost"><input id="bIn" v-model="form.school"></div><button id="bBtn"></button></body>', { url: 'https://x.example.edu.cn/world' });
+    const dB = wB.window.document;
+    wB.window.Element.prototype.getBoundingClientRect = rect as never;
+    installMainWorldBridge(dB);
+    check(mainWorldReady(dB), '主世界桥安装后 documentElement 带就绪标记');
+
+    const probeArgs: unknown[] = [];
+    (wB.window as any).__tuiProbe = (...args: unknown[]) => {
+      probeArgs.push(...args);
+      return 'done';
+    };
+    const invoke = await requestMainWorld(dB, 'invoke-fn', { name: '__tuiProbe', args: [1, 'a'] });
+    check(invoke.ok && probeArgs.length === 2 && probeArgs[0] === 1, 'invoke-fn 可调用页面具名全局函数');
+
+    const forbidden = await requestMainWorld(dB, 'invoke-fn', { name: 'eval', args: ['1+1'] });
+    check(!forbidden.ok && forbidden.reason === 'fn-forbidden', 'invoke-fn 拒绝 eval 等危险全局');
+
+    const unknown = await requestMainWorld(dB, 'no-such-cmd', {});
+    check(!unknown.ok && unknown.reason === 'unknown-cmd', '未注册命令被拒绝');
+
+    let jqueryTarget: Element | null = null;
+    const jqueryStub: any = (el: Element) => ({ trigger: (type: string) => { void type; jqueryTarget = el; } });
+    jqueryStub.fn = {};
+    (wB.window as any).jQuery = jqueryStub;
+    const clicked = await mainWorldJqueryClick(dB, dB.getElementById('bBtn')!);
+    check(clicked && jqueryTarget === dB.getElementById('bBtn'), 'jquery-click 经主世界桥触发目标元素');
+
+    const host = dB.getElementById('bHost')!;
+    (host as any).__vue__ = {
+      $data: { form: { school: '' } },
+      $forceUpdate() { /* 标记调用即可 */ },
+    };
+    const wrote = await mainWorldVueModelWrite(dB, dB.getElementById('bIn')!, '西安理工大学');
+    check(wrote && (host as any).__vue__.$data.form.school === '西安理工大学', 'vue-model-write 按 v-model 键路径直写 $data');
+
+    const missing = await requestMainWorld(dB, 'vue-model-write', { selector: '#bHost', value: 'x' });
+    check(!missing.ok && missing.reason === 'no-v-model', '无 v-model 属性的元素不猜键名');
+
+    (wB.window as any).__doPostBack = (target: string, arg: string) => {
+      probeArgs.push(`pb:${target}:${arg}`);
+    };
+    const pb = await requestMainWorld(dB, 'postback', { target: 'ctl00$btnNext', argument: '' });
+    check(pb.ok && probeArgs.includes('pb:ctl00$btnNext:'), 'postback 命令复用页面自身 __doPostBack');
+
+    const wNoBridge = new JSDOM('<body></body>', { url: 'https://x.example.edu.cn/nobridge' });
+    const started = Date.now();
+    const absent = await requestMainWorld(wNoBridge.window.document, 'invoke-fn', { name: '__tuiProbe' });
+    check(!absent.ok && absent.reason === 'no-bridge' && Date.now() - started < 200, '未安装桥的页面快速返回失败，不空等超时');
+  }
+
+  // 写前临时解锁：readonly/disabled 控件写入时临时翻转、写后立即恢复，页面校验器才能看到值
+  {
+    const wU = new JSDOM(
+      '<body><input id="uRo" readonly><input id="uDis" disabled><select id="uSel" disabled><option value=""></option><option value="6">六级</option></select></body>',
+      { url: 'https://x.example.edu.cn/unlock' },
+    );
+    const dU = wU.window.document;
+    const ro = dU.getElementById('uRo') as HTMLInputElement;
+    const dis = dU.getElementById('uDis') as HTMLInputElement;
+    const sel = dU.getElementById('uSel') as HTMLSelectElement;
+    check(isLockedControl(ro) && isLockedControl(dis) && isLockedControl(sel), '锁定态探测：readonly/disabled 均被识别');
+
+    withUnlocked(ro, () => {
+      check(!ro.hasAttribute('readonly'), '解锁窗口内 readonly 被临时移除');
+      ro.value = '写入值';
+    });
+    check(ro.value === '写入值' && ro.hasAttribute('readonly'), '写后 readonly 立即恢复且值保留');
+
+    withUnlocked(dis, () => {
+      check(dis.disabled === false, '解锁窗口内 disabled 被临时移除');
+      dis.value = '启用写入';
+    });
+    check(dis.value === '启用写入' && dis.disabled === true, '写后 disabled 立即恢复且值保留');
+
+    // 禁用下拉：trySetSelect 走解锁窗口写入并派发事件
+    let sawChange = false;
+    sel.addEventListener('change', () => {
+      sawChange = true;
+      check(sel.disabled === false, 'change 事件触发时控件处于启用态（页面校验器可感知）');
+    });
+    check(trySetSelect(sel, '六级') && sel.value === '6', '禁用下拉 trySetSelect 写入成功');
+    check(sawChange && sel.disabled === true && sel.value === '6', '写后 disabled 恢复且选中值保留');
+
+    // 嵌套解锁窗口：内层不重复翻转，外层统一恢复
+    withUnlocked(ro, () => {
+      withUnlocked(ro, () => {
+        ro.value = '嵌套写入';
+      });
+      check(!ro.hasAttribute('readonly'), '嵌套内层不提前恢复锁定');
+    });
+    check(ro.hasAttribute('readonly') && ro.value === '嵌套写入', '嵌套窗口由外层统一恢复');
+  }
+
+  // 弹窗归责：点击后新出现的"修改"弹窗立即温和关闭、绝不填写；点击前已存在的弹窗不归责、不误关
+  {
+    const wEd = new JSDOM(
+      '<body>' +
+        '<div id="preDlg" class="layui-layer" style="display:none"><div class="layui-layer-title">修改成果</div><input><span class="layui-layer-close">✕</span></div>' +
+        '<div id="editDlg" class="layui-layer" style="display:none"><div class="layui-layer-title">修改成果</div><input id="editTitle"><span class="layui-layer-close" id="editClose">✕</span></div>' +
+        '<button id="edAdd">新增一行</button></body>',
+      { url: 'https://x.example.edu.cn/editdlg' },
+    );
+    const dEd = wEd.window.document;
+    wEd.window.Element.prototype.getBoundingClientRect = rect as never;
+    const preDlg = dEd.getElementById('preDlg')!;
+    const editDlg = dEd.getElementById('editDlg')!;
+    preDlg.style.display = 'block'; // 点击前已存在（如选择器弹窗）：不归责到本次点击
+    let closedByUser = false;
+    dEd.getElementById('editClose')!.addEventListener('click', () => {
+      editDlg.style.display = 'none';
+      closedByUser = true;
+    });
+    const before = visibleDialogRoots(dEd);
+    check(before.length === 1 && before[0] === preDlg, '可见弹窗采集：只包含点击前已存在的弹窗');
+    let fillAttempted = false;
+    const outcome = await handleDialogAfterClick(dEd, before, 'achievements', 0, async () => {
+      fillAttempted = true;
+      return true;
+    });
+    const closedByUserAfterFirst = closedByUser;
+    // 点击"新增"后页面打开了编辑弹窗（模拟 editDlg 显示）
+    editDlg.style.display = 'block';
+    const outcome2 = await handleDialogAfterClick(dEd, before, 'achievements', 0, async () => {
+      fillAttempted = true;
+      return true;
+    });
+    check(outcome === 'none' && !closedByUserAfterFirst, '点击前已存在的弹窗不归责、不被误关');
+    check(outcome2 === 'closed-edit' && !fillAttempted, '新出现的编辑弹窗被立即关闭且绝不填写');
+    check(editDlg.style.display === 'none' && closedByUser, '编辑弹窗经关闭控件温和关闭');
+  }
+
+  // 弹窗式加行（完整链路）：点击"新增"打开新增弹窗 → 弹窗内按语义填字段 → 点确定 → 行真实增长才算成功
+  {
+    const wDg = new JSDOM(
+      '<body>' +
+        '<table id="dlgT"><tbody>' +
+        '<tr><th>时间</th><th>发表刊物或出版社</th><th>标题</th><th>作者排名</th></tr>' +
+        '</tbody></table>' +
+        '<button id="dlgAdd">新增一行</button>' +
+        '<div id="dlg" class="layui-layer" style="display:none"><div class="layui-layer-title">新增学术成果</div>' +
+        '<input id="dTime" placeholder="时间（2018-11）"><input id="dJournal" placeholder="发表刊物或出版社">' +
+        '<input id="dTitle" placeholder="标题"><input id="dRole" placeholder="作者排名">' +
+        '<button id="dlgOk">确定</button></div></body>',
+      { url: 'https://x.example.edu.cn/dlgadd' },
+    );
+    const dDg = wDg.window.document;
+    wDg.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dlg = dDg.getElementById('dlg')!;
+    dDg.getElementById('dlgAdd')!.addEventListener('click', () => {
+      dlg.style.display = 'block'; // 弹窗式加行：点击不直接加行，而是打开弹窗
+    });
+    dDg.getElementById('dlgOk')!.addEventListener('click', () => {
+      const table = dDg.getElementById('dlgT') as HTMLTableElement;
+      const row = table.querySelector('tbody')!.insertRow();
+      row.innerHTML = '<td><input></td><td><input></td><td><input></td><td><input></td>';
+      (row.cells[0].querySelector('input') as HTMLInputElement).value = (dDg.getElementById('dTime') as HTMLInputElement).value;
+      (row.cells[1].querySelector('input') as HTMLInputElement).value = (dDg.getElementById('dJournal') as HTMLInputElement).value;
+      (row.cells[2].querySelector('input') as HTMLInputElement).value = (dDg.getElementById('dTitle') as HTMLInputElement).value;
+      (row.cells[3].querySelector('input') as HTMLInputElement).value = (dDg.getElementById('dRole') as HTMLInputElement).value;
+      dlg.style.display = 'none';
+    });
+    const pDg = emptyProfile();
+    pDg.research.push({ title: '弹窗成果甲', type: '论文', date: '2024-03', role: '1/2', description: '测试期刊' });
+    pDg.research.push({ title: '弹窗成果乙', type: '论文', date: '2025-05', role: '1/1', description: '另一期刊' });
+    const processedDg: number[] = [];
+    await fillAchievements(pDg, dDg, 0, undefined, 5, false, (next) => processedDg.push(next));
+    const dgRows = (dDg.getElementById('dlgT') as HTMLTableElement).querySelectorAll('tr');
+    const rowTitle = (index: number): string => (dgRows[index].cells[2].querySelector('input') as HTMLInputElement).value;
+    const rowJournal = (index: number): string => (dgRows[index].cells[1].querySelector('input') as HTMLInputElement).value;
+    check(dgRows.length === 3 && rowTitle(1) === '弹窗成果甲' && rowTitle(2) === '弹窗成果乙', '弹窗式加行逐条填写并确认，行真实增长');
+    check(rowJournal(1) === '测试期刊' && rowJournal(2) === '另一期刊', '弹窗内刊物字段按语义映射写入');
+    check(processedDg.join(',') === '1,2', '弹窗式加行推进续填断点');
+    check(dlg.style.display === 'none', '确认后弹窗关闭，不残留遮挡后续字段');
+  }
+
+  // 假保存守卫：填写过的表格在保存回发后内容全空 → 告警；内容未变或表格消失（翻页）→ 不告警
+  {
+    const buildDoc = (withRows: boolean): Document => {
+      const wS = new JSDOM(
+        '<body><table id="svT"><tbody>' +
+          '<tr><th>时间</th><th>发表刊物或出版社</th><th>标题</th><th>作者排名</th></tr>' +
+          (withRows
+            ? '<tr><td><input value="2024-01"></td><td><input value="测试期刊"></td><td><input value="成果一"></td><td><input value="1/2"></td></tr>' +
+              '<tr><td><input value="2024-02"></td><td><input value="测试期刊"></td><td><input value="成果二"></td><td><input value="2/2"></td></tr>'
+            : '<tr><td><input></td><td><input></td><td><input></td><td><input></td></tr>') +
+          '</tbody></table></body>',
+        { url: 'https://x.example.edu.cn/saveguard' },
+      );
+      wS.window.Element.prototype.getBoundingClientRect = rect as never;
+      return wS.window.document;
+    };
+    const filledDoc = buildDoc(true);
+    const evidence = snapshotTableEvidence(filledDoc);
+    const achievementsEvidence = evidence.find((item) => item.kind === 'achievements');
+    check(!!achievementsEvidence && achievementsEvidence.rows === 2 && achievementsEvidence.filled === 2, '表格证据采集：行数与非空行数正确');
+
+    const clearedDoc = buildDoc(false);
+    check(detectFakeSave(evidence, clearedDoc) === 'achievements', '保存后表格还在但内容全空 → 判定疑似假保存');
+    check(detectFakeSave(evidence, filledDoc) === null, '内容未变化 → 不告警');
+
+    const emptyBefore = snapshotTableEvidence(clearedDoc);
+    check(detectFakeSave(emptyBefore, clearedDoc) === null, '此前无已填内容 → 不告警');
+  }
+
   // 学习/工作经历表：自动"新增一行"并逐条填写
   const pE = emptyProfile();
   pE.experiences.push({ start: '2018-09', end: '2021-06', org: '某高中', role: '学生' });
@@ -675,6 +1306,34 @@ void (async () => {
     check(nG === 1, '加行按钮无效（行数不增长）时只填现有行，不无限连点');
     check(clicks === 1, '行数未增长时只点击一次「新增一行」');
     check((dg.querySelector('[name="g0o"]') as HTMLInputElement).value === '某高中', '现有行仍正常填入第一条');
+  }
+
+  // V2 安全加行：允许“新增一行”，但绝不借“保存”按钮制造下一行。
+  {
+    const wSafe = new JSDOM(
+      '<body>' +
+        '<table id="safeTbl"><tbody><tr><th>学习或工作起止时间</th><th>学习或工作单位名称</th><th>担任职务</th></tr>' +
+        '<tr><td><input name="sf0t"></td><td><input name="sf0o"></td><td><input name="sf0r"></td></tr></tbody></table>' +
+        '<button id="safeAdd">新增一行</button><button id="safeSave">保存</button></body>',
+    );
+    const dSafe = wSafe.window.document;
+    wSafe.window.Element.prototype.getBoundingClientRect = rect as never;
+    let addClicks = 0;
+    let saveClicks = 0;
+    dSafe.getElementById('safeAdd')!.addEventListener('click', () => {
+      addClicks += 1;
+      (dSafe.getElementById('safeAdd') as HTMLButtonElement).disabled = true;
+      const row = (dSafe.getElementById('safeTbl') as HTMLTableElement).querySelector('tbody')!.insertRow();
+      row.innerHTML = '<td><input name="sf1t"></td><td><input name="sf1o"></td><td><input name="sf1r"></td>';
+    });
+    dSafe.getElementById('safeSave')!.addEventListener('click', () => { saveClicks += 1; });
+    const pSafe = emptyProfile();
+    pSafe.experiences.push({ start: '2018-09', end: '2021-06', org: '某高中', role: '学生' });
+    pSafe.experiences.push({ start: '2021-09', end: '2025-06', org: '某大学', role: '学生' });
+    pSafe.experiences.push({ start: '2025-09', end: '2028-06', org: '某研究院', role: '学生' });
+    const nSafe = await fillExperiences(pSafe, dSafe, 0, undefined, 3, false);
+    check(nSafe === 2 && addClicks === 1, '安全加行：点击“新增一行”并填写下一条');
+    check(saveClicks === 0, '安全加行：不会自动点击“保存”');
   }
 
   // 无「职务」列的两列表：职务并入单位格（对齐巨能填缺列合并策略）
@@ -988,6 +1647,64 @@ void (async () => {
     const c3n = wCet2.window.document.querySelector('[name="c3n"]') as HTMLInputElement;
     check(c2s.value === '500', '外语水平表已有内容不被覆盖');
     check(c3n.value === '大学英语四级（CET-4）', '已有六级时四级写入空行（不重复添加六级行）');
+  }
+
+  // 北科大外语水平页：考试等级是 select，必须与同一条成绩和日期成对填写。
+  {
+    const wUstbLang = new JSDOM(
+      '<body><table><tbody><tr><th>外语水平</th><th>成绩</th><th>取得成绩时间（日期格式：2019-11-11）</th><th>备注</th><th>操作</th></tr>' +
+        '<tr><td><select id="lbmc0"><option value="">----请选择----</option><option value="4">四级</option><option value="6">六级</option><option value="toefl">托福</option><option value="ielts">雅思</option><option value="other">其它</option></select></td>' +
+        '<td><input id="cj0" name="cj"></td><td><input id="sj0" name="sj"></td><td><input id="bz0"></td><td></td></tr>' +
+        '</tbody></table></body>',
+    );
+    wUstbLang.window.Element.prototype.getBoundingClientRect = rect as never;
+    const pUstbLang = emptyProfile();
+    pUstbLang.languageExams.push({ kind: 'CET-6', score: '518', date: '2025-06', level: '', certificateNo: '', state: createRowState('manual', 'ustb-cet6') });
+    fillAll(pUstbLang, wUstbLang.window.document);
+    const grade = wUstbLang.window.document.querySelector('#lbmc0') as HTMLSelectElement;
+    check(grade.selectedOptions[0]?.text === '六级', '北科大外语水平：英语等级 select 精确选择六级');
+    check((wUstbLang.window.document.querySelector('#cj0') as HTMLInputElement).value === '518', '北科大外语水平：六级类型与六级成绩成对填写');
+    check((wUstbLang.window.document.querySelector('#sj0') as HTMLInputElement).value === '2025-06-01', '北科大外语水平：取得时间按页面日格式填写');
+  }
+
+  // 页面没有 GRE 专项选项时，只能选择“其它”，并在备注保留真实考试名称。
+  {
+    const wOtherLang = new JSDOM(
+      '<body><table><tbody><tr><th>外语水平</th><th>成绩</th><th>取得成绩时间</th><th>备注</th></tr>' +
+        '<tr><td><select id="otherKind"><option value="">请选择</option><option>四级</option><option>六级</option><option>托福</option><option>雅思</option><option>其它</option></select></td>' +
+        '<td><input id="otherScore"></td><td><input id="otherDate"></td><td><input id="otherNote"></td></tr></tbody></table></body>',
+    );
+    wOtherLang.window.Element.prototype.getBoundingClientRect = rect as never;
+    const pOtherLang = emptyProfile();
+    pOtherLang.languageExams.push({ kind: 'GRE', score: '326', date: '2025-04', level: '', certificateNo: '', state: createRowState('manual', 'gre') });
+    fillAll(pOtherLang, wOtherLang.window.document);
+    check((wOtherLang.window.document.querySelector('#otherKind') as HTMLSelectElement).selectedOptions[0]?.text === '其它', '外语水平：未知考试类型安全回退“其它”');
+    check((wOtherLang.window.document.querySelector('#otherNote') as HTMLInputElement).value === 'GRE', '外语水平：“其它”在备注保留真实考试类型');
+  }
+
+  // 单行页面通过“新增一行”填写第二项，且四级、六级的成绩不交叉。
+  {
+    const wLangRows = new JSDOM(
+      '<body><div id="langWrap"><table id="langTable"><tbody><tr><th>外语水平</th><th>成绩</th><th>取得成绩时间</th><th>备注</th><th>操作</th></tr>' +
+        '<tr><td><select><option value="">请选择</option><option>四级</option><option>六级</option></select></td><td><input></td><td><input></td><td><input></td><td></td></tr>' +
+        '</tbody></table><button id="addLang">新增一行</button></div></body>',
+    );
+    wLangRows.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dLangRows = wLangRows.window.document;
+    dLangRows.querySelector('#addLang')?.addEventListener('click', () => {
+      const row = (dLangRows.querySelector('#langTable') as HTMLTableElement).insertRow();
+      row.innerHTML = '<td><select><option value="">请选择</option><option>四级</option><option>六级</option></select></td><td><input></td><td><input></td><td><input></td><td></td>';
+    });
+    const pLangRows = emptyProfile();
+    pLangRows.languageExams.push(
+      { kind: 'CET-6', score: '510', date: '2025-06', level: '', certificateNo: '', state: createRowState('manual', 'cet6-row') },
+      { kind: 'CET-4', score: '560', date: '2023-06', level: '', certificateNo: '', state: createRowState('manual', 'cet4-row') },
+    );
+    const languageFilled = await fillLanguageExams(pLangRows, dLangRows);
+    const languageRows = Array.from((dLangRows.querySelector('#langTable') as HTMLTableElement).rows).slice(1);
+    check(languageFilled === 2 && languageRows.length === 2, '外语水平：安全点击“新增一行”并填写两条考试');
+    check((languageRows[0].cells[0].querySelector('select') as HTMLSelectElement).selectedOptions[0]?.text === '六级' && (languageRows[0].cells[1].querySelector('input') as HTMLInputElement).value === '510', '外语水平：六级与 510 保持同一原子记录');
+    check((languageRows[1].cells[0].querySelector('select') as HTMLSelectElement).selectedOptions[0]?.text === '四级' && (languageRows[1].cells[1].querySelector('input') as HTMLInputElement).value === '560', '外语水平：四级与 560 保持同一原子记录');
   }
 
   // 北邮式逐行网格：填完一行自动点行内 DoPostback「添加」落库（标准回发 form.submit）
@@ -1315,6 +2032,364 @@ void (async () => {
   }
 
   // ===== 学校目录数据 =====
+  // ===== 学校/专业代码名称精确绑定 =====
+  {
+    const pairs = w.document.createElement('div');
+    pairs.innerHTML =
+      '<div id="schoolPair"><input name="txtBkbydwm" type="hidden" value="10698"><input name="txtBkbydwmc" value="西安交通大学"><input name="schoolShow"></div>' +
+      '<div id="majorPair"><input name="txtBkzydm" type="hidden" value="080901"><input name="txtBkzymc" value="计算机科学与技术"><input name="majorShow"></div>';
+    w.document.body.appendChild(pairs);
+    const schoolAnchor = pairs.querySelector('[name="schoolShow"]') as HTMLInputElement;
+    const majorAnchor = pairs.querySelector('[name="majorShow"]') as HTMLInputElement;
+    const schoolBinding = resolveCodeNameBinding(w.document, schoolAnchor, { profilePath: 'education.university' });
+    const majorBinding = resolveCodeNameBinding(w.document, majorAnchor, { profilePath: 'education.major' });
+    check(!!schoolBinding && schoolBinding.code.name === 'txtBkbydwm' && schoolBinding.name.name === 'txtBkbydwmc', '弹窗精确绑定：本科院校只绑定自己的代码/名称框');
+    check(!!majorBinding && majorBinding.code.name === 'txtBkzydm' && majorBinding.name.name === 'txtBkzymc', '弹窗精确绑定：本科专业不串到院校代码/名称框');
+    check(!!majorBinding && verifyCodeNameBinding(majorBinding, '计算机科学与技术', { codeAliases: ['080605', '080901'] }), '专业新旧目录代码别名：任一允许代码匹配即可');
+    if (majorBinding) majorBinding.name.value = '';
+    check(!!majorBinding && !verifyCodeNameBinding(majorBinding, '计算机科学与技术'), '弹窗回读：只有代码没有名称时拒绝判定成功');
+    pairs.remove();
+  }
+
+  // ===== 分组件日期驱动 =====
+  {
+    const dateWrap = w.document.createElement('div');
+    dateWrap.innerHTML =
+      '<input id="nativeMonth" type="month">' +
+      '<input id="my97Month" class="Wdate" readonly placeholder="yyyyMM">' +
+      '<span class="ant-picker"><input id="antDate" placeholder="YYYY-MM-DD"></span>';
+    w.document.body.appendChild(dateWrap);
+    const nativeMonth = dateWrap.querySelector('#nativeMonth') as HTMLInputElement;
+    const my97Month = dateWrap.querySelector('#my97Month') as HTMLInputElement;
+    const antDate = dateWrap.querySelector('#antDate') as HTMLInputElement;
+    const nativeResult = fillDateControl(nativeMonth, '2025-06-18');
+    const my97Result = fillDateControl(my97Month, '2021-09');
+    antDate.addEventListener('blur', () => setTimeout(() => { antDate.value = '2026-08-27'; }, 20), { once: true });
+    const antResult = fillDateControl(antDate, '2003-05-12');
+    check(nativeResult.ok && nativeMonth.value === '2025-06', '日期驱动：原生 month 控件按 YYYY-MM 写入');
+    check(my97Result.ok && my97Result.driver === 'my97' && my97Month.value === '202109', '日期驱动：My97 年月框按 yyyyMM 写入并回读');
+    check(antResult.ok && antResult.driver === 'ant', '日期驱动：识别 Ant DatePicker 并完成首次模型事件写入');
+    const declaredWdate = w.document.createElement('input');
+    declaredWdate.className = 'Wdate';
+    declaredWdate.setAttribute('onclick', "WdatePicker({dateFmt:'yyyyMM'})");
+    const declaredWdateResult = fillDateControl(declaredWdate, '2022-09');
+    check(declaredWdateResult.ok && declaredWdate.value === '202209', '日期驱动：优先解析页面 WdatePicker dateFmt=yyyyMM');
+    const strictWdate = w.document.createElement('input');
+    strictWdate.addEventListener('change', () => { strictWdate.value = '2022-09'; }, { once: true });
+    const strictWdateResult = fillDateControl(strictWdate, '2022-09', { precision: 'month', format: 'yyyyMM' });
+    check(!strictWdateResult.ok, '日期驱动：日期含义相同但字符串格式不符时不得误报回读成功');
+    await sleep(500);
+    check(antDate.value === '2003-05-12', '日期驱动：组件失焦异步重置后自动恢复档案日期');
+    dateWrap.remove();
+  }
+
+  // 北科大蓝色系统 rxny/byny 的真实契约是紧凑 yyyyMM，不是 YYYY-MM。
+  {
+    const ustbDates = new JSDOM(
+      '<input id="bkbydwShow"><input id="bkbyzyShow"><input id="rxny" class="Wdate" readonly><input id="byny" class="Wdate" readonly>',
+      { url: 'https://yjsy.ustb.edu.cn/ksxt/ssxly/example' },
+    );
+    const ustbProfile = emptyProfile();
+    ustbProfile.education.startDate = '2022-09';
+    ustbProfile.education.endDate = '2026-06';
+    const ustbAdapter = matchAdapterPackage(ustbDates.window.location.href)!;
+    const dateResults = fillAdapterContract(ustbProfile, ustbDates.window.document, ustbDates.window.location.href, ustbAdapter);
+    check((ustbDates.window.document.getElementById('rxny') as HTMLInputElement).value === '202209', '北科大日期契约：入学年月写为 yyyyMM');
+    check((ustbDates.window.document.getElementById('byny') as HTMLInputElement).value === '202606', '北科大日期契约：预计毕业年月写为 yyyyMM');
+    check(dateResults.filter((item) => /education\.(startDate|endDate)/.test(item.profilePath) && item.status === 'filled').length === 2, '北科大日期契约：两项均通过严格格式回读');
+  }
+
+  // ===== 三个独立内核：简约系统院校/专业专项流程 =====
+  {
+    const minimal = w.document.createElement('div');
+    minimal.innerHTML =
+      '<input id="txtBkbydwm" type="hidden"><input id="txtBkbydwmc"><a id="hykSelBkBydw">选择学校</a>' +
+      '<input id="txtBkzydm" type="hidden"><input id="txtBkzymc"><a id="hykSelBkzydm">选择专业</a>';
+    w.document.body.appendChild(minimal);
+
+    const schoolFrame = w.document.createElement('iframe');
+    schoolFrame.name = 'SelUniversity';
+    w.document.body.appendChild(schoolFrame);
+    const schoolDoc = schoolFrame.contentDocument as Document;
+    if (schoolDoc.defaultView) (schoolDoc.defaultView as any).Element.prototype.getBoundingClientRect = rect;
+    schoolDoc.body.innerHTML =
+      '<input id="txtWord"><button>查询</button><table><tr><td>10698</td><td>西安交通大学</td><td><button id="chooseSchool">选择</button></td></tr></table>';
+    schoolDoc.querySelector('#chooseSchool')?.addEventListener('click', () => {
+      (minimal.querySelector('#txtBkbydwm') as HTMLInputElement).value = '10698';
+      (minimal.querySelector('#txtBkbydwmc') as HTMLInputElement).value = '西安交通大学';
+    });
+    const schoolStatus = await pickSchool(w.document, minimal.querySelector('#txtBkbydwmc')!, '西安交通大学', { codeAliases: ['10698'] });
+    check(schoolStatus === 'picked', '院校独立内核：SelUniversity 查询、选择及代码名称回读完成');
+
+    const majorFrame = w.document.createElement('iframe');
+    majorFrame.name = 'SelBkdzZydm';
+    w.document.body.appendChild(majorFrame);
+    const majorDoc = majorFrame.contentDocument as Document;
+    if (majorDoc.defaultView) (majorDoc.defaultView as any).Element.prototype.getBoundingClientRect = rect;
+    majorDoc.body.innerHTML =
+      '<select><option>请选择</option><option>哲学</option><option>经济学</option><option>法学</option><option>理学</option><option value="g">工学</option></select>' +
+      '<input id="txtWord"><button>查询</button><table><tr><td>080901</td><td>计算机科学与技术</td><td><button id="chooseMajor">选择</button></td></tr></table>';
+    majorDoc.querySelector('#chooseMajor')?.addEventListener('click', () => {
+      (minimal.querySelector('#txtBkzydm') as HTMLInputElement).value = '080901';
+      (minimal.querySelector('#txtBkzymc') as HTMLInputElement).value = '计算机科学与技术';
+    });
+    const majorStatus = await pickMajor(w.document, minimal.querySelector('#txtBkzymc')!, '计算机科学与技术', { codeAliases: ['080605'] });
+    check(majorStatus === 'picked', '专业独立内核：SelBkdzZydm 门类、查询、新旧代码及名称回读完成');
+    check((majorDoc.querySelector('select') as HTMLSelectElement).value === 'g', '专业独立内核：按专业名称自动选择工学门类');
+    schoolFrame.remove();
+    majorFrame.remove();
+    minimal.remove();
+  }
+
+  // ===== 蓝色系统学校/专业三联协议（北科大真实字段名） =====
+  {
+    const blue = w.document.createElement('div');
+    blue.innerHTML =
+      '<div><input id="bydwm" type="hidden"><input id="bydw" type="hidden"><input id="bkbydwShow"><span id="chooseSch" class="addon">选择</span></div>' +
+      '<div><input id="byzydm" type="hidden"><input id="byzymc" type="hidden"><input id="bkbyzyShow"><span id="chooseZy" class="addon">选择</span></div>';
+    w.document.body.appendChild(blue);
+
+    const schoolFrame = w.document.createElement('iframe');
+    schoolFrame.name = 'chooseSch';
+    w.document.body.appendChild(schoolFrame);
+    const schoolDoc = schoolFrame.contentDocument as Document;
+    if (schoolDoc.defaultView) (schoolDoc.defaultView as any).Element.prototype.getBoundingClientRect = rect;
+    schoolDoc.body.innerHTML =
+      '<input id="key"><button>查询</button><table><tr><td>10698</td><td>西安交通大学</td><td><span id="schoolRow" onclick="void(0)">选择</span></td></tr></table>';
+    schoolDoc.querySelector('#schoolRow')?.addEventListener('click', () => {
+      (blue.querySelector('#bydwm') as HTMLInputElement).value = '10698';
+      (blue.querySelector('#bydw') as HTMLInputElement).value = '西安交通大学';
+      (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '10698 西安交通大学';
+    });
+    const schoolStatus = await pickSchool(w.document, blue.querySelector('#bkbydwShow')!, '西安交通大学', {
+      pickerProtocol: 'blue-flat',
+      codeSelectors: ['#bydwm'], nameSelectors: ['#bydw'], displaySelectors: ['#bkbydwShow'],
+      triggerSelectors: ['#chooseSch'], frameNames: ['chooseSch'],
+    });
+    check(schoolStatus === 'picked' && (blue.querySelector('#bkbydwShow') as HTMLInputElement).value === '10698 西安交通大学', '蓝色三联学校：chooseSch 的 span 结果行点选后代码、名称、展示完整回读');
+    schoolFrame.remove();
+
+    // 北科大 chooseSch 实际采用省份 → 学校级联，而不是固定的查询结果表。
+    (blue.querySelector('#bydwm') as HTMLInputElement).value = '';
+    (blue.querySelector('#bydw') as HTMLInputElement).value = '';
+    (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '';
+    const cascadeDialog = w.document.createElement('div');
+    cascadeDialog.className = 'bh-dialog';
+    cascadeDialog.innerHTML =
+      '<select id="schoolProvince"><option value="">请选择省份</option><option value="11">北京市</option><option value="31">上海市</option><option value="61">陕西省</option></select>' +
+      '<select id="schoolList"><option value="">请选择学校</option></select><button id="schoolConfirm">确定</button>';
+    w.document.body.appendChild(cascadeDialog);
+    const provinceSelect = cascadeDialog.querySelector('#schoolProvince') as HTMLSelectElement;
+    const schoolSelect = cascadeDialog.querySelector('#schoolList') as HTMLSelectElement;
+    provinceSelect.addEventListener('change', () => {
+      if (provinceSelect.value === '61') schoolSelect.innerHTML = '<option value="">请选择学校</option><option value="61|10698|西安交通大学">西安交通大学</option>';
+    });
+    const cascadeStatus = await pickSchool(w.document, blue.querySelector('#bkbydwShow')!, '西安交通大学', {
+      profilePath: 'education.university', pickerProtocol: 'blue-flat', cascadeLabels: ['陕西'],
+      codeSelectors: ['#bydwm'], nameSelectors: ['#bydw'], displaySelectors: ['#bkbydwShow'], triggerSelectors: ['#chooseSch'],
+    });
+    check(cascadeStatus === 'picked' && provinceSelect.value === '61' && schoolSelect.value === '61|10698|西安交通大学', '蓝色三联学校：在普通对话框中按省份和院校逐级精确选择');
+    check((blue.querySelector('#bydwm') as HTMLInputElement).value === '10698' && (blue.querySelector('#bydw') as HTMLInputElement).value === '西安交通大学', '蓝色三联学校：级联选项的代码、名称和展示框完整回读');
+    const safeBlueDebug = w.sessionStorage.getItem('tui-pick-debug') || '';
+    check(safeBlueDebug.includes('cascade-parent') && safeBlueDebug.includes('cascade-leaf') && !safeBlueDebug.includes('西安交通大学'), '蓝色三联学校：诊断记录级联阶段且不包含真实院校名称');
+
+    (blue.querySelector('#bydwm') as HTMLInputElement).value = '';
+    (blue.querySelector('#bydw') as HTMLInputElement).value = '';
+    (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '';
+    provinceSelect.value = '';
+    schoolSelect.innerHTML = '<option value="">请选择学校</option>';
+    const noProvinceStatus = await pickSchool(w.document, blue.querySelector('#bkbydwShow')!, '西安交通大学', {
+      profilePath: 'education.university', pickerProtocol: 'blue-flat',
+      codeSelectors: ['#bydwm'], nameSelectors: ['#bydw'], displaySelectors: ['#bkbydwShow'], triggerSelectors: ['#chooseSch'],
+    });
+    check(noProvinceStatus === 'picked' && provinceSelect.value === '61' && schoolSelect.value === '61|10698|西安交通大学', '蓝色三联学校：档案未填省份时可在弹窗内逐省定位院校');
+    check((w.sessionStorage.getItem('tui-pick-debug') || '').includes('cascade-parent-scan'), '蓝色三联学校：无省份兜底过程留下非敏感诊断');
+    cascadeDialog.remove();
+
+    // Edge 下蓝色系统搜索结果可能只有裸 img 图标；必须执行元素自身 click 激活动作。
+    (blue.querySelector('#bydwm') as HTMLInputElement).value = '';
+    (blue.querySelector('#bydw') as HTMLInputElement).value = '';
+    (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '';
+    const imageFrame = w.document.createElement('iframe');
+    imageFrame.name = 'SelUniversity';
+    w.document.body.appendChild(imageFrame);
+    const imageDoc = imageFrame.contentDocument as Document;
+    if (imageDoc.defaultView) (imageDoc.defaultView as any).Element.prototype.getBoundingClientRect = rect;
+    imageDoc.body.innerHTML =
+      '<input id="txtWord"><button id="btSearch">查询</button><table><tr><td>10190</td><td>长春工业大学</td><td><img id="rawSchoolImage" src="select.gif" alt=""></td></tr></table>';
+    imageDoc.querySelector('#rawSchoolImage')?.addEventListener('click', () => {
+      (blue.querySelector('#bydwm') as HTMLInputElement).value = '10190';
+      (blue.querySelector('#bydw') as HTMLInputElement).value = '长春工业大学';
+      (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '10190 长春工业大学';
+    });
+    const rawImageStatus = await pickSchool(w.document, blue.querySelector('#bkbydwShow')!, '长春工业大学', {
+      profilePath: 'education.university', pickerProtocol: 'blue-flat',
+      codeSelectors: ['#bydwm'], nameSelectors: ['#bydw'], displaySelectors: ['#bkbydwShow'], frameNames: ['SelUniversity'],
+    });
+    check(rawImageStatus === 'picked' && (blue.querySelector('#bydwm') as HTMLInputElement).value === '10190', '蓝色三联学校：Edge 搜索结果行的裸 img 选择按钮可被真正激活');
+    imageFrame.remove();
+
+    // 非表格结果：搜索后出现 li/span 学校项，点击其上级 onclick 完成选择。
+    (blue.querySelector('#bydwm') as HTMLInputElement).value = '';
+    (blue.querySelector('#bydw') as HTMLInputElement).value = '';
+    (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '';
+    const listFrame = w.document.createElement('iframe');
+    listFrame.name = 'SelUniversity';
+    w.document.body.appendChild(listFrame);
+    const listDoc = listFrame.contentDocument as Document;
+    if (listDoc.defaultView) (listDoc.defaultView as any).Element.prototype.getBoundingClientRect = rect;
+    listDoc.body.innerHTML =
+      '<input id="txtWord"><button id="btSearch">查询</button><ul><li id="schoolListItem" data-code="10700" onclick="void(0)"><span>10700 西安理工大学</span></li></ul>';
+    listDoc.querySelector('#schoolListItem')?.addEventListener('click', () => {
+      (blue.querySelector('#bydwm') as HTMLInputElement).value = '10700';
+      (blue.querySelector('#bydw') as HTMLInputElement).value = '西安理工大学';
+      (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '10700 西安理工大学';
+    });
+    const listNodeStatus = await pickSchool(w.document, blue.querySelector('#bkbydwShow')!, '西安理工大学', {
+      profilePath: 'education.university', pickerProtocol: 'blue-flat',
+      codeSelectors: ['#bydwm'], nameSelectors: ['#bydw'], displaySelectors: ['#bkbydwShow'], frameNames: ['SelUniversity'],
+    });
+    check(listNodeStatus === 'picked' && (blue.querySelector('#bydwm') as HTMLInputElement).value === '10700', '蓝色三联学校：非表格 li/span 搜索结果可以精确选中');
+    listFrame.remove();
+
+    // 北科大真实结构：结果在 universitySelectPage iframe 内，Layui“确定”在承载 iframe 的父弹层中。
+    (blue.querySelector('#bydwm') as HTMLInputElement).value = '';
+    (blue.querySelector('#bydw') as HTMLInputElement).value = '';
+    (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '';
+    const unrelatedConfirm = w.document.createElement('button');
+    unrelatedConfirm.textContent = '确定';
+    let unrelatedConfirmClicks = 0;
+    unrelatedConfirm.addEventListener('click', () => { unrelatedConfirmClicks += 1; });
+    w.document.body.appendChild(unrelatedConfirm);
+    const ustbLayer = w.document.createElement('div');
+    ustbLayer.className = 'layui-layer layui-layer-iframe';
+    ustbLayer.innerHTML =
+      '<div class="layui-layer-content"></div>' +
+      '<div class="layui-layer-btn"><a class="layui-layer-btn0">确定</a><a class="layui-layer-btn1">清除</a><a class="layui-layer-btn2">关闭</a></div>';
+    w.document.body.appendChild(ustbLayer);
+    const ustbFrame = w.document.createElement('iframe');
+    ustbFrame.name = 'SelUniversity';
+    ustbLayer.querySelector('.layui-layer-content')?.appendChild(ustbFrame);
+    const ustbDoc = ustbFrame.contentDocument as Document;
+    if (ustbDoc.defaultView) (ustbDoc.defaultView as any).Element.prototype.getBoundingClientRect = rect;
+    ustbDoc.body.innerHTML =
+      '<input id="keyword"><input id="qt"><button>搜索</button>' +
+      '<a class="province-item">陕西省</a><a id="ustbSchool" class="university-item">西安理工大学</a>';
+    const ustbSchool = ustbDoc.querySelector('#ustbSchool') as HTMLElement;
+    ustbSchool.addEventListener('click', () => ustbSchool.classList.add('choosen'));
+    let layerConfirmClicks = 0;
+    ustbLayer.querySelector('.layui-layer-btn0')?.addEventListener('click', () => {
+      layerConfirmClicks += 1;
+      if (!ustbSchool.classList.contains('choosen')) return;
+      (blue.querySelector('#bydwm') as HTMLInputElement).value = '10700';
+      (blue.querySelector('#bydw') as HTMLInputElement).value = '西安理工大学';
+      (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '10700 西安理工大学';
+    });
+    const ustbLayerStatus = await pickSchool(w.document, blue.querySelector('#bkbydwShow')!, '西安理工大学', {
+      profilePath: 'education.university', pickerProtocol: 'blue-flat', expectedCode: '10700',
+      codeSelectors: ['#bydwm'], nameSelectors: ['#bydw'], displaySelectors: ['#bkbydwShow'], frameNames: ['SelUniversity'],
+    });
+    check(ustbLayerStatus === 'picked' && layerConfirmClicks === 1, '蓝色三联学校：选中 iframe 内院校后点击所属 Layui 弹层的确定按钮');
+    check(unrelatedConfirmClicks === 0, '蓝色三联学校：不会误点当前选择器弹层之外的同名确定按钮');
+    check((w.sessionStorage.getItem('tui-pick-debug') || '').includes('layer-confirm'), '蓝色三联学校：诊断记录包含跨 iframe 弹层确认阶段');
+    ustbLayer.remove();
+    unrelatedConfirm.remove();
+
+    const staleSchoolFrame = w.document.createElement('iframe');
+    staleSchoolFrame.name = 'SelUniversity';
+    w.document.body.appendChild(staleSchoolFrame);
+    const staleSchoolDoc = staleSchoolFrame.contentDocument as Document;
+    if (staleSchoolDoc.defaultView) (staleSchoolDoc.defaultView as any).Element.prototype.getBoundingClientRect = rect;
+    staleSchoolDoc.body.innerHTML = '<input id="staleSchoolSearch"><button>查询</button><table><tr><td>10700 西安理工大学</td></tr></table>';
+
+    const majorFrame = w.document.createElement('iframe');
+    majorFrame.name = 'SelBkdzZydm';
+    w.document.body.appendChild(majorFrame);
+    const majorDoc = majorFrame.contentDocument as Document;
+    if (majorDoc.defaultView) (majorDoc.defaultView as any).Element.prototype.getBoundingClientRect = rect;
+    majorDoc.body.innerHTML =
+      '<input id="key"><button>查询</button><table><tr><td>080301</td><td>测控技术与仪器</td><td onclick="void(0)" id="majorRow">选择</td></tr></table>';
+    majorDoc.querySelector('#majorRow')?.addEventListener('click', () => {
+      (blue.querySelector('#byzydm') as HTMLInputElement).value = '080301';
+      (blue.querySelector('#byzymc') as HTMLInputElement).value = '测控技术与仪器';
+      (blue.querySelector('#bkbyzyShow') as HTMLInputElement).value = '080301 测控技术与仪器';
+    });
+    const majorStatus = await pickMajor(w.document, blue.querySelector('#bkbyzyShow')!, '测控技术与仪器', {
+      pickerProtocol: 'blue-flat',
+      codeSelectors: ['#byzydm'], nameSelectors: ['#byzymc'], displaySelectors: ['#bkbyzyShow'],
+      triggerSelectors: ['#chooseZy'], frameNames: ['chooseZy', 'SelBkdzZydm'],
+    });
+    check(majorStatus === 'picked' && (blue.querySelector('#byzydm') as HTMLInputElement).value === '080301' && (blue.querySelector('#byzymc') as HTMLInputElement).value === '测控技术与仪器', '蓝色三联专业：chooseZy 的 td onclick 结果行点选后不再只填展示框');
+    check((staleSchoolDoc.querySelector('#staleSchoolSearch') as HTMLInputElement).value === '', '蓝色三联隔离：专业关键字不会写入遗留的 SelUniversity 院校弹窗');
+    staleSchoolFrame.remove();
+    majorFrame.remove();
+    blue.remove();
+  }
+
+  // ===== Ant / Select2 / Element / Layui 专用组件驱动 =====
+  {
+    const components = w.document.createElement('div');
+    components.innerHTML =
+      '<select id="s2Model"><option value="">请选择</option><option value="10698">西安交通大学</option></select>' +
+      '<span class="select2-container"><span class="select2-selection"><span class="select2-selection__rendered">请选择</span></span></span>' +
+      '<div class="select2-dropdown"><input class="select2-search__field"><ul><li class="select2-results__option" data-value="10698">西安交通大学</li></ul></div>' +
+      '<div class="ant-select"><div class="ant-select-selector"><input class="ant-select-selection-search-input"><span class="ant-select-selection-item"></span></div></div>' +
+      '<div class="ant-select-dropdown"><div class="ant-select-item-option" data-value="080901"><span class="ant-select-item-option-content">计算机科学与技术</span></div></div>' +
+      '<div class="el-select"><div class="el-select__wrapper"><input class="el-input__inner"><span class="el-select__selected-item"></span></div></div>' +
+      '<div class="el-select-dropdown"><div class="el-select-dropdown__item">西安交通大学</div></div>' +
+      '<select id="layuiModel"><option value="">请选择</option><option value="080901">计算机科学与技术</option></select>' +
+      '<div class="layui-form-select"><div class="layui-select-title"><input></div><dl class="layui-anim-upbit"><dd lay-value="080901">计算机科学与技术</dd></dl></div>';
+    w.document.body.appendChild(components);
+    const s2Model = components.querySelector('#s2Model') as HTMLSelectElement;
+    components.querySelector('.select2-results__option')?.addEventListener('click', () => {
+      s2Model.value = '10698';
+      (components.querySelector('.select2-selection__rendered') as HTMLElement).textContent = '西安交通大学';
+    });
+    const antRoot = components.querySelector('.ant-select') as HTMLElement;
+    components.querySelector('.ant-select-item-option')?.addEventListener('click', (event: Event) => {
+      (antRoot.querySelector('.ant-select-selection-item') as HTMLElement).textContent = '计算机科学与技术';
+      (event.currentTarget as HTMLElement).classList.add('ant-select-item-option-selected');
+    });
+    const elRoot = components.querySelector('.el-select') as HTMLElement;
+    components.querySelector('.el-select-dropdown__item')?.addEventListener('click', () => {
+      (elRoot.querySelector('.el-input__inner') as HTMLInputElement).value = '西安交通大学';
+      (elRoot.querySelector('.el-select__selected-item') as HTMLElement).textContent = '西安交通大学';
+    });
+    const layuiModel = components.querySelector('#layuiModel') as HTMLSelectElement;
+    components.querySelector('dd[lay-value]')?.addEventListener('click', (event: Event) => {
+      layuiModel.value = '080901';
+      (components.querySelector('.layui-form-select input') as HTMLInputElement).value = '计算机科学与技术';
+      (event.currentTarget as HTMLElement).classList.add('layui-this');
+    });
+    const s2 = await pickComponentOption(s2Model, '西安交通大学', { componentDriver: 'select2', expectedCode: '10698' });
+    const ant = await pickComponentOption(antRoot, '计算机科学与技术', { componentDriver: 'ant', expectedCode: '080901' });
+    const element = await pickComponentOption(elRoot, '西安交通大学', { componentDriver: 'element' });
+    const layui = await pickComponentOption(components.querySelector('.layui-form-select')!, '计算机科学与技术', { componentDriver: 'layui', expectedCode: '080901' });
+    check(s2.status === 'picked' && s2Model.value === '10698', 'Select2 驱动：可见标签与原生 select 模型共同回读');
+    check(ant.status === 'picked', 'Ant Select 驱动：搜索、点选和选中标签回读');
+    check(element.status === 'picked', 'Element Select 驱动：展开、点选和可见模型回读');
+    check(layui.status === 'picked' && layuiModel.value === '080901', 'Layui Select 驱动：dd 选项与底层 select 模型共同回读');
+    components.remove();
+  }
+
+  // ===== 日期独立内核：真实面板交互 + 隐藏模型完整回读 =====
+  {
+    const datePanelWrap = w.document.createElement('div');
+    datePanelWrap.innerHTML =
+      '<span class="ant-picker"><input id="panelDate" placeholder="YYYY-MM-DD"></span><input id="panelHidden" type="hidden">' +
+      '<div class="ant-picker-dropdown"><div class="ant-picker-header-view">2025年6月</div><table><tr><td id="day18">18</td></tr></table></div>';
+    w.document.body.appendChild(datePanelWrap);
+    const panelDate = datePanelWrap.querySelector('#panelDate') as HTMLInputElement;
+    const panelHidden = datePanelWrap.querySelector('#panelHidden') as HTMLInputElement;
+    datePanelWrap.querySelector('#day18')?.addEventListener('click', () => {
+      panelDate.value = '2025-06-18';
+      panelHidden.value = '2025-06-18';
+    });
+    const fullDate = await fillDateControlAsync(panelDate, '2025-06-18', { precision: 'day', hiddenValueSelectors: ['#panelHidden'] });
+    check(fullDate.ok && panelHidden.value === '2025-06-18', '日期独立内核：操作真实日期面板并完成可见值、隐藏模型、错误状态回读');
+    datePanelWrap.remove();
+  }
+
   const buptS = SCHOOLS.find((s) => s.name === '北京邮电大学');
   const njustS = SCHOOLS.find((s) => s.name === '南京理工大学');
   check(SCHOOLS.length >= 80, '学校目录：收录 80+ 所高校');

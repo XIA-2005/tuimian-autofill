@@ -23,6 +23,7 @@
   </header>
   <div id="toast" class="toast"></div>
   <div id="missingBanner" class="missing-banner" hidden></div>
+  <div id="migrationBanner" class="migration-banner" hidden></div>
 
   <main>
     <section class="card">
@@ -110,31 +111,72 @@
       </div>
     </section>
 
-    <section class="card">
-      <h2>获奖情况</h2>
-      <p class="hint">页面上的"获奖情况"长文本域会按以下条目自动汇总填入，提交前请人工核对。</p>
-      <div id="list-awards" class="list"></div>
-      <button data-add="awards" class="add">＋ 添加一项获奖</button>
+    <section class="card" id="pendingCard" hidden>
+      <h2>旧档案待分类</h2>
+      <p class="hint">这些记录类型不明确，在人工选择前不会参与自动填表。</p>
+      <div id="pendingList" class="pending-list"></div>
+      <button id="confirmMigrationBtn" type="button" class="add">确认迁移结果并保留旧版备份</button>
     </section>
 
-    <section class="card">
-      <h2>科研 / 竞赛经历</h2>
-      <p class="hint">页面上的"科研/竞赛经历"长文本域会按以下条目自动汇总填入，提交前请人工核对。</p>
-      <div id="list-research" class="list"></div>
-      <button data-add="research" class="add">＋ 添加一项经历</button>
+    <section class="card atom-card">
+      <h2>论文 / 著作 <button type="button" data-lock-block="academicPapers" class="block-lock"></button></h2>
+      <p class="hint">论文和著作独立保存，不与项目、专利或竞赛混放。</p>
+      <div id="list-academicPapers" class="list"></div>
+      <button data-add="academicPapers" class="add">＋ 添加论文或著作</button>
     </section>
 
-    <section class="card">
-      <h2>学习 / 工作经历（从高中开始）</h2>
-      <p class="hint">用于南理工等系统"学习或工作经历"表格（起止时间/单位/职务）自动填写。</p>
-      <div id="list-experiences" class="list"></div>
-      <button data-add="experiences" class="add">＋ 添加一段经历</button>
+    <section class="card atom-card">
+      <h2>专利 / 软件著作权 <button type="button" data-lock-block="academicPatents" class="block-lock"></button></h2>
+      <div id="list-academicPatents" class="list"></div>
+      <button data-add="academicPatents" class="add">＋ 添加专利或软著</button>
     </section>
 
-    <section class="card">
-      <h2>社会实践 / 学生工作</h2>
-      <div id="list-socialPractice" class="list"></div>
-      <button data-add="socialPractice" class="add">＋ 添加一项</button>
+    <section class="card atom-card">
+      <h2>科研项目 / 科研训练 <button type="button" data-lock-block="academicProjects" class="block-lock"></button></h2>
+      <div id="list-academicProjects" class="list"></div>
+      <button data-add="academicProjects" class="add">＋ 添加科研项目</button>
+    </section>
+
+    <section class="card atom-card">
+      <h2>学术 / 创新创业竞赛 <button type="button" data-lock-block="academicCompetitions" class="block-lock"></button></h2>
+      <div id="list-academicCompetitions" class="list"></div>
+      <button data-add="academicCompetitions" class="add">＋ 添加竞赛</button>
+    </section>
+
+    <section class="card atom-card">
+      <h2>荣誉 / 奖学金 <button type="button" data-lock-block="honorsScholarships" class="block-lock"></button></h2>
+      <div id="list-honorsScholarships" class="list"></div>
+      <button data-add="honorsScholarships" class="add">＋ 添加荣誉或奖学金</button>
+    </section>
+
+    <section class="card atom-card">
+      <h2>实习 / 见习 / 实训 <button type="button" data-lock-block="internships" class="block-lock"></button></h2>
+      <div id="list-internships" class="list"></div>
+      <button data-add="internships" class="add">＋ 添加实习</button>
+    </section>
+
+    <section class="card atom-card">
+      <h2>社会实践 / 志愿服务 <button type="button" data-lock-block="socialService" class="block-lock"></button></h2>
+      <div id="list-socialService" class="list"></div>
+      <button data-add="socialService" class="add">＋ 添加实践或志愿服务</button>
+    </section>
+
+    <section class="card atom-card">
+      <h2>学生工作 / 学习和工作经历 <button type="button" data-lock-block="studentWorkExperiences" class="block-lock"></button></h2>
+      <div id="list-studentWorkExperiences" class="list"></div>
+      <button data-add="studentWorkExperiences" class="add">＋ 添加一段经历</button>
+    </section>
+
+    <section class="card atom-card">
+      <h2>语言考试 <button type="button" data-lock-block="languageExams" class="block-lock"></button></h2>
+      <div id="list-languageExams" class="list"></div>
+      <button data-add="languageExams" class="add">＋ 添加语言考试</button>
+    </section>
+
+    <section class="card atom-card">
+      <h2>计算机等级与证书 <button type="button" data-lock-block="computerCertificates" class="block-lock"></button></h2>
+      <div id="list-computerCertificates" class="list"></div>
+      <button data-add="computerCertificates" class="add">＋ 添加计算机证书</button>
     </section>
 
     <section class="card">
@@ -143,11 +185,11 @@
       <button data-add="familyMembers" class="add">＋ 添加一位成员</button>
     </section>
 
-    <section class="card">
-      <h2>自我陈述（建议多版本）</h2>
-      <p class="hint">不同学校字数要求不同，建议准备多个版本（如：通用 500 字、800 字）。填表时请手动粘贴对应版本；面板「复制漏填项」会附上各版本字数速查。</p>
-      <div id="list-selfStatements" class="list"></div>
-      <button data-add="selfStatements" class="add">＋ 添加一个版本</button>
+    <section class="card atom-card">
+      <h2>长文材料 <button type="button" data-lock-block="essays" class="block-lock"></button></h2>
+      <p class="hint">可分别保存个人陈述、科研兴趣、申请理由、社会实践等版本，并记录目标字数上限。</p>
+      <div id="list-essays" class="list"></div>
+      <button data-add="essays" class="add">＋ 添加一个长文版本</button>
     </section>
 
     <section class="card">

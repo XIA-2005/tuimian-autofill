@@ -1,4 +1,4 @@
-import { emptyProfile, getByPath, normalizeProfile, Profile, setByPath } from '../core/profile';
+import { ATOMIC_TABLE_IDS, AtomicTableId, canLockProfileRow, classifyPendingRecord, createRowState, emptyProfile, getByPath, moveAtomicRow, normalizeProfile, Profile, setProfileFieldLock, writeProfileValue } from '../core/profile';
 import { loadProfile, saveProfile } from '../core/storage';
 import { generateTestProfile } from '../core/testdata';
 import { DEFAULT_RULES_URL, loadSettings, saveSettings } from '../core/rulesync';
@@ -9,13 +9,23 @@ interface ListDef {
 }
 
 const LIST_DEFS: Record<string, ListDef> = {
-  awards: { cols: { date: '时间', place: '地点', content: '内容' } },
-  research: { cols: { title: '成果名称', type: '类型（论文/项目/竞赛）', date: '时间', role: '本人角色', description: '简要描述' }, textarea: ['description'] },
-  experiences: { cols: { start: '起始时间', end: '结束时间', org: '学校或工作单位', role: '担任职务' } },
-  socialPractice: { cols: { date: '时间', name: '活动名称', role: '担任职务', detail: '具体内容' }, textarea: ['detail'] },
-  familyMembers: { cols: { name: '姓名', relation: '与本人关系', org: '工作单位及职务', phone: '联系电话', politicalStatus: '政治面貌' } },
-  selfStatements: { cols: { title: '版本标题', content: '内容' }, textarea: ['content'] },
-  applications: { cols: { school: '学校', college: '申请学院', major: '专业/方向', direction: '研究方向', degreeType: '学位类型', supervisor: '意向导师', note: '备注' }, textarea: ['note'] },
+  academicPapers: { cols: { kind: '类型', end: '发表时间', title: '论文/著作标题', source: '刊物/会议/出版社', role: '作者排名', authors: '全部作者', itemType: '论文/著作类型', status: '发表状态', level: '刊物级别', partition: '分区', summary: '摘要/说明', advisor: '指导教师' }, textarea: ['summary'] },
+  academicPatents: { cols: { kind: '类型', end: '授权/受理时间', title: '专利/软著名称', source: '权利人/登记主体', role: '本人排名/角色', authors: '发明人/著作权人', itemType: '成果类型', status: '状态', level: '级别', summary: '说明', advisor: '指导教师' }, textarea: ['summary'] },
+  academicProjects: { cols: { kind: '类型', start: '开始时间', end: '结束时间', title: '项目名称', source: '项目来源', role: '本人角色/排名', level: '项目级别', itemType: '项目类别', status: '项目状态', authors: '参与成员', summary: '主要贡献/说明', advisor: '指导教师' }, textarea: ['summary'] },
+  academicCompetitions: { cols: { kind: '类型', time: '获奖时间', name: '竞赛/项目名称', issuer: '主办单位', place: '地点', level: '奖项级别', grade: '奖项等级', rank: '本人位次', content: '说明' }, textarea: ['content'] },
+  honorsScholarships: { cols: { kind: '类型', time: '获奖时间', name: '荣誉/奖学金名称', issuer: '颁发单位', place: '地点', level: '奖项级别', grade: '奖项等级', rank: '本人位次', content: '获奖原因/说明' }, textarea: ['content'] },
+  internships: { cols: { kind: '类型', start: '开始时间', end: '结束时间', org: '实习单位', role: '岗位/职务', place: '地点', content: '主要工作内容' }, textarea: ['content'] },
+  socialService: { cols: { kind: '类型', start: '开始时间', end: '结束时间', org: '实践/服务单位', role: '担任职务', place: '地点', content: '主要内容' }, textarea: ['content'] },
+  studentWorkExperiences: { cols: { kind: '类型', start: '开始时间', end: '结束时间', org: '学校/单位/组织', role: '担任职务', place: '地点', content: '主要内容' }, textarea: ['content'] },
+  languageExams: { cols: { kind: '考试类型', score: '成绩', date: '取得时间', level: '等级', certificateNo: '证书编号' } },
+  computerCertificates: { cols: { kind: '证书类型', level: '等级', score: '成绩', date: '取得时间', certificateNo: '证书编号' } },
+  essays: { cols: { kind: '长文类型', content: '正文', charLimit: '目标字数上限' }, textarea: ['content'] },
+  familyMembers: { cols: { name: '姓名', relation: '与本人关系', org: '工作单位', jobTitle: '职务', politicalStatus: '政治面貌', phone: '联系电话', address: '通讯地址' } },
+  applications: { cols: { school: '学校', programType: '项目类型', year: '年度', college: '申请学院', major: '专业', direction: '研究方向', degreeType: '学位类型', supervisor: '意向导师', schoolCode: '学校代码', collegeCode: '学院代码', majorCode: '专业代码', directionCode: '方向代码', note: '备注' }, textarea: ['note'] },
+};
+
+const ATOMIC_TABLE_NAMES: Record<AtomicTableId, string> = {
+  academicPapers: '论文/著作', academicPatents: '专利/软著', academicProjects: '科研项目', academicCompetitions: '竞赛', honorsScholarships: '荣誉/奖学金', internships: '实习', socialService: '社会实践/志愿服务', studentWorkExperiences: '学生工作/学习工作经历',
 };
 
 let state: Profile = emptyProfile();
@@ -29,13 +39,19 @@ function showToast(text: string): void {
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
 }
 
-function renderList(key: string, items: Record<string, string>[]): void {
-  const container = document.getElementById('list-' + key) as HTMLElement;
+function rowHasValue(item: Record<string, unknown>, def: ListDef): boolean {
+  return Object.keys(def.cols).some((col) => String(item[col] ?? '').trim());
+}
+
+function renderList(key: string, items: Array<Record<string, any>>): void {
+  const container = document.getElementById('list-' + key) as HTMLElement | null;
+  if (!container) return;
   container.innerHTML = '';
   const def = LIST_DEFS[key];
   items.forEach((item, i) => {
     const row = document.createElement('div');
-    row.className = 'row';
+    const locked = !!state.blockLocks[key] || !!item.state?.locked;
+    row.className = locked ? 'row is-locked' : 'row';
     for (const [col, label] of Object.entries(def.cols)) {
       const isArea = def.textarea ? def.textarea.includes(col) : false;
       const field = document.createElement('label');
@@ -43,19 +59,63 @@ function renderList(key: string, items: Record<string, string>[]): void {
       field.textContent = label;
       const ctrl = document.createElement(isArea ? 'textarea' : 'input') as HTMLInputElement | HTMLTextAreaElement;
       ctrl.dataset.lpath = `${key}.${i}.${col}`;
-      ctrl.value = item[col] || '';
+      ctrl.value = String(item[col] ?? '');
+      ctrl.disabled = locked;
       if (isArea) (ctrl as HTMLTextAreaElement).rows = 4;
       if (!isArea) ctrl.placeholder = label;
       field.appendChild(ctrl);
       row.appendChild(field);
     }
+    const lock = document.createElement('button');
+    lock.type = 'button';
+    lock.className = 'row-lock';
+    lock.textContent = locked ? '🔒 解锁本行' : '🔓 锁定本行';
+    lock.disabled = !!state.blockLocks[key];
+    lock.addEventListener('click', () => {
+      collectToState();
+      const arr = (state as unknown as Record<string, Array<Record<string, any>>>)[key];
+      const current = arr[i] || {};
+      if (!current.state?.locked && !canLockProfileRow(current)) {
+        showToast('空行、非法日期或占位测试数据不能锁定');
+        return;
+      }
+      current.state = { ...(current.state || createRowState('manual', `${key}|${i}`)), locked: !current.state?.locked, source: current.state?.source || 'manual', updatedAt: new Date().toISOString(), confidence: current.state?.confidence || 'verified' };
+      renderList(key, arr);
+    });
+    row.appendChild(lock);
+    if (ATOMIC_TABLE_IDS.includes(key as AtomicTableId)) {
+      const moveSelect = document.createElement('select');
+      moveSelect.className = 'row-move-select';
+      for (const target of ATOMIC_TABLE_IDS) {
+        if (target === key) continue;
+        const option = document.createElement('option');
+        option.value = target;
+        option.textContent = `移至：${ATOMIC_TABLE_NAMES[target]}`;
+        moveSelect.appendChild(option);
+      }
+      moveSelect.disabled = locked;
+      const moveButton = document.createElement('button');
+      moveButton.type = 'button';
+      moveButton.className = 'row-move';
+      moveButton.textContent = '移动';
+      moveButton.disabled = locked;
+      moveButton.addEventListener('click', () => {
+        collectToState();
+        if (moveAtomicRow(state, key as AtomicTableId, i, moveSelect.value as AtomicTableId)) {
+          renderAll();
+          showToast('已移动到目标原子表并锁定');
+        }
+      });
+      row.append(moveSelect, moveButton);
+    }
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'row-del';
     del.textContent = '删除';
+    del.disabled = locked;
     del.addEventListener('click', () => {
       collectToState();
-      const arr = (state as unknown as Record<string, Record<string, string>[]>)[key];
+      const arr = (state as unknown as Record<string, Array<Record<string, any>>>)[key];
       arr.splice(i, 1);
       renderList(key, arr);
     });
@@ -69,9 +129,101 @@ function renderAll(): void {
     el.value = String(getByPath(state, el.dataset.field!) ?? '');
   });
   for (const key of Object.keys(LIST_DEFS)) {
-    renderList(key, (state as unknown as Record<string, Record<string, string>[]>)[key] || []);
+    renderList(key, (state as unknown as Record<string, Array<Record<string, any>>>)[key] || []);
   }
+  decorateScalarLocks();
+  refreshBlockLocks();
+  refreshMigrationBanner();
+  renderPendingClassifications();
   refreshMissingBanner();
+}
+
+function renderPendingClassifications(): void {
+  const card = document.getElementById('pendingCard') as HTMLElement | null;
+  const list = document.getElementById('pendingList') as HTMLElement | null;
+  if (!card || !list) return;
+  card.hidden = !state.pendingClassifications.length && state.migration.confirmed;
+  list.innerHTML = '';
+  state.pendingClassifications.forEach((pending) => {
+    const row = document.createElement('div');
+    row.className = 'pending-row';
+    const summary = document.createElement('span');
+    const original = pending.original;
+    summary.textContent = String(original.title || original.name || original.content || '未命名记录');
+    const select = document.createElement('select');
+    pending.candidates.forEach((candidate) => {
+      const option = document.createElement('option');
+      option.value = candidate;
+      option.textContent = LIST_DEFS[candidate] ? Object.values(LIST_DEFS[candidate].cols)[2] || candidate : candidate;
+      select.appendChild(option);
+    });
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'add';
+    button.textContent = '归类并锁定';
+    button.addEventListener('click', () => {
+      if (classifyPendingRecord(state, pending.id, select.value as any)) {
+        renderAll();
+        showToast('已归类并锁定该记录');
+      }
+    });
+    row.append(summary, select, button);
+    list.appendChild(row);
+  });
+}
+
+/** 为标量字段补充锁定按钮。手工修改并离开字段后立即写入并锁定。 */
+function decorateScalarLocks(): void {
+  document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('[data-field]').forEach((el) => {
+    const path = el.dataset.field!;
+    const locked = !!state.fieldStates[path]?.locked;
+    el.disabled = locked;
+    const label = el.closest('label');
+    if (!label) return;
+    label.querySelector('.scalar-lock')?.remove();
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'scalar-lock';
+    btn.textContent = locked ? '🔒 解锁' : '🔓 未锁';
+    btn.addEventListener('click', () => {
+      if (locked) {
+        setProfileFieldLock(state, path, false);
+        el.disabled = false;
+        renderAll();
+        (document.querySelector(`[data-field="${path}"]`) as HTMLElement | null)?.focus();
+      } else if (setProfileFieldLock(state, path, true)) {
+        renderAll();
+      } else {
+        showToast('空值不能锁定');
+      }
+    });
+    label.appendChild(btn);
+    el.addEventListener('change', () => {
+      if (el.disabled) return;
+      const result = writeProfileValue(state, path, el.value, 'manual');
+      if (result.ok && el.value.trim()) renderAll();
+    }, { once: true });
+  });
+}
+
+function refreshBlockLocks(): void {
+  document.querySelectorAll<HTMLButtonElement>('[data-lock-block]').forEach((btn) => {
+    const key = btn.dataset.lockBlock!;
+    const locked = !!state.blockLocks[key];
+    btn.textContent = locked ? '🔒 解锁整表' : '🔓 锁定整表';
+    btn.classList.toggle('locked', locked);
+  });
+}
+
+function refreshMigrationBanner(): void {
+  const banner = document.getElementById('migrationBanner') as HTMLElement | null;
+  if (!banner) return;
+  const pending = state.pendingClassifications.length;
+  const migrated = !state.migration.confirmed;
+  banner.hidden = !pending && !migrated;
+  banner.textContent = pending
+    ? `旧档案已无损迁移；有 ${pending} 条科研记录类型不明确，已放入待分类且不会参与自动填表。旧版四表备份仍保留。`
+    : migrated ? '旧档案已迁移到八类原子表，旧版四表备份仍保留。' : '';
 }
 
 /** 常用关键信息缺失提醒：点条目直接跳到对应输入框 */
@@ -118,10 +270,13 @@ function refreshMissingBanner(): void {
 
 function collectToState(): void {
   document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('[data-field]').forEach((el) => {
-    setByPath(state, el.dataset.field!, el.value);
+    const path = el.dataset.field!;
+    if (String(getByPath(state, path) ?? '') === el.value) return;
+    writeProfileValue(state, path, el.value, 'manual');
   });
   for (const key of Object.keys(LIST_DEFS)) {
-    const items: Record<string, string>[] = [];
+    const previous = ((state as unknown as Record<string, Array<Record<string, any>>>)[key] || []);
+    const items: Array<Record<string, any>> = [];
     document.querySelectorAll<HTMLElement>(`[data-lpath^="${key}."]`).forEach((el) => {
       const m = (el.dataset.lpath || '').match(/^[^.]+\.(\d+)\.(.+)$/);
       if (!m) return;
@@ -129,7 +284,16 @@ function collectToState(): void {
       items[idx] = items[idx] || {};
       items[idx][m[2]] = (el as HTMLInputElement).value;
     });
-    (state as unknown as Record<string, Record<string, string>[]>)[key] = items;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i] || {};
+      const old = previous[i] || {};
+      const changed = Object.keys(LIST_DEFS[key].cols).some((col) => String(item[col] ?? '') !== String(old[col] ?? ''));
+      item.state = changed && canLockProfileRow(item)
+        ? { ...(old.state || createRowState('manual', `${key}|${i}|${JSON.stringify(item)}`)), locked: true, source: 'manual', updatedAt: new Date().toISOString(), confidence: 'verified' }
+        : old.state;
+      if (key === 'essays') item.charLimit = Number(item.charLimit || 0);
+    }
+    (state as unknown as Record<string, Array<Record<string, any>>>)[key] = items;
   }
 }
 
@@ -185,7 +349,7 @@ document.getElementById('importFile')!.addEventListener('change', (e) => {
 
 document.getElementById('genBtn')!.addEventListener('click', () => {
   if (!window.confirm('将用随机测试数据覆盖当前档案（姓名、学校等为占位内容，身份证号/电话为合法格式的假数据，仅用于验证工具效果）。确定继续吗？')) return;
-  state = generateTestProfile();
+  state = normalizeProfile(generateTestProfile());
   renderAll();
   save().then(() => showToast('已生成测试数据并保存：请到真实报名页面验证填充效果，确认后再替换为真实信息'));
 });
@@ -197,11 +361,21 @@ document.getElementById('resetBtn')!.addEventListener('click', () => {
   save().then(() => showToast('已清空并保存'));
 });
 
+document.getElementById('confirmMigrationBtn')!.addEventListener('click', () => {
+  if (state.pendingClassifications.length) {
+    showToast('仍有待分类记录，暂不能确认迁移');
+    return;
+  }
+  state.migration.confirmed = true;
+  renderAll();
+  void saveProfile(state).then(() => showToast('迁移结果已确认；旧版备份继续保留'));
+});
+
 document.querySelectorAll<HTMLButtonElement>('button[data-add]').forEach((btn) => {
   btn.addEventListener('click', () => {
     collectToState();
     const key = btn.dataset.add as string;
-    const arr = (state as unknown as Record<string, Record<string, string>[]>)[key];
+    const arr = (state as unknown as Record<string, Array<Record<string, any>>>)[key];
     arr.push({});
     renderList(key, arr);
   });
@@ -209,7 +383,26 @@ document.querySelectorAll<HTMLButtonElement>('button[data-add]').forEach((btn) =
 
 // 商店截图用：?tui-autotest=2 直接加载随机演示档案（不入库），便于对编辑器页面截图
 const autotest = /[?&]tui-autotest=2/.test(location.search);
-const boot = autotest ? Promise.resolve(generateTestProfile()) : loadProfile();
+document.querySelectorAll<HTMLButtonElement>('[data-lock-block]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    collectToState();
+    const key = btn.dataset.lockBlock!;
+    const arr = (state as unknown as Record<string, Array<Record<string, any>>>)[key] || [];
+    const next = !state.blockLocks[key];
+    if (next && !arr.some((row) => canLockProfileRow(row))) {
+      showToast('空表、非法日期或占位测试数据不能锁定');
+      return;
+    }
+    state.blockLocks[key] = next;
+    for (const row of arr) {
+      if (!canLockProfileRow(row)) continue;
+      row.state = { ...(row.state || createRowState('manual', `${key}|${JSON.stringify(row)}`)), locked: next, updatedAt: new Date().toISOString() };
+    }
+    renderAll();
+  });
+});
+
+const boot = autotest ? Promise.resolve(normalizeProfile(generateTestProfile())) : loadProfile();
 boot.then((p) => {
   state = p;
   renderAll();
