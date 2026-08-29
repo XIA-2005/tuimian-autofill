@@ -1,7 +1,7 @@
 // 安全填充器：兼容 React/Vue 受控组件（原生 setter + 事件派发），支持文本框/下拉/单选/文本域，
 // 日期值按输入框 placeholder 提示的格式自适应，长文本域由结构化列表合成。
 
-import { DetectedField, detectAllFields, detectField, FIELD_RULES, FieldRule, findPickerTrigger, isVisible, normalizeText } from './matcher';
+import { DetectedField, detectAllFields, detectComponentDropdownFields, detectField, FIELD_RULES, FieldRule, findPickerTrigger, isVisible, normalizeText } from './matcher';
 import { isRegionLike, regionCode6, regionFromIdCard, regionKeywords, regionMatchTokens, regionTreeTokens } from './regionutil';
 import { composeListText, Experience, FamilyMember, getByPath, Profile, Application } from './profile';
 import { matchAdapter } from './adapters';
@@ -11,7 +11,32 @@ import { pickSchool } from './school-picker-driver';
 import { pickMajor } from './major-picker-driver';
 import { pickComponentOption } from './component-select-drivers';
 import { withUnlocked } from './unlock';
-import { mainWorldJqueryClick } from './world-bridge';
+import { mainWorldJqxSelectLabel } from './world-bridge';
+import {
+  OWN_UI_SEL,
+  cellHasControl,
+  clickAttempt,
+  clickPageAction,
+  dataRowsOf,
+  docAlive,
+  DynamicTableSpec,
+  ExistingRowOutcome,
+  findAddButton,
+  isDoPostbackAction,
+  isPlaceholderRow,
+  logRowDecision,
+  OpenDialogInfo,
+  postbackJustFired,
+  rowFullyEmpty,
+  rowHasInput,
+  runDynamicTableFill,
+  TableFillCtx,
+  validDataRows,
+} from './dynamic-table';
+import { handleDialogAfterClick, sleep, visibleDialogRoots } from './dynamic-table';
+
+// 机器层与统一内核已收敛至 dynamic-table.ts；这里保持既有公开 API 的导出位置不变
+export { handleDialogAfterClick, sleep, visibleDialogRoots } from './dynamic-table';
 
 export interface FillItem {
   label: string;
@@ -19,6 +44,8 @@ export interface FillItem {
   status: 'filled' | 'profileEmpty' | 'noMatch' | 'failed' | 'skipped' | 'picker';
   reason?: string;
   valuePreview?: string;
+  /** 稳定问题码（core/error-codes.ts）：报告与漏填清单据此给出"用户该做什么" */
+  issueCode?: string;
   /** 对应页面控件（仅内存使用，跨消息传递时会被剥离） */
   el?: Element;
   /** 弹窗字段语义与可接受代码；用于学校/专业代码和名称的精确成对校验。 */
@@ -79,6 +106,42 @@ function setInputValue(el: HTMLInputElement | HTMLTextAreaElement, value: string
     el.dispatchEvent(new Event('blur', { bubbles: false }));
     el.dispatchEvent(new Event('focusout', { bubbles: true }));
   });
+}
+
+/**
+ * 功能：向 jqx 虚拟列表的过滤框输入查询词，并触发其键盘过滤处理器。
+ *
+ * 原理说明：广工大 jqxListBox 不监听普通 `change/blur`，而是在 `keyup` 后读取过滤框。
+ * 搜索阶段保持输入框焦点，不发送 Enter，避免误选当前第一项；最终选择仍由精确候选匹配完成。
+ */
+async function setJqxFilterValue(el: HTMLInputElement, value: string): Promise<void> {
+  const win = el.ownerDocument.defaultView;
+  const proto = win?.HTMLInputElement?.prototype || HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  el.focus();
+  const EventCtor = win?.Event || Event;
+  const KeyboardCtor = win?.KeyboardEvent || KeyboardEvent;
+  const InputCtor = win?.InputEvent || EventCtor;
+  // 先清空旧过滤条件，再逐字触发输入事件。jqx 内部保存了上次查询快照，一次性替换完整字符串时
+  // 某些版本不会进入过滤分支；逐字序列与真实键盘输入保持一致。
+  if (setter) setter.call(el, '');
+  else el.value = '';
+  el.dispatchEvent(new EventCtor('input', { bubbles: true }));
+  el.dispatchEvent(new KeyboardCtor('keyup', { key: 'Backspace', code: 'Backspace', keyCode: 8, bubbles: true }));
+  let prefix = '';
+  for (const char of value) {
+    prefix += char;
+    el.dispatchEvent(new KeyboardCtor('keydown', { key: char, code: 'Unidentified', keyCode: 229, bubbles: true }));
+    if (setter) setter.call(el, prefix);
+    else el.value = prefix;
+    try {
+      el.dispatchEvent(new InputCtor('input', { bubbles: true, data: char, inputType: 'insertText' } as InputEventInit));
+    } catch {
+      el.dispatchEvent(new EventCtor('input', { bubbles: true }));
+    }
+    el.dispatchEvent(new KeyboardCtor('keyup', { key: char, code: 'Unidentified', keyCode: 229, bubbles: true }));
+    await sleep(12);
+  }
 }
 
 /** 按 placeholder 提示把 2003-05-12 / 2025-06 这类值转成页面要求的格式 */
@@ -218,9 +281,87 @@ export function clearHighlights(doc: Document): void {
   });
 }
 
+/** 长文类字段才允许用档案 essay 自动填写；备注/推荐人信息等绝不拿个人陈述顶上 */
+const MANUAL_ESSAY_LABEL = /陈述|自述|研究计划|职业规划|申请理由|个人介绍|个人简介/;
+
+interface ManualEssay {
+  kind: string;
+  content: string;
+  field: string;
+}
+
+/** 功能：按标签语义匹配档案长文（essays 原子表）；语义不明确时仅在档案只有一条长文时兜底。 */
+function pickEssayForManual(profile: Profile, label: string): ManualEssay | null {
+  if (!MANUAL_ESSAY_LABEL.test(normalizeText(label))) return null;
+  const essays = profile.essays
+    .map((row, i) => ({ kind: row.kind || '', content: (row.content || '').trim(), field: `essays[${i}]` }))
+    .filter((row) => row.content);
+  if (!essays.length) return null;
+  const want = normalizeText(label);
+  const kindHit = essays.find((row) => row.kind && (want.includes(normalizeText(row.kind)) || normalizeText(row.kind).includes(want)));
+  return kindHit || (essays.length === 1 ? essays[0] : null);
+}
+
+/**
+ * 功能：读取页面给出的字数上限证据。优先级：maxlength 属性 > 邻近文案（"不超过/最多/限 N 字"）。
+ * 证据范围：控件属性 + 所在单元格/标签容器 + 同行文本（表格布局的上限说明常写在兄弟单元格里）。
+ * 没有可信证据返回 null——没有证据绝不猜上限，也绝不自动截断长文。
+ */
+function detectCharLimit(el: Element): number | null {
+  const html = el as HTMLInputElement | HTMLTextAreaElement;
+  const attr = html.getAttribute ? html.getAttribute('maxlength') : null;
+  if (attr && /^\d{1,5}$/.test(attr.trim()) && Number(attr) > 0) return Number(attr);
+  const scope = el.closest('td,th,label,li,p,dt,dd,.form-item,.form-group,.el-form-item,.layui-form-item');
+  const rowScope = el.closest('tr') || (scope ? scope.closest('tr') : null);
+  const text = normalizeText(
+    `${(html.getAttribute && html.getAttribute('placeholder')) || ''} ${(html.getAttribute && html.getAttribute('title')) || ''} ${scope ? scope.textContent : ''} ${rowScope ? rowScope.textContent : ''}`,
+  );
+  const m =
+    /(?:最多|不超过|限填?|以内|上限)[^\d]{0,4}(\d{2,5})\s*(?:个)?(?:汉字|字|字符)/.exec(text) ||
+    /(\d{2,5})\s*(?:个)?(?:字|字符)(?:以里|以内)/.exec(text);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * 功能：清除本页已填——只清空本扩展标记为 filled 的控件值（用户手填/半填内容不受影响），
+ * 并移除全部高亮标记。绝不触碰密码/验证码（从未标记）、未标记字段与服务器已保存内容。
+ */
+export function clearPageFill(doc: Document): number {
+  const marked = Array.from(doc.querySelectorAll<HTMLElement>('[data-tui="filled"]'));
+  let cleared = 0;
+  for (const el of marked) {
+    const tag = el.tagName;
+    if (tag === 'SELECT') {
+      const sel = el as HTMLSelectElement;
+      const reset = Array.from(sel.options).find((o) => !o.value || /请选择|----/.test(o.text || ''));
+      if (reset) {
+        pickOption(sel, reset.index);
+        cleared++;
+      }
+    } else if (tag === 'TEXTAREA') {
+      setInputValue(el as HTMLTextAreaElement, '');
+      cleared++;
+    } else if (tag === 'INPUT') {
+      const input = el as HTMLInputElement;
+      if (['checkbox', 'radio', 'submit', 'button', 'file', 'password'].includes(input.type)) continue;
+      setInputValue(input, '');
+      cleared++;
+    } else if (el.getAttribute('contenteditable') === 'true') {
+      el.textContent = '';
+      cleared++;
+    }
+    markEl(el, 'empty');
+  }
+  clearHighlights(doc);
+  return cleared;
+}
+
 /** 判断控件是否有"弹窗选择"行为：带"选择"触发按钮的输入框一律走弹窗（真实值常是隐藏编码/弹窗点选结果，直接注入文本会写坏代码列导致数据库截断） */
 function hasPopupBehavior(d: DetectedField): boolean {
   const el = d.el;
+  // 组件下拉（值隐藏域或组件本体）：一律走弹窗/组件点选，绝不直接注入文本
+  const widgetMark = (el as HTMLElement).getAttribute ? (el as HTMLElement).getAttribute('data-tui-widget') : null;
+  if (widgetMark === 'dropdown' || widgetMark === 'dropdown-value') return true;
   if (el.tagName !== 'INPUT') return false;
   const input = el as HTMLInputElement;
   const isChoice = ['radio', 'checkbox'].includes(input.type);
@@ -242,7 +383,14 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
   fillExperienceTables(profile, doc, handled, preItems, preStats);
   fillAwardTables(profile, doc, handled, preItems, preStats);
 
+  // 组件下拉（页面上没有原生 select 的 jqx/自定义组件，如 ehall gsapp 的性别/政治面貌）先识别：
+  // 它会把值载体（隐藏域/组件显示输入框）打上 data-tui-widget 标记，随后常规检测自动排除这些元素（消除 noMatch 噪音）
+  const widgetFields = detectComponentDropdownFields(doc, rules).filter((w) => !handled.has(w.el));
   const detected = detectAllFields(doc, rules).filter((d) => !handled.has(d.el));
+  for (const w of widgetFields) {
+    if (detected.some((d) => d.el === w.el)) continue;
+    detected.push(w);
+  }
   const items: FillItem[] = [...preItems];
   const stats: FillStats = { total: detected.length + preItems.length, filled: preStats.filled, skipped: 0, noMatch: 0, profileEmpty: preStats.profileEmpty, failed: 0, picker: 0 };
 
@@ -260,14 +408,33 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
     }
     if (!d.rule) {
       stats.noMatch++;
-      items.push({ label: d.label, field: null, status: 'noMatch', el: d.el });
+      items.push({ label: d.label, field: null, status: 'noMatch', issueCode: 'E1101', el: d.el });
       markEl(d.el, 'missing');
       continue;
     }
     if (d.rule.manual) {
-      // 人工长文类（个人陈述/自述/研究计划等）：无档案数据，标记跳过并提示人工撰写
+      // 人工长文类（个人陈述/自述/研究计划等）：页面给出可信字数上限、档案长文放得下才自动填写（绝不静默截断）
+      const essay = pickEssayForManual(profile, d.label);
+      const limit = detectCharLimit(d.el);
+      const content = essay?.content?.trim() || '';
+      if (essay && content && limit && content.length <= limit && fillControl(d, content)) {
+        stats.filled++;
+        items.push({
+          label: d.label,
+          field: essay.field,
+          status: 'filled',
+          reason: `已按页面上限 ${limit} 字自动填写（共 ${content.length} 字，未截断）`,
+          valuePreview: `${content.slice(0, 30)}…`,
+          el: d.el,
+        });
+        markEl(d.el, 'filled');
+        continue;
+      }
       stats.skipped++;
-      items.push({ label: d.label, field: d.rule.field, status: 'skipped', reason: d.rule.manual, el: d.el });
+      const reason = limit
+        ? `页面限 ${limit} 字${essay ? `，档案长文 ${content.length} 字超限` : '，档案中未找到匹配的长文'}：请人工粘贴`
+        : d.rule.manual;
+      items.push({ label: d.label, field: essay?.field || d.rule.field, status: 'skipped', reason, issueCode: 'E1206', el: d.el });
       markEl(d.el, 'missing');
       continue;
     }
@@ -282,7 +449,7 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
     }
     if (value === undefined || value === null || String(value).trim() === '') {
       stats.profileEmpty++;
-      items.push({ label: d.label, field: d.rule.field, status: 'profileEmpty', el: d.el });
+      items.push({ label: d.label, field: d.rule.field, status: 'profileEmpty', issueCode: 'E1102', el: d.el });
       markEl(d.el, 'empty');
       continue;
     }
@@ -366,7 +533,7 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
           : d.el.tagName === 'SELECT' && (d.el as HTMLSelectElement).options.length <= 1
           ? '下拉暂无选项（可能是联动下拉，请先选择上级字段后重试）'
           : '下拉/单选选项不匹配，请人工选择';
-      items.push({ label: d.label, field: d.rule.field, status: 'failed', reason, valuePreview: v, el: d.el });
+      items.push({ label: d.label, field: d.rule.field, status: 'failed', reason, valuePreview: v, issueCode: 'E1103', el: d.el });
       markEl(d.el, 'missing');
     }
   }
@@ -390,7 +557,7 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
             research: profile.research.map((r) => r.title).filter(Boolean),
           },
           items: items
-            .map((i) => ({ label: i.label, field: i.field, status: i.status, value: String(i.valuePreview || '').slice(0, 30), reason: i.reason || '' }))
+            .map((i) => ({ label: i.label, field: i.field, status: i.status, value: String(i.valuePreview || '').slice(0, 30), reason: i.reason || '', issue: i.issueCode || '' }))
             .slice(0, 80),
         }),
       );
@@ -533,540 +700,30 @@ export function findAchievementTable(doc: Document): AchievementTableInfo | null
   return selected || null;
 }
 
-/** 表格末列的图标型"新增"按钮（EasyUI 无文字 linkbutton，如 icon-search） */
-function findTableActionLink(table: HTMLElement): HTMLElement | null {
-  const rows = Array.from(table.querySelectorAll('tr'));
-  for (const row of rows) {
-    const cells = Array.from(row.cells);
-    if (!cells.length) continue;
-    const last = cells[cells.length - 1];
-    const cands = Array.from(last.querySelectorAll<HTMLElement>('a, button, span, i')).filter((c) => {
-      const cls = (c.getAttribute('class') || '').toLowerCase();
-      if (/delete|remove|del|close/.test(cls)) return false;
-      const t = (c.textContent || '').trim();
-      if (/×|删除|移除|清空/.test(t)) return false;
-      if (c.tagName === 'SPAN' || c.tagName === 'I') return /icon|btn|add/.test(cls);
-      return true;
-    });
-    if (cands.length) return cands[0];
-  }
-  return null;
+/** 成果行标题内容（输入框优先，其次隐藏输入框，服务器渲染的纯文本展示行退回单元格文本，用于重复检测） */
+function achievementRowTitle(row: HTMLTableRowElement, titleIdx: number): string {
+  if (titleIdx < 0 || !row.cells[titleIdx]) return '';
+  const cell = row.cells[titleIdx];
+  const el = cell.querySelector('input:not([type="hidden"])') as HTMLInputElement | null;
+  if (el) return el.value.trim();
+  const hidden = cell.querySelector('input') as HTMLInputElement | null;
+  if (hidden && hidden.value.trim()) return hidden.value.trim();
+  return (cell.textContent || '').trim();
 }
 
-/** 找页面的「保存」按钮（南理工式：保存后服务器才多出一行；排除"提交"类） */
-function findSaveButton(table: HTMLElement): HTMLElement | null {
-  const search = (scope: HTMLElement | null): HTMLElement | null => {
-    if (!scope) return null;
-    const cands = Array.from(scope.querySelectorAll<HTMLElement>('a, button, input[type="submit"], input[type="button"], span'));
-    for (const c of cands) {
-      if (!isVisible(c)) continue;
-      if (c.closest(OWN_UI_SEL)) continue; // 扩展自身 UI 不是页面按钮
-      const label = normalizeText(c.textContent || c.getAttribute('value') || '');
-      if (!/^保存$|^保存草稿$|^暂存$/.test(label)) continue;
-      const t = c.closest('table');
-      if (t && t !== table) continue; // 不点其他表格里的保存
-      return c;
-    }
-    return null;
-  };
-  return search(table.parentElement) || search(document.body);
+function stripJournalPrefix(s: string): string {
+  return s.replace(/^发表刊物(?:或出版社)?[：:]?\s*/, '');
 }
 
-/** 页面文档是否仍为当前活动文档（整页回发后旧文档会被替换，继续操作它是徒劳甚至误伤新页面） */
-function docAlive(doc: Document): boolean {
-  try {
-    const w = doc.defaultView;
-    return !!w && w.document === doc;
-  } catch {
-    return false;
-  }
-}
-
-const pbWired = new WeakSet<Document>();
-
-/** 监听页面卸载：整页回发/跳转时落盘时间戳，供旧文档里的循环及时刹车，避免对回发中的页面连点 */
-function wirePostbackSignal(doc: Document): void {
-  if (pbWired.has(doc)) return;
-  pbWired.add(doc);
-  try {
-    const w = doc.defaultView as Window | null;
-    w?.addEventListener('pagehide', () => {
-      try {
-        w.sessionStorage.setItem('tui-pb-fired', JSON.stringify({ at: Date.now() }));
-      } catch {
-        // 忽略
-      }
-    });
-  } catch {
-    // 忽略
-  }
-}
-
-/** 最近（默认 8 秒内）是否发生过整页回发/跳转 */
-function postbackJustFired(doc: Document, within = 8000): boolean {
-  try {
-    const raw = (doc.defaultView as Window | null)?.sessionStorage.getItem('tui-pb-fired');
-    if (!raw) return false;
-    const at = Number(JSON.parse(raw).at) || 0;
-    return Date.now() - at < within;
-  } catch {
-    return false;
-  }
-}
-
-/** 解析 javascript:DoPostback(...) 链接的前两个参数（事件目标 / 事件参数） */
-function parsePostbackArgs(href: string): { target: string; arg: string } | null {
-  const m = /^javascript:\s*[A-Za-z_$][\w$]*\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])(.*?)\3/i.exec(href);
-  if (!m) return null;
-  return { target: m[2] || '', arg: m[4] || '' };
-}
-
-/** 标准 ASP.NET 整页回发：设置 __EVENTTARGET/__EVENTARGUMENT 后提交表单（与页面自带 __doPostBack 完全等价） */
-function fireStandardPostback(doc: Document, anchor: HTMLElement, target: string, arg: string): boolean {
-  const form = anchor.closest('form') as HTMLFormElement | null;
-  if (!form) return false;
-  const setHidden = (name: string, value: string) => {
-    let el = form.querySelector(`input[name="${name}"]`) as HTMLInputElement | null;
-    if (!el) {
-      el = doc.createElement('input');
-      el.type = 'hidden';
-      el.name = name;
-      form.appendChild(el);
-    }
-    el.value = value;
-  };
-  setHidden('__EVENTTARGET', target);
-  setHidden('__EVENTARGUMENT', arg);
-  // 兼容自定义回发包装：部分站点用 eventTarget/eventArgument 自定义隐藏域替代标准域
-  setHidden('eventTarget', target);
-  setHidden('eventArgument', arg);
-  form.submit();
-  return true;
-}
-
-/** 按钮是否为 javascript:DoPostback 型（服务器回发保存，如北邮行内「添加」）；纯客户端加行按钮不算 */
-function isDoPostbackAction(c: HTMLElement): boolean {
-  const href = (c.getAttribute('href') || '').trim();
-  return /^javascript:/i.test(href) && /dopostback|__doPostBack/i.test(href);
-}
-
-/**
- * 是否是语义明确的“新增空行”动作。仅有“添加/保存”的行内按钮可能会把当前行落库，
- * 在安全模式下不能把它误当作新增空行。
- */
-function isExplicitAddRowAction(c: HTMLElement): boolean {
-  const label = normalizeText(`${c.textContent || ''} ${c.getAttribute('value') || ''} ${c.getAttribute('title') || ''}`);
-  const identity = `${c.id || ''} ${c.getAttribute('name') || ''}`;
-  return /新增一行|添加一行|增加一行|插入一行|再添一行/.test(label) || /addnewrow|addrow|addline/i.test(identity);
-}
-
-/** 调用 beforeAdd 并取得本轮点击序号（点击方式按序号轮换：0 标准回发 / 1 主世界 location 求值 / 2 原生点击） */
-function clickAttempt(beforeAdd: ((i: number) => void | number) | undefined, i: number, fallback: number): number {
-  const r = beforeAdd ? beforeAdd(i) : undefined;
-  return typeof r === 'number' ? r : fallback;
-}
-
-/**
- * 点击"添加/保存"类动作。javascript:DoPostback 链接按点击序号轮换三种方式：
- * 0 = 标准整页回发（等价 __doPostBack，北邮等自定义 WebForm_DoPostback 包装的页面最可靠）；
- * 1 = 主世界 location 求值执行原 href（void 包裹不导航，CSP 拦不住 location 求值）；
- * 2 = 原生 click。每轮先落盘主世界函数形态探测，失败时下轮自动换方式重试。
- */
-export async function clickPageAction(c: HTMLElement, attempt = 0): Promise<void> {
-  const doc = c.ownerDocument || document;
-  if (!docAlive(doc)) return; // 页面已整页刷新：旧文档不再有效，交给断点续填接管
-  wirePostbackSignal(doc);
-  const href = (c.getAttribute('href') || '').trim();
-  if (/^javascript:/i.test(href) && /dopostback|__doPostBack/i.test(href)) {
-    const args = parsePostbackArgs(href);
-    const target = args?.target || '';
-    const strategy = attempt % 3;
-    // 诊断：注入 <script> 会被 CSP 拦截，改用 location 求值写回主世界函数形态（javascript: URL 与页面自身链接同等待遇）
-    try {
-      const w = doc.defaultView as Window | null;
-      if (w) {
-        w.location.href = `javascript:void(document.documentElement.setAttribute('data-tui-wfp',(function(){try{return typeof window.WebForm_DoPostback==='function'?String(window.WebForm_DoPostback).slice(0,300):(typeof window.WebForm_DoPostBack==='function'?'STD-CAP-B-ONLY':'MISSING')}catch(e){return 'ERR:'+e.message}})()))`;
-        await sleep(120);
-      }
-    } catch {
-      // 忽略
-    }
-    const probe = doc.documentElement.getAttribute('data-tui-wfp') || 'NO-ATTR';
-    // fired：本轮实际采用的触发方式（std=标准整页回发 / void=主世界 location 求值 / click=原生点击）
-    const fired = strategy === 0 ? 'std' : strategy === 1 ? 'void' : 'click';
-    try {
-      const store = (doc.defaultView as Window | null)?.sessionStorage;
-      if (store) {
-        const arr = (() => {
-          try {
-            return JSON.parse(store.getItem('tui-wfp-probe') || '[]') as unknown[];
-          } catch {
-            return [] as unknown[];
-          }
-        })();
-        arr.push({ at: Date.now(), strategy, target: target.slice(0, 70), probe: probe.slice(0, 320), fired });
-        store.setItem('tui-wfp-probe', JSON.stringify(arr.slice(-12)));
-      }
-    } catch {
-      // 忽略
-    }
-    if (strategy === 0) {
-      if (fireStandardPostback(doc, c, target, args?.arg || '')) return; // 整页回发：页面即将刷新，断点续填接管
-    } else if (strategy === 1) {
-      // 主世界执行回发：location 求值（void 包裹保证不导航）；javascript: 导航不受 CSP 限制
-      try {
-        const w = doc.defaultView as Window | null;
-        if (w) {
-          w.location.href = `javascript:void(${href.replace(/^javascript:/i, '')})`;
-          return;
-        }
-      } catch {
-        // 忽略，回退原生点击
-      }
-    }
-    try {
-      c.click();
-    } catch {
-      // 忽略
-    }
-    return;
-  }
-  // 非 DoPostback 控件按轮次选择一种点击策略。不能在同一轮连续执行原生 click 和
-  // jQuery trigger，否则两个策略都生效时会一次新增两行。
-  const elInfo = {
-    tag: c.tagName.toLowerCase(),
-    id: c.getAttribute('id') || '',
-    cls: (c.getAttribute('class') || '').slice(0, 40),
-    text: (c.textContent || (c as HTMLInputElement).value || '').replace(/\s+/g, ' ').trim().slice(0, 20),
-    disabled: !!(c as HTMLButtonElement).disabled || c.getAttribute('aria-disabled') === 'true',
-    hasOnclick: typeof ((c as HTMLElement & { onclick?: unknown }).onclick) === 'function',
-  };
-  if (elInfo.disabled) {
-    logClickDebug(doc, { ...elInfo, fired: 'blocked-disabled' });
-    return;
-  }
-  const w2 = doc.defaultView as Window | null;
-  const strategy = attempt % 3;
-  const fireEv = (type: string): void => {
-    try {
-      const ev = new MouseEvent(type, { bubbles: true, cancelable: true, view: w2 || undefined });
-      c.dispatchEvent(ev);
-    } catch {
-      // 忽略
-    }
-  };
-  try {
-    c.scrollIntoView({ block: 'center', inline: 'nearest' });
-  } catch {
-    // 忽略
-  }
-  let fired = strategy === 0 ? 'native-sequence' : strategy === 1 ? 'jquery-click' : 'dispatch-click';
-  try {
-    if (strategy === 0) {
-      // 模拟一次完整的用户点击序列；最终只触发一次 click，不再叠加 jQuery trigger。
-      fireEv('pointerdown');
-      fireEv('mousedown');
-      try {
-        c.focus();
-      } catch {
-        // 忽略
-      }
-      fireEv('pointerup');
-      fireEv('mouseup');
-      c.click();
-    } else if (strategy === 1 && w2) {
-      // 主世界 jQuery 触发兜底：优先走主世界桥（DOM 属性通道，无导航副作用）；桥不可用时退回 location 求值。
-      const bridged = await mainWorldJqueryClick(doc, c);
-      if (!bridged) {
-        const sel = JSON.stringify(cssPathOf(c));
-        w2.location.href = `javascript:void((function(){try{var j=window.jQuery;if(j&&j.fn){var el=document.querySelector(${sel});if(el&&!el.disabled){j(el).trigger('click');}}}catch(e){}})())`;
-      }
-    } else {
-      fireEv('click');
-    }
-  } catch {
-    fired += '-error';
-  }
-  logClickDebug(doc, { ...elInfo, fired });
-}
-
-/** 点击调试：记录被点元素签名与触发策略，供"点了没反应"类问题定位 */
-function logClickDebug(doc: Document, entry: Record<string, unknown>): void {
-  try {
-    const store = (doc.defaultView as Window | null)?.sessionStorage;
-    if (!store) return;
-    const arr = (() => {
-      try {
-        return JSON.parse(store.getItem('tui-click-debug') || '[]') as unknown[];
-      } catch {
-        return [] as unknown[];
-      }
-    })();
-    arr.push({ at: Date.now(), ...entry });
-    store.setItem('tui-click-debug', JSON.stringify(arr.slice(-20)));
-  } catch {
-    // 忽略
-  }
-}
-
-/** 元素 CSS 路径（供主世界脚本重新定位元素） */
-function cssPathOf(el: HTMLElement): string {
-  if (el.id) return `#${el.id}`;
-  const parts: string[] = [];
-  let cur: HTMLElement | null = el;
-  while (cur && cur !== (cur.ownerDocument?.documentElement || null) && parts.length < 6) {
-    let part = cur.tagName.toLowerCase();
-    if (cur.className && typeof cur.className === 'string') {
-      const cls = cur.className.trim().split(/\s+/).slice(0, 2).join('.');
-      if (cls) part += `.${cls}`;
-    }
-    const parent: HTMLElement | null = cur.parentElement;
-    if (parent) {
-      const idx = Array.from(parent.children).indexOf(cur);
-      if (idx >= 0) part += `:nth-child(${idx + 1})`;
-    }
-    parts.unshift(part);
-    cur = parent;
-  }
-  return parts.join(' > ');
-}
-
-/**
- * 点击加行/保存后等待行数增长：短轮询（东华等客户端 JS 加行即时生效，行一出现就继续，不再固定等 2.5 秒）；
- * 页面整页回发（doc 失效）→ 返回 false 交给断点续填；上限内未增长 → 返回 false（外层停止连点）。
- */
-async function waitForRowGrowth(
-  doc: Document,
-  findTable: (d: Document) => { table: HTMLTableElement } | null,
-  rowsBefore: number,
-  capMs = 3000,
-): Promise<boolean> {
-  const t0 = Date.now();
-  while (Date.now() - t0 < capMs) {
-    await sleep(120);
-    if (!docAlive(doc)) return false; // 整页回发已刷新：断点续填接管
-    const info = findTable(doc);
-    if (!info) return false;
-    if (validDataRows(info.table).length > rowsBefore) return true;
-  }
-  return false;
-}
-
-/** 同一页、同一按钮的有效点击策略短期记忆；不跨 Document/iframe，不保存档案内容。 */
-const addRowStrategyCache = new WeakMap<Document, Map<string, number>>();
-
-function addRowButtonKey(btn: HTMLElement): string {
-  const text = normalizeText(`${btn.textContent || ''} ${btn.getAttribute('value') || ''}`).slice(0, 30);
-  const table = btn.closest('table');
-  const header = table?.rows[0] ? Array.from(table.rows[0].cells).map((cell) => normalizeText(cell.textContent || '')).join('|').slice(0, 80) : '';
-  return `${btn.tagName}|${btn.id}|${btn.getAttribute('name') || ''}|${(btn.className || '').toString().slice(0, 50)}|${text}|${header}`;
-}
-
-/**
- * 加行点击 + 行数验证：单次点击（点击策略按全局点击序号轮换、跨轮升级）→ 短轮询等待行数增长。
- * 不在同一轮连点多种策略：服务器加行可能延迟数秒，未验证就连点会造成一次尝试多行。
- * 同一页同一按钮一旦成功，后续优先复用成功策略；页面重建后 WeakMap 自动失效。
- */
-export async function clickAddRowVerified(
-  doc: Document,
-  btn: HTMLElement,
-  findTable: (d: Document) => { table: HTMLTableElement } | null,
-  rowsBefore: number,
-  beforeAdd?: (i: number) => void | number,
-  entryIndex = 0,
-  fallbackStrategy = 0,
-): Promise<boolean> {
-  if (!docAlive(doc)) return false;
-  const key = addRowButtonKey(btn);
-  const cache = addRowStrategyCache.get(doc) || new Map<string, number>();
-  addRowStrategyCache.set(doc, cache);
-  const remembered = cache.get(key);
-  const callbackStrategy = beforeAdd?.(entryIndex);
-  const strategy = remembered ?? (typeof callbackStrategy === 'number' ? callbackStrategy : fallbackStrategy);
-  await clickPageAction(btn, strategy);
-  const grown = await waitForRowGrowth(doc, findTable, rowsBefore);
-  if (grown) {
-    cache.set(key, strategy);
-    return true;
-  }
-  if (remembered !== undefined) cache.delete(key);
-  return false;
-}
-
-/** “已达最大行数”类系统弹窗/提示文案（巨能填 known_table_row_limits 同款关键词族） */
-const ROW_LIMIT_TEXT =
-  /(?:超过|超出|达到|已达)(?:系统)?(?:最大|限定)?(?:记录数|行数|条数)|(?:记录数|行数|条数)(?:已)?(?:达|到)(?:了)?(?:最大|上限)|不能超过\s*\d+|最多(?:只能)?(?:添加|填写|录入)?\s*\d+\s*(?:条|行|项)/;
-const ROW_LIMIT_DIALOG_SEL =
-  '.layui-layer, .ui-dialog, .artdialog, [role="dialog"], [class*="dialog" i], [class*="modal" i], [class*="popup" i], [class*="alert" i], [class*="toast" i]';
-
-/**
- * 功能：检测“已达最大行数”类阻断（系统弹窗可见文案）。命中返回脱敏原因文本，未命中返回 null。
- * 巨能填在行数不增长时先查此类弹窗再决定是否重试；我们也据此停止连点并如实告知用户。
- */
-export function detectRowLimitBlocked(doc: Document): string | null {
-  try {
-    for (const el of Array.from(doc.querySelectorAll<HTMLElement>(ROW_LIMIT_DIALOG_SEL))) {
-      if (!isVisible(el)) continue;
-      const t = normalizeText(el.textContent || '');
-      if (!t || t.length > 200) continue;
-      if (ROW_LIMIT_TEXT.test(t)) return `系统提示行数上限：${t.slice(0, 80)}`;
-    }
-  } catch {
-    // 忽略
-  }
-  return null;
-}
-
-/** 动态表逐条决策诊断：每条记录的填写/跳过/停止决策落盘（不含档案内容），字段报告可直接定位停在哪一条。 */
-export function logRowDecision(doc: Document, entry: Record<string, unknown>): void {
-  try {
-    const store = (doc.defaultView as Window | null)?.sessionStorage;
-    if (!store) return;
-    const arr = (() => {
-      try {
-        return JSON.parse(store.getItem('tui-row-decision') || '[]') as unknown[];
-      } catch {
-        return [] as unknown[];
-      }
-    })();
-    arr.push({ at: Date.now(), ...entry });
-    store.setItem('tui-row-decision', JSON.stringify(arr.slice(-30)));
-  } catch {
-    // 忽略
-  }
-}
-
-// ===================== 弹窗式加行：误开检测与差量填写 =====================
-// 巨能填厦大协议同款安全规则：点击"新增"后若打开的是"修改/编辑"弹窗，绝不能在里面填写——
-// 那会把已有行覆盖掉。只承认明确的新增证据（标题/iframe 地址/隐藏操作字段），可疑一律中止并关闭。
-
-export interface OpenDialogInfo {
-  root: HTMLElement;
-  /** 弹窗内嵌 iframe 的文档（iframe 式弹窗） */
-  innerDoc: Document | null;
-  kind: 'add' | 'edit' | 'unknown';
-  confirmBtn: HTMLElement | null;
-}
-
-const DIALOG_ROOT_SEL =
-  '.layui-layer, .bh-dialog, [role="dialog"], .emap-dialog, .jqx-window, .modal, .bh-modal, [class*="dialog" i], [class*="modal" i], [class*="window" i], [class*="layer" i]';
-
-/** 功能：收集当前可见的弹窗根节点（供点击前后对比，归责"这次点击打开了哪个弹窗"）。只保留最外层容器。 */
-export function visibleDialogRoots(doc: Document): HTMLElement[] {
-  try {
-    return Array.from(doc.querySelectorAll<HTMLElement>(DIALOG_ROOT_SEL)).filter((root) => {
-      if (!isVisible(root)) return false;
-      // close 图标等内层元素同 class 命中时不算弹窗：只有外层容器参与归责
-      return !root.parentElement?.closest(DIALOG_ROOT_SEL);
-    });
-  } catch {
-    return [];
-  }
-}
-
-function sameRootSet(a: HTMLElement[], b: HTMLElement[]): boolean {
-  if (a.length !== b.length) return false;
-  const set = new Set(a);
-  return b.every((root) => set.has(root));
-}
-
-function dialogInnerText(scope: HTMLElement | Document): string {
-  const root = scope instanceof Document ? (scope.body || scope.documentElement) : scope;
-  return normalizeText(root?.textContent || '');
-}
-
-/** 功能：把点击后新出现的弹窗分类为 新增/编辑/未知。编辑证据：标题"修改/编辑"、iframe 地址含 change/edit、隐藏 act 字段为 edit。 */
-function classifyDialog(root: HTMLElement): OpenDialogInfo {
-  let innerDoc: Document | null = null;
-  const frame = root.querySelector('iframe');
-  if (frame) {
-    try {
-      innerDoc = frame.contentDocument || null;
-    } catch {
-      innerDoc = null; // 跨域弹窗：只能靠外层证据判断
-    }
-  }
-  let kind: OpenDialogInfo['kind'] = 'unknown';
-  const src = (frame?.getAttribute('src') || '').toLowerCase();
-  if (/change|edit|modify|update/.test(src)) kind = 'edit';
-  else if (/add|create|append|new/.test(src)) kind = 'add';
-  if (kind === 'unknown' && innerDoc) {
-    const ops = Array.from(innerDoc.querySelectorAll<HTMLInputElement>('input[type="hidden"]')).filter((el) =>
-      /^(act|op|action|mode|oper|type|do)$/i.test(`${el.name} ${el.id}`),
-    );
-    if (ops.some((el) => /edit|change|update|modify/i.test(el.value))) kind = 'edit';
-    else if (ops.some((el) => /add|insert|new|create/i.test(el.value))) kind = 'add';
-  }
-  if (kind === 'unknown') {
-    const title = normalizeText(root.querySelector('.layui-layer-title,.modal-title,[class*="title" i],h1,h2,h3')?.textContent || '');
-    if (/修改|编辑|变更|更改/.test(title)) kind = 'edit';
-    else if (/新增|添加|增加|新建|录入/.test(title)) kind = 'add';
-  }
-  if (kind === 'unknown' && innerDoc) {
-    const text = dialogInnerText(innerDoc).slice(0, 400);
-    if (/^修改|编辑信息|修改记录/.test(text)) kind = 'edit';
-    else if (/^新增|添加记录|添加信息/.test(text)) kind = 'add';
-  }
-  return { root, innerDoc, kind, confirmBtn: null };
-}
-
-/** 功能：温和关闭弹窗——只点关闭/取消类控件，绝不点"确定/保存"（编辑弹窗里点确定会提交覆盖）。 */
-function closeDialogSoft(root: HTMLElement): void {
-  const closer = Array.from(root.querySelectorAll<HTMLElement>('.layui-layer-close, [class*="close" i], a, button, span, i')).find((el) => {
-    if (!isVisible(el) || el.closest(OWN_UI_SEL)) return false;
-    const text = normalizeText(`${el.textContent || ''} ${el.getAttribute('title') || ''}`);
-    const cls = (el.className || '').toString();
-    if (/^(取消|关闭|返回|收起|放弃)$/.test(text)) return true;
-    return /close|cancel/i.test(cls) && !/确定|保存|提交/.test(text);
-  });
-  if (closer) {
-    try {
-      closer.click();
-    } catch {
-      // 忽略
-    }
-    return;
-  }
-  // 无关闭控件：派发 Escape（多数弹窗组件支持 Esc 关闭），仍不碰确定/保存
-  try {
-    root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
-    root.ownerDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
-  } catch {
-    // 忽略
-  }
-}
-
-/**
- * 功能：加行点击未带来行增长时的弹窗归责处理。
- * 原理：只处理"本次点击新出现"的弹窗（避免误关选择器弹窗）；编辑/未知弹窗立即温和关闭并中止本条；
- * 新增弹窗且调用方提供填写回调时执行弹窗内填写并确认。返回是否已消化本次点击（filled=true 视为成功）。
- */
-export async function handleDialogAfterClick(
-  doc: Document,
-  beforeRoots: HTMLElement[],
-  kindLabel: string,
-  entryIndex: number,
-  fillAdd?: (dialog: OpenDialogInfo) => Promise<boolean>,
-): Promise<'filled' | 'closed-edit' | 'closed-new' | 'left-open' | 'none'> {
-  const after = visibleDialogRoots(doc);
-  if (sameRootSet(beforeRoots, after)) return 'none';
-  const fresh = after.filter((root) => !beforeRoots.includes(root));
-  for (const root of fresh) {
-    const info = classifyDialog(root);
-    if (info.kind === 'add' && fillAdd) {
-      if (await fillAdd(info)) return 'filled';
-    }
-    closeDialogSoft(root);
-    logRowDecision(doc, { kind: kindLabel, index: entryIndex, decision: info.kind === 'edit' ? 'edit-dialog-aborted' : 'new-dialog-unsupported' });
-    return info.kind === 'edit' ? 'closed-edit' : 'closed-new';
-  }
-  return 'left-open';
+function toMonthStart(s: string): string {
+  const m = /^(\d{4})[-/.](\d{1,2})/.exec((s || '').trim());
+  return m ? `${m[1]}-${m[2].padStart(2, '0')}` : (s || '').trim();
 }
 
 /** 功能：在"新增"弹窗内按语义映射填写学术成果字段并确认，行真实增长才算成功。 */
 async function fillAchievementDialog(doc: Document, dialog: OpenDialogInfo, entry: { title: string; date: string; role: string; description: string }): Promise<boolean> {
-  const scope: HTMLElement | Document = dialog.innerDoc || dialog.root;
-  const rootEl = scope instanceof Document ? (scope.body || scope.documentElement) : scope;
+  // 不用 `instanceof Document`：测试/无 DOM 环境未注入 Document 构造器，按 innerDoc 是否存在区分即可
+  const rootEl = dialog.innerDoc ? (dialog.innerDoc.body || dialog.innerDoc.documentElement) : dialog.root;
   if (!rootEl) return false;
   const inputs = Array.from(rootEl.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input:not([type="hidden"]), textarea')).filter((el) => isVisible(el) && !el.readOnly && !el.disabled);
   const semanticOf = (el: HTMLInputElement | HTMLTextAreaElement): string => {
@@ -1086,7 +743,9 @@ async function fillAchievementDialog(doc: Document, dialog: OpenDialogInfo, entr
   const trySet = (el: HTMLInputElement | HTMLTextAreaElement, val: string, semantic: RegExp): boolean => {
     if (!val) return false;
     const hit = inputs.find((cand) => cand !== titleInput && semantic.test(semanticOf(cand)));
-    if (hit && !hit.value.trim()) {
+    // 直接覆盖语义命中的字段：弹窗是本扩展刚点击"新增"打开的，字段里的旧值要么为空、
+    // 要么是上一条确认后残留的内容（弹窗复用时不清空），照抄会污染第二条记录
+    if (hit && normalizeText(hit.value) !== normalizeText(val)) {
       setInputValue(hit, val);
       return true;
     }
@@ -1094,11 +753,7 @@ async function fillAchievementDialog(doc: Document, dialog: OpenDialogInfo, entr
   };
   setInputValue(titleInput, entry.title);
   if (!titleInput.value.trim() || normalizeText(titleInput.value) !== normalizeText(entry.title)) return false; // 弹窗写入被组件拒绝：不确认，交给人工
-  const monthStart = (s: string): string => {
-    const m = /^(\d{4})[-/.](\d{1,2})/.exec((s || '').trim());
-    return m ? `${m[1]}-${m[2].padStart(2, '0')}` : (s || '').trim();
-  };
-  trySet(titleInput, monthStart(entry.date), /时间|日期|年月/);
+  trySet(titleInput, toMonthStart(entry.date), /时间|日期|年月/);
   trySet(titleInput, entry.description || '', /刊物|出版社|期刊|来源|出处/);
   trySet(titleInput, entry.role || '', /排名|位次|排序/);
   const confirm = Array.from(rootEl.querySelectorAll<HTMLElement>('a,button,input[type="button"],input[type="submit"],span')).find((el) => {
@@ -1122,97 +777,6 @@ async function fillAchievementDialog(doc: Document, dialog: OpenDialogInfo, entr
   return false;
 }
 
-/** 扩展自身 UI 容器：查找页面按钮时绝不选中（防"正在自动加行"等横幅文字被当按钮） */
-const OWN_UI_SEL = '#tui-panel, #tui-guide-hint, #tui-check-report, #tui-schools, #tui-autotest-result, [class*="tui-banner"], [class*="tui-panel"]';
-
-/** 加行按钮查找诊断：记录被跳过的候选（disabled/其他表格/扩展自身 UI）——"点了没反应"类问题定位用 */
-function logAddSkip(c: HTMLElement, why: string): void {
-  try {
-    const doc = c.ownerDocument || document;
-    const store = (doc.defaultView as Window | null)?.sessionStorage;
-    if (!store) return;
-    const arr = (() => {
-      try {
-        return JSON.parse(store.getItem('tui-addbtn-debug') || '[]') as unknown[];
-      } catch {
-        return [] as unknown[];
-      }
-    })();
-    arr.push({
-      at: Date.now(),
-      why,
-      tag: c.tagName.toLowerCase(),
-      id: c.getAttribute('id') || '',
-      cls: (c.getAttribute('class') || '').slice(0, 40),
-      text: (c.textContent || (c as HTMLInputElement).value || '').replace(/\s+/g, ' ').trim().slice(0, 20),
-      disabled: !!(c as HTMLButtonElement).disabled,
-    });
-    store.setItem('tui-addbtn-debug', JSON.stringify(arr.slice(-16)));
-  } catch {
-    // 忽略
-  }
-}
-
-/** 找"新增/添加一行"按钮：文字按钮 → 表格内图标按钮 → 父容器（排除其他表格）→ 页面全局（排除其他表格）；withinRow 限定行内（北邮式逐行「添加」） */
-function findAddButton(table: HTMLElement, withinRow?: HTMLTableRowElement): HTMLElement | null {
-  const isMatch = (c: HTMLElement): boolean => {
-    const label = normalizeText(`${c.textContent || ''} ${c.getAttribute('value') || ''} ${c.getAttribute('alt') || ''} ${c.getAttribute('title') || ''}`);
-    // 只用明确的加行措辞（"自动加行"这类进度文案不是按钮）
-    if (/新增一行|添加一行|增加一行|插入一行|新增|添加|增加|插入/.test(label)) return true;
-    const cls = `${c.getAttribute('class') || ''} ${c.getAttribute('id') || ''} ${c.getAttribute('name') || ''}`.toLowerCase();
-    if (/(^|[-_])add([-_]|$)|btnadd|addbtn|addrow|addline|append|insert/i.test(cls)) return true;
-    const js = `${c.getAttribute('onclick') || ''} ${c.getAttribute('href') || ''}`;
-    if (/dopostback|__doPostBack/i.test(js) && /add|insert|append|newrow/i.test(js)) return true;
-    return false;
-  };
-  const search = (scope: HTMLElement | null, excludeOtherTables: boolean): HTMLElement | null => {
-    if (!scope) return null;
-    const cands = Array.from(
-      scope.querySelectorAll<HTMLElement>('button, a, span, i, div[role="button"], input[type="button"], input[type="submit"], input[type="image"]'),
-    );
-    let best: HTMLElement | null = null;
-    let bestScore = -1;
-    for (const c of cands) {
-      if (!isVisible(c)) continue;
-      if (!isMatch(c)) continue;
-      if (c.closest(OWN_UI_SEL)) {
-        logAddSkip(c, 'own-ui');
-        continue; // 扩展自己的横幅/面板绝不是页面按钮
-      }
-      if ((c as HTMLButtonElement).disabled || c.getAttribute('aria-disabled') === 'true') {
-        logAddSkip(c, 'disabled');
-        continue; // 禁用按钮点了也没反应
-      }
-      if (withinRow && c.closest('tr') !== withinRow) continue; // 只点本行的「添加」
-      if (excludeOtherTables) {
-        const t = c.closest('table');
-        // 只排除"无关表"里的按钮；若网格嵌套在外层布局表内（东华式：按钮在外层表、网格在内层表），
-        // 外层表是目标表的祖先 → 其按钮是合法的加行按钮（巨能填全局兜底同款思路）
-        if (t && t !== table && !t.contains(table)) {
-          logAddSkip(c, 'other-table');
-          continue;
-        }
-      }
-      // 多候选打分：真实按钮 > 链接/输入 > 装饰性 span/div；带内联 onclick、class 含 add 的加分（避免点到无处理器的文本节点）
-      const tag = c.tagName.toLowerCase();
-      let s = tag === 'button' ? 4 : tag === 'a' || tag === 'input' ? 3 : 1;
-      if (typeof ((c as HTMLElement & { onclick?: unknown }).onclick) === 'function') s += 2;
-      if (/(^|[-_])add([-_]|$)|btnadd|addbtn|addrow|addline|append|insert/i.test((c.getAttribute('class') || '').toLowerCase())) s += 1;
-      if (s > bestScore) {
-        best = c;
-        bestScore = s;
-      }
-    }
-    return best;
-  };
-  if (withinRow) return search(withinRow, false);
-  return search(table, false) || findTableActionLink(table) || search(table.parentElement, true) || search(document.body, true);
-}
-
-function dataRowsOf(table: HTMLTableElement): HTMLTableRowElement[] {
-  return Array.from(table.rows).slice(1);
-}
-
 /**
  * 学术成果全自动填写：按档案 research 列表逐条填表（第 i 条填第 i 个数据行）；
  * 行数不够时自动点击"新增一行"按钮扩展，直到全部填完。
@@ -1227,131 +791,40 @@ export async function fillAchievements(
   allowCommitActions = true,
   onProcessed?: (nextIndex: number) => void,
 ): Promise<number> {
-  const entries = profile.research.filter((r) => r.title && r.title.trim()).slice(0, 20);
-  if (!entries.length) return 0;
-  const stripJournal = (s: string) => s.replace(/^发表刊物(?:或出版社)?[：:]?\s*/, '');
-  const toMonthStart = (s: string) => {
-    const m = /^(\d{4})[-/.](\d{1,2})/.exec((s || '').trim());
-    return m ? `${m[1]}-${m[2].padStart(2, '0')}` : (s || '').trim();
+  const spec: DynamicTableSpec<AchievementTableInfo, Profile['research'][number]> = {
+    kind: 'achievements',
+    entries: profile.research.filter((r) => r.title && r.title.trim()).slice(0, 20),
+    findTable: findAchievementTable,
+    // 去重键 = 标题（巨能填 page_protocol_fill 同款：页面已有同题名行即跳过，宁可不填也不产生重复行；
+    // 同题不同月的档案条目会被跳过，决策日志记为 duplicate，字段报告可直接看到跳过了哪几条）
+    matchExisting: (info, entry, ctx) => {
+      const dup = dataRowsOf(info.table).some((r) => normalizeText(achievementRowTitle(r, info.titleIdx)) === normalizeText(entry.title));
+      if (!dup) return null;
+      logRowDecision(ctx.doc, { kind: 'achievements', index: ctx.index, decision: 'duplicate' });
+      return 'present';
+    },
+    isEmptyRow: (row, info) =>
+      !achievementRowTitle(row, info.titleIdx) && cellHasControl(row, info.titleIdx) && rowFullyEmpty(row, [info.timeIdx, info.titleIdx, info.journalIdx, info.roleIdx]),
+    fillRow: (row, info, entry) => {
+      const set = (idx: number, val: string) => {
+        if (idx < 0 || !val || !row.cells[idx]) return;
+        const el = (row.cells[idx].querySelector('input:not([type="hidden"])') || row.cells[idx].querySelector('input')) as HTMLInputElement | null;
+        if (!el) return;
+        setInputValue(el, val);
+        markEl(el, 'filled');
+      };
+      set(info.titleIdx, entry.title);
+      set(info.timeIdx, toMonthStart(entry.date));
+      set(info.roleIdx, entry.role || '');
+      set(info.journalIdx, stripJournalPrefix(entry.description || ''));
+      return true;
+    },
+    fillAddDialog: (dialogDoc, dialog, entry) =>
+      fillAchievementDialog(dialogDoc, dialog, { title: entry.title, date: entry.date, role: entry.role || '', description: entry.description || '' }),
+    // 加行点击策略按连续失败轮次轮换（0 标准回发 → 1 主世界求值 → 2 原生点击）
+    strategyForAttempt: (attempt) => attempt,
   };
-  const rowTitle = (row: HTMLTableRowElement, titleIdx: number): string => {
-    if (titleIdx < 0 || !row.cells[titleIdx]) return '';
-    const cell = row.cells[titleIdx];
-    const el = cell.querySelector('input:not([type="hidden"])') as HTMLInputElement | null;
-    if (el) return el.value.trim();
-    const hidden = cell.querySelector('input') as HTMLInputElement | null;
-    if (hidden && hidden.value.trim()) return hidden.value.trim();
-    // 服务器渲染的纯文本展示行：退回单元格文本
-    return (cell.textContent || '').trim();
-  };
-  let filled = 0;
-  // 去重键 = 标题（巨能填 page_protocol_fill 同款：页面已有同题名行即跳过，宁可不填也不产生重复行；
-  // 同题不同月的档案条目会被跳过，决策日志记为 duplicate，字段报告可直接看到跳过了哪几条）
-  for (let i = startIndex; i < entries.length; i++) {
-    const entry = entries[i];
-    let row: HTMLTableRowElement | null = null;
-    let alreadyPresent = false;
-    let attempt = 0; // 连续加行失败计数：仅"点击后行数未增长"才 +1，成功增长不计数（不再按总点击封顶）
-    let pbWaits = 0; // 回发等待次数：与失败分开计，防止回发窗口把失败预算烧光后卡死
-    let iters = 0; // 安全阀：单条记录总迭代上限，防"行一直加但永远不被判定可用"的异常页面无限点击
-    while (attempt <= maxAddAttempts && ++iters <= maxAddAttempts * 2 + 6) {
-      if (!docAlive(doc)) return filled; // 整页回发已刷新：续填接管，旧文档不再操作
-      if (postbackJustFired(doc)) {
-        if (++pbWaits <= 4) {
-          await sleep(2000); // 回发进行中：等刷新，不连点
-          continue;
-        }
-        // 回发窗口（约 8 秒）已耗尽而文档仍在：不再空等，按当前页面状态继续
-      }
-      const info = findAchievementTable(doc);
-      if (!info) {
-        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'table-missing' });
-        break;
-      }
-      // 页面已有该条目（含无输入框的服务器展示行）→ 跳过，避免重复
-      if (dataRowsOf(info.table).some((r) => normalizeText(rowTitle(r, info.titleIdx)) === normalizeText(entry.title))) {
-        alreadyPresent = true;
-        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'duplicate' });
-        break;
-      }
-      // 优先填空行（标题格为空且有关键输入框；整行全空才用，避免覆盖用户半填的行）
-      const rows = validDataRows(info.table);
-      const empty = rows.find((r) => !rowTitle(r, info.titleIdx) && cellHasControl(r, info.titleIdx) && rowFullyEmpty(r, [info.timeIdx, info.titleIdx, info.journalIdx, info.roleIdx]));
-      if (empty) {
-        row = empty;
-        break;
-      }
-      // 系统已提示行数上限：不再点击，停止并如实报告（巨能填 known_table_row_limits 同款停止条件）
-      const limit = detectRowLimitBlocked(doc);
-      if (limit) {
-        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'limit-blocked', reason: limit });
-        break;
-      }
-      if (attempt >= maxAddAttempts) {
-        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'add-fail-cap', failRound: attempt });
-        break; // 纯填充模式（maxAddAttempts=0）不点按钮
-      }
-      const addBtn = findAddButton(info.table);
-      if (addBtn && (allowCommitActions || isExplicitAddRowAction(addBtn))) {
-        const rowsBefore = validDataRows(info.table).length;
-        const dialogsBefore = visibleDialogRoots(doc);
-        // 单次点击（策略跨轮轮换）+ 行数验证；整页回发由断点续填接管
-        if (await clickAddRowVerified(doc, addBtn, findAchievementTable, rowsBefore, beforeAdd, i, attempt)) continue;
-        if (!docAlive(doc)) continue;
-        // 行数上限弹窗最先判定：命中时保留弹窗给用户看，不关闭不继续
-        const limit = detectRowLimitBlocked(doc);
-        if (limit) {
-          logRowDecision(doc, { kind: 'achievements', index: i, decision: 'limit-blocked', failRound: attempt, reason: limit });
-          break;
-        }
-        // 点击打开的是弹窗而非直接加行：新增弹窗就地填写确认，编辑弹窗立即关闭（防止覆盖已有行）
-        const dialogOutcome = await handleDialogAfterClick(doc, dialogsBefore, 'achievements', i, (dialog) =>
-          fillAchievementDialog(doc, dialog, { title: entry.title, date: entry.date, role: entry.role || '', description: entry.description || '' }),
-        );
-        if (dialogOutcome === 'filled') continue;
-        if (dialogOutcome !== 'none') break; // 弹窗已处理（关闭/无法安全填写）：本条中止，交由外层预算与人工核对
-        attempt++;
-        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'no-growth', failRound: attempt });
-        break; // 行数未增长：本轮停止连点，跨轮由外层按连续失败预算重试并轮换点击策略
-      }
-      // 南理工式：保存后服务器才多出一行 → 自动点「保存」
-      const saveBtn = allowCommitActions ? findSaveButton(info.table) : null;
-      if (saveBtn) {
-        const rowsBefore = validDataRows(info.table).length;
-        if (await clickAddRowVerified(doc, saveBtn, findAchievementTable, rowsBefore, beforeAdd, i, attempt)) continue;
-        if (!docAlive(doc)) continue;
-        attempt++;
-        logRowDecision(doc, { kind: 'achievements', index: i, decision: 'save-no-growth', failRound: attempt });
-        break;
-      }
-      logRowDecision(doc, { kind: 'achievements', index: i, decision: 'no-add-btn' });
-      break;
-    }
-    if (alreadyPresent) {
-      // 已存在行无需重写，但已经完成，续填内核必须据此推进游标。
-      onProcessed?.(i + 1);
-      continue;
-    }
-    if (!row) break;
-    const info = findAchievementTable(doc);
-    if (!info) break;
-    const set = (idx: number, val: string) => {
-      if (idx < 0 || !val || !row) return;
-      const cell = row.cells[idx];
-      if (!cell) return;
-      const el = (cell.querySelector('input:not([type="hidden"])') || cell.querySelector('input')) as HTMLInputElement | null;
-      if (!el) return;
-      setInputValue(el, val);
-      markEl(el, 'filled');
-    };
-    set(info.titleIdx, entry.title);
-    set(info.timeIdx, toMonthStart(entry.date));
-    set(info.roleIdx, entry.role || '');
-    set(info.journalIdx, stripJournal(entry.description || ''));
-    filled++;
-    onProcessed?.(i + 1);
-  }
-  return filled;
+  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed);
 }
 
 export interface ExperienceTableInfo {
@@ -1411,22 +884,6 @@ export function findExperienceTable(doc: Document): ExperienceTableInfo | null {
     return score(b) - score(a);
   })[0];
   return best;
-}
-
-/** 行内是否含有可写控件（输入框/文本域/可编辑元素） */
-function rowHasInput(row: HTMLTableRowElement): boolean {
-  return !!row.querySelector('input:not([type="hidden"]), textarea, [contenteditable="true"]');
-}
-
-/** "没有数据/暂无数据"占位行（无输入框的提示行） */
-function isPlaceholderRow(row: HTMLTableRowElement): boolean {
-  if (rowHasInput(row)) return false;
-  return /没有数据|暂无数据|无记录|暂无记录|nodata/i.test(normalizeText(row.textContent || ''));
-}
-
-/** 表格的有效数据行：跳过表头、占位行与无输入框的行 */
-function validDataRows(table: HTMLTableElement): HTMLTableRowElement[] {
-  return Array.from(table.rows).slice(1).filter((r) => rowHasInput(r) && !isPlaceholderRow(r));
 }
 
 /** 月份归一化为紧凑格式 YYYY.MM（南理工日期列惯例，避免数据库截断错误） */
@@ -1549,112 +1006,49 @@ export async function fillExperiences(
   allowCommitActions = true,
   onProcessed?: (nextIndex: number) => void,
 ): Promise<number> {
-  const entries = profile.experiences.filter((e) => (e.org && e.org.trim()) || (e.start && e.start.trim())).slice(0, 20);
-  if (!entries.length) return 0;
-  let filled = 0;
-  for (let i = startIndex; i < entries.length; i++) {
-    const e = entries[i];
-    let row: HTMLTableRowElement | null = null;
-    let alreadyPresent = false;
-    for (let attempt = 0; attempt <= maxAddAttempts; attempt++) {
-      if (!docAlive(doc)) return filled; // 整页回发已刷新：续填接管，旧文档不再操作
-      if (postbackJustFired(doc)) {
-        await sleep(2000); // 回发进行中：等刷新，不连点
-        continue;
+  const spec: DynamicTableSpec<ExperienceTableInfo, Experience> = {
+    kind: 'experiences',
+    entries: profile.experiences.filter((e) => (e.org && e.org.trim()) || (e.start && e.start.trim())).slice(0, 20),
+    findTable: findExperienceTable,
+    // 页面已有该条目（含无输入框的服务器展示行）→ 仅归一化时间格式后跳过，避免重复；
+    // 输入行里已填但未落库（上次「添加」没生效）→ 点本行 DoPostback「添加」保存，实现自动换行
+    matchExisting: async (info, entry, ctx) => {
+      const existingRow = dataRowsOf(info.table).find((r) => normalizeText(experienceRowOrg(r, info.orgIdx)) === normalizeText(entry.org));
+      if (!existingRow) return null;
+      normalizeExperienceTime(existingRow, entry, info);
+      if (!rowHasInput(existingRow)) return 'present'; // 已保存的服务器文本展示行
+      const rowBtn = findAddButton(info.table, existingRow);
+      if (ctx.allowCommitActions && rowBtn && isDoPostbackAction(rowBtn)) {
+        await clickPageAction(rowBtn, clickAttempt(ctx.beforeAdd, ctx.index, ctx.attempt));
+        await sleep(1500); // 北邮等服务器回发较慢：给足新行出现的时间再继续
+        return 'retry';
       }
-      const info = findExperienceTable(doc); // 每次重新定位（加行可能重建 DOM 或整页刷新）
-      if (!info) break;
-      const rows = validDataRows(info.table);
-      // 页面已有该条目（含无输入框的服务器展示行）→ 仅归一化时间格式后跳过，避免重复
-      const existingRow = dataRowsOf(info.table).find((r) => normalizeText(experienceRowOrg(r, info.orgIdx)) === normalizeText(e.org));
-      if (existingRow) {
-        // 已存在的行先归一化时间格式（含输入行，旧长格式 → YYYY.MM-YYYY.MM）
-        normalizeExperienceTime(existingRow, e, info);
-        if (!rowHasInput(existingRow)) {
-          alreadyPresent = true; // 已保存的服务器文本展示行
-          break;
-        }
-        // 输入行里已填但未落库（上次「添加」没生效）→ 点本行 DoPostback「添加」保存，实现自动换行
-        const rowBtn = findAddButton(info.table, existingRow);
-        if (allowCommitActions && rowBtn && isDoPostbackAction(rowBtn)) {
-          if (attempt >= maxAddAttempts) break;
-          await clickPageAction(rowBtn, clickAttempt(beforeAdd, i, attempt));
-          await sleep(1500); // 北邮等服务器回发较慢：给足新行出现的时间再继续
-          continue;
-        }
-        alreadyPresent = true; // 其他站点旧行为：输入行内容视为已处理
-        break;
-      }
-      // 优先填空行（单位格为空且有关键输入框；整行全空才用，避免覆盖用户半填的行）
-      const empty = rows.find((r) => !experienceRowOrg(r, info.orgIdx) && cellHasControl(r, info.orgIdx) && rowFullyEmpty(r, [info.timeIdx, info.orgIdx, info.roleIdx, info.endIdx]));
-      if (empty) {
-        row = empty;
-        break;
-      }
-      if (attempt >= maxAddAttempts) break; // 纯填充模式（maxAddAttempts=0）不点按钮
-      const addBtn = findAddButton(info.table);
-      if (addBtn && (allowCommitActions || isExplicitAddRowAction(addBtn))) {
-        const rowsBefore = validDataRows(info.table).length;
-        const dialogsBefore = visibleDialogRoots(doc);
-        // 验证式点击：单策略生效即停，确认未增长才换策略；行数上限弹窗出现即停止
-        if (await clickAddRowVerified(doc, addBtn, findExperienceTable, rowsBefore, beforeAdd, i)) continue;
-        if (!docAlive(doc)) continue; // 整页回发已刷新：断点续填接管
-        // 行数上限弹窗最先判定：命中时保留弹窗给用户看；其余新开弹窗若非本表可安全填写的形态则温和关闭
-        const limit = detectRowLimitBlocked(doc);
-        if (limit) {
-          logRowDecision(doc, { kind: 'experiences', index: i, decision: 'limit-blocked', reason: limit });
-          break;
-        }
-        if ((await handleDialogAfterClick(doc, dialogsBefore, 'experiences', i)) !== 'none') break;
-        logRowDecision(doc, { kind: 'experiences', index: i, decision: 'no-growth' });
-        break; // 等待超时且行数未增长：停止连点，防「无限新增一行」
-      }
-      // 南理工式：保存后服务器才多出一行 → 自动点「保存」（回发刷新后由断点续填接管）
-      const saveBtn = allowCommitActions ? findSaveButton(info.table) : null;
-      if (saveBtn) {
-        const rowsBefore = validDataRows(info.table).length;
-        await clickPageAction(saveBtn, clickAttempt(beforeAdd, i, attempt));
-        if (await waitForRowGrowth(doc, findExperienceTable, rowsBefore)) continue;
-        if (!docAlive(doc)) continue;
-        break;
-      }
-      // 无加行按钮：尝试点击空白模板行激活编辑（EasyUI click-to-edit 网格）
+      return 'present'; // 其他站点旧行为：输入行内容视为已处理
+    },
+    isEmptyRow: (row, info) =>
+      !experienceRowOrg(row, info.orgIdx) && cellHasControl(row, info.orgIdx) && rowFullyEmpty(row, [info.timeIdx, info.orgIdx, info.roleIdx, info.endIdx]),
+    fillRow: (row, info, entry) => fillExperienceRow(row, entry, info),
+    // 无加行按钮：尝试点击空白模板行激活编辑（EasyUI click-to-edit 网格）
+    findTemplateCell: (info) => {
       const template = Array.from(info.table.rows).slice(1).find((r) => !rowHasInput(r) && !isPlaceholderRow(r));
-      if (template) {
-        const cell = (template.cells[info.orgIdx] || template.cells[0]) as HTMLElement | undefined;
-        if (cell) {
-          cell.click();
-          await sleep(700);
-          continue;
-        }
-      }
-      break;
-    }
-    if (alreadyPresent) {
-      onProcessed?.(i + 1); // 已存在的经历行也必须推进断点，防止外层空转误判失败
-      continue;
-    }
-    if (!row) break;
-    const info = findExperienceTable(doc);
-    if (!info) break;
-    if (!fillExperienceRow(row, e, info)) break;
-    filled++;
-    onProcessed?.(i + 1); // 本条已完整写入：显式推进断点（n 计数不含"已存在跳过"的条目）
-    // 北邮式逐行网格：填完立即点本行 DoPostback「添加」落库（自动换行/自动添加）
-    if (allowCommitActions && maxAddAttempts > 0) {
-      const rowBtn = findAddButton(info.table, row);
-      if (rowBtn && isDoPostbackAction(rowBtn)) {
-        await clickPageAction(rowBtn, clickAttempt(beforeAdd, i, 0));
-        await sleep(1500);
-      }
-    }
-  }
-  return filled;
+      return template ? ((template.cells[info.orgIdx] || template.cells[0]) as HTMLElement | undefined) ?? null : null;
+    },
+    rowCommitButton: (info, row) => findAddButton(info.table, row),
+  };
+  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed);
+}
+
+export interface AwardTableInfo {
+  table: HTMLTableElement;
+  timeIdx: number;
+  nameIdx: number;
+  unitIdx: number;
+  reasonIdx: number;
 }
 
 /** 定位"奖励情况"表格（表头含 奖励/荣誉 + 时间列 + 名称列，如南理工"奖励单位/奖励原因/奖励名称"、北邮等） */
-export function findAwardTable(doc: Document): { table: HTMLTableElement; timeIdx: number; nameIdx: number; unitIdx: number; reasonIdx: number } | null {
-  const matches: Array<{ table: HTMLTableElement; timeIdx: number; nameIdx: number; unitIdx: number; reasonIdx: number }> = [];
+export function findAwardTable(doc: Document): AwardTableInfo | null {
+  const matches: AwardTableInfo[] = [];
   // 页面存在"何时何地何原因受过何种奖励"等标题表（东华/苏大式：关键词只在外层标题表里）
   const hasAwardTitleTable = Array.from(doc.querySelectorAll<HTMLTableElement>('table')).some((t) => {
     const rows = Array.from(t.rows);
@@ -1782,6 +1176,23 @@ function fillAwardTables(profile: Profile, doc: Document, handled: Set<Element>,
   }
 }
 
+/** 奖励行"名称"格内容（输入框优先，无输入框的服务器展示行退回单元格文本，用于重复检测） */
+function awardCellName(row: HTMLTableRowElement, nameIdx: number): string {
+  if (nameIdx < 0 || !row.cells[nameIdx]) return '';
+  const cell = row.cells[nameIdx];
+  const el = cell.querySelector('input') as HTMLInputElement | null;
+  if (el && el.value.trim()) return el.value.trim();
+  return (cell.textContent || '').trim();
+}
+
+/** 奖励行"时间"格内容（归一化文本，用于重复检测） */
+function awardCellTime(row: HTMLTableRowElement, timeIdx: number): string {
+  if (timeIdx < 0 || !row.cells[timeIdx]) return '';
+  const el = row.cells[timeIdx].querySelector('input') as HTMLInputElement | null;
+  if (el && el.value.trim()) return normalizeText(el.value);
+  return normalizeText(row.cells[timeIdx].textContent || '');
+}
+
 /** 奖励情况全自动填写：去重 + 行数不够时自动点击"新增一行/保存"扩展（断点续填） */
 export async function fillAwardRows(
   profile: Profile,
@@ -1792,109 +1203,48 @@ export async function fillAwardRows(
   allowCommitActions = true,
   onProcessed?: (nextIndex: number) => void,
 ): Promise<number> {
-  const entries = profile.awards.filter((a) => a.content && a.content.trim()).slice(0, 20);
-  if (!entries.length) return 0;
-  let filled = 0;
-  for (let i = startIndex; i < entries.length; i++) {
-    const a = entries[i];
-    const name = a.content.trim();
-    const unit = (a.place || '').trim();
-    let row: HTMLTableRowElement | null = null;
-    let alreadyPresent = false;
-    for (let attempt = 0; attempt <= maxAddAttempts; attempt++) {
-      const found = findAwardTable(doc);
-      if (!found) break;
-      const cellNameOf = (r: HTMLTableRowElement): string => {
-        if (!r.cells[found.nameIdx]) return '';
-        const cell = r.cells[found.nameIdx];
-        const el = cell.querySelector('input') as HTMLInputElement | null;
-        if (el && el.value.trim()) return el.value.trim();
-        return (cell.textContent || '').trim();
+  const spec: DynamicTableSpec<AwardTableInfo, Profile['awards'][number]> = {
+    kind: 'awards',
+    entries: profile.awards.filter((a) => a.content && a.content.trim()).slice(0, 20),
+    findTable: findAwardTable,
+    // 去重键 = 名称+时间：同名但获奖时间不同是两条不同记录；月份两侧统一规范化（页面可能用 202410 紧凑格式）。
+    // 已有同名同时间的行：只补空白单元格（如漏填的获奖地点/级别），绝不覆盖已有内容（巨能填"差量同步·先补缺"同款）。
+    // 补缺后视为已处理并推进断点，否则外层会对同一行反复空转直到误判失败。
+    matchExisting: (info, entry, ctx) => {
+      const key = `${normalizeText(entry.content.trim())}|${monthKeyOf(entry.date)}`;
+      const existingRow = dataRowsOf(info.table).find((r) => `${normalizeText(awardCellName(r, info.nameIdx))}|${monthKeyOf(awardCellTime(r, info.timeIdx))}` === key);
+      if (!existingRow) return null;
+      const setIfEmpty = (idx: number, val: string): void => {
+        if (idx < 0 || !val || !existingRow.cells[idx]) return;
+        const el = (existingRow.cells[idx].querySelector('input:not([type="hidden"])') || existingRow.cells[idx].querySelector('input')) as HTMLInputElement | null;
+        if (!el || el.value.trim()) return;
+        setInputValue(el, val);
+        markEl(el, 'filled');
+        logRowDecision(ctx.doc, { kind: 'awards', index: ctx.index, decision: 'gap-filled' });
       };
-      const cellTimeOf = (r: HTMLTableRowElement): string => {
-        if (!r.cells[found.timeIdx]) return '';
-        const el = r.cells[found.timeIdx].querySelector('input') as HTMLInputElement | null;
-        if (el && el.value.trim()) return normalizeText(el.value);
-        return normalizeText(r.cells[found.timeIdx].textContent || '');
+      setIfEmpty(info.unitIdx, (entry.place || '').trim());
+      setIfEmpty(info.reasonIdx, (entry.level || '').trim());
+      return 'present';
+    },
+    isEmptyRow: (row, info) =>
+      !awardCellName(row, info.nameIdx) && cellHasControl(row, info.nameIdx) && rowFullyEmpty(row, [info.timeIdx, info.nameIdx, info.unitIdx, info.reasonIdx]),
+    fillRow: (row, info, entry) => {
+      const setCell = (idx: number, val: string) => {
+        if (idx < 0 || !val || !row.cells[idx]) return;
+        const el = (row.cells[idx].querySelector('input:not([type="hidden"])') || row.cells[idx].querySelector('input')) as HTMLInputElement | null;
+        if (!el) return;
+        setInputValue(el, val);
+        markEl(el, 'filled');
       };
-      // 去重键 = 名称+时间：同名但获奖时间不同是两条不同记录；月份两侧统一规范化（页面可能用 202410 紧凑格式）
-      const entryKey = `${normalizeText(name)}|${monthKeyOf(a.date)}`;
-      const existingRow = dataRowsOf(found.table).find((r) => `${normalizeText(cellNameOf(r))}|${monthKeyOf(cellTimeOf(r))}` === entryKey);
-      if (existingRow) {
-        // 已有同名同时间的行：只补空白单元格（如漏填的获奖地点/级别），绝不覆盖已有内容（巨能填"差量同步·先补缺"同款）。
-        // 补缺后视为已处理并推进断点，否则外层会对同一行反复空转直到误判失败。
-        const setIfEmpty = (idx: number, val: string): void => {
-          if (idx < 0 || !val || !existingRow.cells[idx]) return;
-          const cell = existingRow.cells[idx];
-          const el = (cell.querySelector('input:not([type="hidden"])') || cell.querySelector('input')) as HTMLInputElement | null;
-          if (!el || el.value.trim()) return;
-          setInputValue(el, val);
-          markEl(el, 'filled');
-          logRowDecision(doc, { kind: 'awards', index: i, decision: 'gap-filled' });
-        };
-        setIfEmpty(found.unitIdx, unit);
-        setIfEmpty(found.reasonIdx, (a.level || '').trim());
-        alreadyPresent = true;
-        break;
-      }
-      const rows = validDataRows(found.table);
-      const empty = rows.find((r) => !cellNameOf(r) && cellHasControl(r, found.nameIdx) && rowFullyEmpty(r, [found.timeIdx, found.nameIdx, found.unitIdx, found.reasonIdx]));
-      if (empty) {
-        row = empty;
-        break;
-      }
-      if (attempt >= maxAddAttempts) break;
-      const addBtn = findAddButton(found.table);
-      if (addBtn && (allowCommitActions || isExplicitAddRowAction(addBtn))) {
-        const rowsBefore = validDataRows(found.table).length;
-        const dialogsBefore = visibleDialogRoots(doc);
-        // 验证式点击：单策略生效即停，确认未增长才换策略；行数上限弹窗出现即停止
-        if (await clickAddRowVerified(doc, addBtn, findAwardTable, rowsBefore, beforeAdd, i)) continue;
-        if (!docAlive(doc)) continue; // 整页回发已刷新：断点续填接管
-        const limit = detectRowLimitBlocked(doc);
-        if (limit) {
-          logRowDecision(doc, { kind: 'awards', index: i, decision: 'limit-blocked', reason: limit });
-          break;
-        }
-        if ((await handleDialogAfterClick(doc, dialogsBefore, 'awards', i)) !== 'none') break;
-        logRowDecision(doc, { kind: 'awards', index: i, decision: 'no-growth' });
-        break; // 行数未增长：停止连点，防「无限新增一行」
-      }
-      const saveBtn = allowCommitActions ? findSaveButton(found.table) : null;
-      if (saveBtn) {
-        const rowsBefore = validDataRows(found.table).length;
-        await clickPageAction(saveBtn, clickAttempt(beforeAdd, i, attempt));
-        if (await waitForRowGrowth(doc, findAwardTable, rowsBefore)) continue;
-        if (!docAlive(doc)) continue;
-        break;
-      }
-      break;
-    }
-    if (alreadyPresent) {
-      // 已存在（含只补了空格）的行同样算已处理：续填内核必须据此推进游标，
-      // 否则外层会对同一行空转直至误判失败并丢弃剩余条目（合工大奖励地点漏填的根因）。
-      onProcessed?.(i + 1);
-      continue;
-    }
-    if (!row) break;
-    const found2 = findAwardTable(doc);
-    if (!found2) break;
-    const setCell = (idx: number, val: string) => {
-      if (idx < 0 || !val || !row || !row.cells[idx]) return;
-      const el = (row.cells[idx].querySelector('input:not([type="hidden"])') || row.cells[idx].querySelector('input')) as HTMLInputElement | null;
-      if (!el) return;
-      setInputValue(el, val);
-      markEl(el, 'filled');
-    };
-    const month = normalizeMonth(a.date) || a.date;
-    setCell(found2.timeIdx, month);
-    setCell(found2.unitIdx, unit);
-    setCell(found2.reasonIdx, a.level || '');
-    setCell(found2.nameIdx, name);
-    filled++;
-    onProcessed?.(i + 1); // 本条已完整写入：显式推进断点（n 计数不含"已存在跳过"的条目，单靠 n 会使游标滞后）
-  }
-  return filled;
+      const month = normalizeMonth(entry.date) || entry.date;
+      setCell(info.timeIdx, month);
+      setCell(info.unitIdx, (entry.place || '').trim());
+      setCell(info.reasonIdx, entry.level || '');
+      setCell(info.nameIdx, entry.content.trim());
+      return true;
+    },
+  };
+  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed);
 }
 
 interface LanguageTableInfo {
@@ -2088,44 +1438,21 @@ export async function fillLanguageExams(
   maxAddAttempts = 10,
   allowCommitActions = false,
 ): Promise<number> {
-  const entries = languageEntries(profile);
-  let processed = 0;
-  for (let i = startIndex; i < entries.length; i++) {
-    let info = findLanguageTable(doc);
-    if (!info) break;
-    const entry = entries[i];
-    const rows = validDataRows(info.table);
-    const existing = rows.find((row) => fillLanguageRow(row, info!, entry, doc));
-    if (existing) {
-      fillLanguageRow(existing, info, entry, doc);
-      processed++;
-      continue;
-    }
-    let empty = rows.find((row) => rowFullyEmpty(row, [info!.typeIdx, info!.scoreIdx, info!.dateIdx, info!.noteIdx]));
-    if (!empty) {
-      const addButton = findAddButton(info.table);
-      if (!addButton || (!allowCommitActions && !isExplicitAddRowAction(addButton)) || i - startIndex >= maxAddAttempts) break;
-      const beforeRows = validDataRows(info.table).length;
-      const dialogsBefore = visibleDialogRoots(doc);
-      // 验证式点击：单策略生效即停，确认未增长才换策略
-      if (!(await clickAddRowVerified(doc, addButton, findLanguageTable, beforeRows, beforeAdd, i))) {
-        const limit = detectRowLimitBlocked(doc);
-        if (limit) {
-          logRowDecision(doc, { kind: 'language', index: i, decision: 'limit-blocked', reason: limit });
-          break;
-        }
-        if ((await handleDialogAfterClick(doc, dialogsBefore, 'language', i)) !== 'none') break;
-        logRowDecision(doc, { kind: 'language', index: i, decision: 'no-growth' });
-        break;
-      }
-      info = findLanguageTable(doc);
-      if (!info) break;
-      empty = validDataRows(info.table).find((row) => rowFullyEmpty(row, [info!.typeIdx, info!.scoreIdx, info!.dateIdx, info!.noteIdx]));
-    }
-    if (!empty || !fillLanguageRow(empty, info, entry, doc)) break;
-    processed++;
-  }
-  return processed;
+  const spec: DynamicTableSpec<LanguageTableInfo, LanguageEntry> = {
+    kind: 'language',
+    entries: languageEntries(profile),
+    findTable: findLanguageTable,
+    // 外语表语义：第一条可写/已匹配的行就地写入（整行保护由 fillLanguageRow 内部保证），写入成功即视为已处理；
+    // 全部行拒绝写入时内核才走"新增一行"路径，新空行出现后同样经 matchExisting 写入
+    matchExisting: (info, entry, ctx) => {
+      const hit = validDataRows(info.table).find((row) => fillLanguageRow(row, info, entry, ctx.doc));
+      return hit ? 'filled' : null;
+    },
+    isEmptyRow: (row, info) => rowFullyEmpty(row, [info.typeIdx, info.scoreIdx, info.dateIdx, info.noteIdx]),
+    fillRow: (row, info, entry, ctxDoc) => fillLanguageRow(row, info, entry, ctxDoc),
+    useSaveButton: false, // 外语表绝不借"保存"按钮制造下一行
+  };
+  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions);
 }
 
 /** 家庭成员表格信息（列头：姓名/关系/单位/电话/政治面貌） */
@@ -2199,27 +1526,6 @@ function familyRowEmpty(row: HTMLTableRowElement, info: FamilyTableInfo): boolea
   if (!el) return false;
   // 整行全空才算可填行：任一格已有内容（用户手填/半填）都不覆盖
   return rowFullyEmpty(row, [info.nameIdx, info.relIdx, info.orgIdx, info.phoneIdx, info.polIdx]);
-}
-
-/** 单元格内是否有可见输入/选择控件（空白模板行、仅图标按钮的行不算可填） */
-function cellHasControl(row: HTMLTableRowElement, idx: number): boolean {
-  return idx >= 0 && !!row.cells[idx] && !!row.cells[idx].querySelector('input:not([type="hidden"]), select, textarea, [contenteditable="true"]');
-}
-
-/** 单元格值是否视为"空"（请选择/--/无 等占位选项不算内容） */
-function cellValueEmpty(v: string): boolean {
-  const t = (v || '').trim();
-  return !t || /^(请选择|--+|-|无)$/.test(t);
-}
-
-/** 行的所有可写格均为空（保护用户已填/半填的行——绝不覆盖用户数据） */
-function rowFullyEmpty(row: HTMLTableRowElement, idxs: number[]): boolean {
-  for (const idx of idxs) {
-    if (idx < 0 || !row.cells[idx]) continue;
-    const el = row.cells[idx].querySelector('input:not([type="hidden"]), select, textarea') as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
-    if (el && !cellValueEmpty(el.value || '')) return false;
-  }
-  return true;
 }
 
 /** 填写一行家庭成员 */
@@ -2344,99 +1650,36 @@ export async function fillFamilyMembers(
   allowCommitActions = true,
   onProcessed?: (nextIndex: number) => void,
 ): Promise<number> {
-  const members = profile.familyMembers.filter((m) => m.name && m.name.trim()).slice(0, 10);
-  if (!members.length) return 0;
-  let filled = 0;
-  for (let i = startIndex; i < members.length; i++) {
-    const m = members[i];
-    let row: HTMLTableRowElement | null = null;
-    let alreadyPresent = false;
-    for (let attempt = 0; attempt <= maxAddAttempts; attempt++) {
-      if (!docAlive(doc)) return filled; // 整页回发已刷新：续填接管，旧文档不再操作
-      if (postbackJustFired(doc)) {
-        await sleep(2000); // 回发进行中：等刷新，不连点
-        continue;
+  const spec: DynamicTableSpec<FamilyTableInfo, FamilyMember> = {
+    kind: 'family',
+    entries: profile.familyMembers.filter((m) => m.name && m.name.trim()).slice(0, 10),
+    findTable: findFamilyTable,
+    // 页面已有该成员（含服务器文本展示行）→ 跳过；输入行里已填但未落库 → 补点本行 DoPostback「添加」
+    matchExisting: async (info, entry, ctx) => {
+      const existingRow = dataRowsOf(info.table).find((r) => normalizeText(familyRowName(r, info)) === normalizeText(entry.name));
+      if (!existingRow) return null;
+      if (!rowHasInput(existingRow)) return 'present'; // 已保存的服务器文本展示行
+      const rowBtn = findAddButton(info.table, existingRow);
+      if (ctx.allowCommitActions && rowBtn && isDoPostbackAction(rowBtn)) {
+        await clickPageAction(rowBtn, clickAttempt(ctx.beforeAdd, ctx.index, ctx.attempt));
+        await sleep(1500); // 北邮等服务器回发较慢：给足新行出现的时间再继续
+        return 'retry';
       }
-      const info = findFamilyTable(doc);
-      if (!info) break;
-      const existingRow = dataRowsOf(info.table).find((r) => normalizeText(familyRowName(r, info)) === normalizeText(m.name));
-      if (existingRow) {
-        if (!rowHasInput(existingRow)) {
-          alreadyPresent = true; // 已保存的服务器文本展示行
-          break;
-        }
-        // 输入行里已填但未落库（上次「添加」没生效）→ 点本行 DoPostback「添加」保存，实现自动换行
-        const rowBtn = findAddButton(info.table, existingRow);
-        if (allowCommitActions && rowBtn && isDoPostbackAction(rowBtn)) {
-          if (attempt >= maxAddAttempts) break;
-          await clickPageAction(rowBtn, clickAttempt(beforeAdd, i, attempt));
-          await sleep(1500); // 北邮等服务器回发较慢：给足新行出现的时间再继续
-          continue;
-        }
-        alreadyPresent = true; // 其他站点旧行为：输入行内容视为已处理
-        break;
-      }
-      const rows = validDataRows(info.table);
-      const empty = rows.find((r) => familyRowEmpty(r, info));
-      if (empty) {
-        row = empty;
-        break;
-      }
-      if (attempt >= maxAddAttempts) break; // 纯填充模式不点按钮
-      const addBtn = findAddButton(info.table);
-      if (addBtn && (allowCommitActions || isExplicitAddRowAction(addBtn))) {
-        const rowsBefore = validDataRows(info.table).length;
-        const dialogsBefore = visibleDialogRoots(doc);
-        // 验证式点击：单策略生效即停，确认未增长才换策略；行数上限弹窗出现即停止
-        if (await clickAddRowVerified(doc, addBtn, findFamilyTable, rowsBefore, beforeAdd, i)) continue;
-        if (!docAlive(doc)) continue; // 整页回发已刷新：断点续填接管
-        const limit = detectRowLimitBlocked(doc);
-        if (limit) {
-          logRowDecision(doc, { kind: 'family', index: i, decision: 'limit-blocked', reason: limit });
-          break;
-        }
-        if ((await handleDialogAfterClick(doc, dialogsBefore, 'family', i)) !== 'none') break;
-        logRowDecision(doc, { kind: 'family', index: i, decision: 'no-growth' });
-        break; // 行数未增长：停止连点，防「无限新增一行」
-      }
-      // 南理工式：保存后服务器才多出一行
-      const saveBtn = allowCommitActions ? findSaveButton(info.table) : null;
-      if (saveBtn) {
-        const rowsBefore = validDataRows(info.table).length;
-        await clickPageAction(saveBtn, clickAttempt(beforeAdd, i, attempt));
-        if (await waitForRowGrowth(doc, findFamilyTable, rowsBefore)) continue;
-        if (!docAlive(doc)) continue;
-        break;
-      }
-      break;
-    }
-    if (alreadyPresent) {
-      onProcessed?.(i + 1); // 已存在的家庭成员行也必须推进断点，防止外层空转误判失败
-      continue;
-    }
-    if (!row) break;
-    const info = findFamilyTable(doc);
-    if (!info) break;
+      return 'present'; // 其他站点旧行为：输入行内容视为已处理
+    },
+    isEmptyRow: (row, info) => familyRowEmpty(row, info),
+    fillRow: (row, info, entry) => fillFamilyRow(row, entry, info),
     // 自愈：行内姓名=本人姓名（通用字段误填进网格）→ 清空该行
-    const selfName = normalizeText(profile.basic.name || '');
-    if (selfName) {
+    beforeFillRow: (info) => {
+      const selfName = normalizeText(profile.basic.name || '');
+      if (!selfName) return;
       dataRowsOf(info.table).forEach((r) => {
         if (normalizeText(familyRowName(r, info)) === selfName) clearRowControls(r);
       });
-    }
-    if (!fillFamilyRow(row, m, info)) break;
-    filled++;
-    onProcessed?.(i + 1); // 本条已完整写入：显式推进断点（n 计数不含"已存在跳过"的条目）
-    // 北邮式逐行网格：填完立即点本行 DoPostback「添加」落库（自动换行/自动添加）
-    if (allowCommitActions && maxAddAttempts > 0) {
-      const rowBtn = findAddButton(info.table, row);
-      if (rowBtn && isDoPostbackAction(rowBtn)) {
-        await clickPageAction(rowBtn, clickAttempt(beforeAdd, i, 0));
-        await sleep(1500);
-      }
-    }
-  }
-  return filled;
+    },
+    rowCommitButton: (info, row) => findAddButton(info.table, row),
+  };
+  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed);
 }
 
 /** 同源 iframe 内的文档列表（EasyUI 弹窗常在窗口里嵌 iframe 加载树/列表） */
@@ -2458,7 +1701,7 @@ function findPickerOptionCandidates(doc: Document, value: string): Element[] {
   const want = normalizeText(value);
   if (!want) return [];
   const sels =
-    '[role="option"], .select2-results__option, .dropdown-item, .ant-select-item-option, .el-select-dropdown__item, ul[role="listbox"] li, .dropdown-menu li, .datagrid-row, .combobox-item, .combotree .tree-title, .tree-title, li, dd';
+    '[role="option"], .select2-results__option, .dropdown-item, .ant-select-item-option, .el-select-dropdown__item, ul[role="listbox"] li, .dropdown-menu li, .datagrid-row, .combobox-item, .jqx-item, [class*="listitem"], .combotree .tree-title, .tree-title, li, dd';
   const scored: Array<{ el: Element; len: number; exact: boolean }> = [];
   for (const d of frameDocs(doc)) {
     for (const cand of Array.from(d.querySelectorAll<HTMLElement>(sels))) {
@@ -2476,10 +1719,6 @@ function findPickerOptionCandidates(doc: Document, value: string): Element[] {
 /** 在页面浮层中查找与目标值匹配的选项（支持常见选择器组件：role=option、select2、el-select、ant-select、bootstrap dropdown 等；含同源 iframe 弹层） */
 export function findPickerOption(doc: Document, value: string): Element | null {
   return findPickerOptionCandidates(doc, value)[0] || null;
-}
-
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** 引导模式下的重试：联动下拉可能在上级字段选定后才加载出选项 */
@@ -2582,6 +1821,35 @@ export function deriveValue(profile: Profile, kind: NonNullable<FieldRule['deriv
       if (c4) parts.push(`大学英语四级（CET-4）${c4}分`);
       if (c6) parts.push(`大学英语六级（CET-6）${c6}分`);
       return parts.length ? parts.join('；') : undefined;
+    }
+    case 'rankPercent': {
+      /**
+       * 计算公式：排名百分比 = 专业名次 / 专业同年级人数 × 100%。
+       * 只在两个来源均为正数且名次不大于人数时计算，避免用缺失或矛盾档案猜值。
+       */
+      const rank = Number((profile.education.rank || '').trim());
+      const rankBase = Number((profile.education.rankBase || '').trim());
+      if (!Number.isFinite(rank) || !Number.isFinite(rankBase) || rank <= 0 || rankBase <= 0 || rank > rankBase) return undefined;
+      return (Math.round((rank / rankBase) * 10000) / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    }
+    case 'studyDuration': {
+      /**
+       * 计算公式：学制年数 = round((毕业年月 - 入学年月) / 12)。
+       * 国内本科通常 9 月入学、6 月毕业，四年制实际月份差为 45 个月，四舍五入后为 4。
+       * 仅接受页面实际提供的 3/4/5 年制，且与整年差距不超过 3 个月，证据不足时保持人工填写。
+       */
+      // 档案可能保存 YYYY-MM，也可能保存 YYYY-MM-DD；学制只需要年月，允许忽略“日”。
+      const start = /^(\d{4})\D?(\d{1,2})/.exec((profile.education.startDate || '').trim());
+      const end = /^(\d{4})\D?(\d{1,2})/.exec((profile.education.endDate || '').trim());
+      if (!start || !end) return undefined;
+      const startYear = Number(start[1]);
+      const startMonth = Number(start[2]);
+      const endYear = Number(end[1]);
+      const endMonth = Number(end[2]);
+      const monthSpan = (endYear - startYear) * 12 + endMonth - startMonth;
+      const years = Math.round(monthSpan / 12);
+      if (years < 3 || years > 5 || Math.abs(monthSpan - years * 12) > 3) return undefined;
+      return ['零年制', '一年制', '二年制', '三年制', '四年制', '五年制'][years];
     }
     case 'applyMajor': {
       const app = pickApplication(profile, doc.location ? doc.location.href : '');
@@ -3156,8 +2424,8 @@ async function pickSelectorWindow(doc: Document, el: Element, value: string, isA
         steps.push('clicked-select-again');
       }
     }
-    // 成对校验：码框数字 + 名框中文才算成功
-    for (let v = 0; v < 14; v++) {
+    // 成对校验：码框数字 + 名框中文才算成功；短轮询 5 次（2.5s）无回填立即转明文兜底（成熟页面回填都在 1s 内，纯空等没有价值）
+    for (let v = 0; v < 5; v++) {
       if (pairReady()) {
         steps.push('pair-ok');
         return logResult('picked');
@@ -3429,6 +2697,11 @@ async function tryOpenPicker(doc: Document, inputEl: Element, trigger: Element):
 
 /** 弹窗选择框半自动：点「选择」按钮打开选择器，若浮层选项可定位则自动点选；必要时先在弹层搜索框输入关键字过滤 */
 export async function pickInPage(doc: Document, el: Element, value: string, context?: PopupPickContext): Promise<'picked' | 'opened' | 'none'> {
+  // 组件下拉（jqx 等"请选择..."组件，页面上无原生 select）：进入组件下拉内核
+  const widget = resolveWidgetDropdown(doc, el);
+  if (widget) {
+    return await pickWidgetDropdown(doc, widget, value);
+  }
   // 本科院校和本科专业先进入各自独立内核；不适用时才回落到通用地区树/浮层流程。
   if (context?.profilePath === 'education.university') {
     const result = await pickSchool(doc, el, value, context);
@@ -3449,9 +2722,9 @@ export async function pickInPage(doc: Document, el: Element, value: string, cont
   const timed = new Promise<'picked' | 'opened' | 'none'>((resolve) => {
     setTimeout(() => {
       aborted = true; // 超时后内部流程立即中止，不再继续打字/点击（防止污染主表单、拖慢整体）
-      writePickDebug(doc, el, ['flow:timeout-30s'], true, 'none');
+      writePickDebug(doc, el, ['flow:timeout-20s'], true, 'none');
       resolve('none');
-    }, 30_000);
+    }, 20_000); // 弹窗选择整体预算 20s（原 30s）：配合兜底提前写入，失败更快转人工
   });
   try {
     return await Promise.race([pickInPageInner(doc, el, trigger, value, () => aborted, context), timed]);
@@ -3461,6 +2734,151 @@ export async function pickInPage(doc: Document, el: Element, value: string, cont
   }
 }
 
+/** 功能：把字段控件（隐藏值域或组件本体）解析成组件下拉的可点击本体。 */
+function resolveWidgetDropdown(doc: Document, el: Element): HTMLElement | null {
+  if (!(el instanceof (el.ownerDocument?.defaultView || doc.defaultView)!.HTMLElement) && !(el instanceof HTMLElement)) return null;
+  const html = el as HTMLElement;
+  if (html.getAttribute('data-tui-widget') === 'dropdown') return html;
+  const key = html.getAttribute('data-tui-widget-key');
+  if (!key) return null;
+  return doc.querySelector<HTMLElement>(`[data-tui-widget="dropdown"][data-tui-widget-key="${key}"]`);
+}
+
+/**
+ * 功能：组件下拉（无原生 select 的 jqx/自定义组件）点选内核：
+ * 点开组件 → 按档案值及其别名（男→male/m/1 等，兼容英文选项）轮询浮层选项 → 逐个尝试点选 → 回读验证。
+ * 回读以值载体（隐藏域/组件显示输入框）为准——jqx 会把选项列表预渲染在容器里，组件文本不可作为选中依据；
+ * 页面自身的组件脚本负责写入真实值与联动；扩展只负责“替用户点”，绝不猜测隐藏域编码。
+ */
+async function pickWidgetDropdown(doc: Document, widget: HTMLElement, value: string): Promise<'picked' | 'opened' | 'none'> {
+  const target = normalizeText(value);
+  if (!target) return 'opened';
+  const key = widget.getAttribute('data-tui-widget-key') || '';
+  const targetSel = widget.getAttribute('data-tui-widget-target') || '';
+  // 值载体统一按 key 解析（jqx 显示输入框可能没有 id/name，target 属性此时为空）
+  const valueEl = (targetSel ? doc.querySelector<HTMLInputElement>(targetSel) : null) || (key ? doc.querySelector<HTMLInputElement>(`[data-tui-widget="dropdown-value"][data-tui-widget-key="${key}"]`) : null);
+  // 选项与回读都按“档案值 + 编码别名”匹配（ VALUE_ALIASES：男→male/m/1、女→female/f/2 等，兼容英文选项页面）
+  const aliasSet = [target, ...((VALUE_ALIASES[normalizeText(value)] || []).map((a) => normalizeText(a)))].filter((a, i, arr) => a && arr.indexOf(a) === i);
+  const committed = (): boolean => {
+    if (valueEl) {
+      const v = normalizeText(valueEl.value || '');
+      if (v && aliasSet.some((a) => v === a || (a.length >= 2 && v.includes(a)))) return true;
+    }
+    // 组件文本回读对有/无值载体都生效：博思等框架可能只更新组件显示文本、不写隐藏域；
+    // 只认精确等于别名（jqx 弹层若渲染在组件内部，includes 会被预渲染选项误判，绝不能用）
+    const text = normalizeText(widget.textContent || '');
+    return !!text && text !== '请选择' && aliasSet.some((a) => text === a);
+  };
+  // 页面已预选：无需再点
+  if (committed()) {
+    widget.setAttribute('data-tui-value', (valueEl && valueEl.value.trim()) || value);
+    markEl(widget, 'filled');
+    if (valueEl) markEl(valueEl, 'filled');
+    return 'picked';
+  }
+  const widgetSteps: string[] = [];
+  // jqx 学校列表使用虚拟渲染，目标学校可能根本不在当前 DOM 中。
+  // 优先通过主世界白名单桥调用组件 getItems/selectItem；失败才回退到可见选项点选。
+  const jqxResult = await mainWorldJqxSelectLabel(doc, widget, value);
+  widgetSteps.push(jqxResult.ok ? 'jqx-api-selected' : `jqx-api-${jqxResult.reason || 'failed'}`);
+  if (jqxResult.ok) {
+    await sleep(180);
+    if (committed()) {
+      widget.setAttribute('data-tui-value', (valueEl && valueEl.value.trim()) || value);
+      markEl(widget, 'filled');
+      if (valueEl) markEl(valueEl, 'filled');
+      writePickDebug(doc, widget, ['widget-api-pick'], false, 'picked');
+      return 'picked';
+    }
+  }
+  const open = (): void => {
+    try {
+      widget.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      widget.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    } catch {
+      // 忽略
+    }
+    try {
+      widget.click();
+    } catch {
+      // 忽略
+    }
+  };
+  open();
+  let filterFilled = false;
+  const tried = new Set<Element>();
+  for (let round = 0; round < 14; round++) {
+    await sleep(300);
+    if (!docAlive(doc)) return 'opened';
+    if (committed()) {
+      widget.setAttribute('data-tui-value', (valueEl && valueEl.value.trim()) || value);
+      markEl(widget, 'filled');
+      if (valueEl) markEl(valueEl, 'filled');
+      writePickDebug(doc, widget, ['widget-pick'], false, 'picked');
+      return 'picked';
+    }
+    // jqx 大数据下拉采用虚拟列表：DOM 初始只渲染前几所学校，其余项是空壳。
+    // 广工大列表自带“请查找”过滤框；输入档案值后由页面组件自行筛选，再按原流程点选并回读隐藏模型。
+    if (!filterFilled) {
+      const listBoxId = widget.getAttribute('aria-owns') || '';
+      let filterInput: HTMLInputElement | null = null;
+      if (listBoxId) {
+        filterInput = doc.getElementById(listBoxId)?.querySelector<HTMLInputElement>('.jqx-listbox-filter-input') || null;
+      }
+      filterInput ||= Array.from(doc.querySelectorAll<HTMLInputElement>('.jqx-listbox-filter-input')).find((input) => isVisible(input)) || null;
+      if (filterInput) {
+        widgetSteps.push('filter-found');
+        await setJqxFilterValue(filterInput, value);
+        filterFilled = true;
+        // jqx 会在 keyup 后异步过滤并重新渲染虚拟行，给远端数据源留出首轮响应时间。
+        await sleep(700);
+        const visibleOptionCount = Array.from(doc.querySelectorAll<HTMLElement>('[role="option"],.jqx-item,[class*="listitem"]'))
+          .filter((item) => isVisible(item) && !!(item.textContent || '').trim()).length;
+        widgetSteps.push(`filter-visible:${Math.min(visibleOptionCount, 999)}`);
+      }
+    }
+    // 依次按“档案值 → 别名”找浮层选项（英文选项页面靠别名命中）
+    let clicked = false;
+    for (const alias of aliasSet) {
+      const cands = findPickerOptionCandidates(doc, alias).filter((c) => !tried.has(c));
+      if (round === 0 && alias === aliasSet[0]) widgetSteps.push(`exact-candidates:${Math.min(cands.length, 99)}`);
+      if (!cands.length) continue;
+      if (round === 3) open(); // 列表可能被收起：重新展开一次
+      for (const cand of cands.slice(0, 3)) {
+        tried.add(cand);
+        try {
+          const h = cand as HTMLElement;
+          h.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+          h.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+          h.click();
+        } catch {
+          // 忽略
+        }
+        await sleep(350);
+        clicked = true;
+        if (committed()) {
+          widget.setAttribute('data-tui-value', (valueEl && valueEl.value.trim()) || value);
+          markEl(widget, 'filled');
+          if (valueEl) markEl(valueEl, 'filled');
+          writePickDebug(doc, widget, ['widget-pick'], false, 'picked');
+          return 'picked';
+        }
+      }
+      if (clicked) break; // 该别名已点过选项：本轮不再换别名连点，等回读或下一轮重试
+    }
+  }
+  // 未能安全点选：收起浮层（Escape），留下醒目提示交人工处理
+  try {
+    widget.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    doc.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+  } catch {
+    // 忽略
+  }
+  // 组件下拉没有候选时已经发送 Escape 收起；它不同于“需人工确认的弹窗”，不能返回 opened。
+  // 返回 none 后上层会继续处理后续 picker（例如本科学制），避免学校失败阻塞整条队列。
+  writePickDebug(doc, widget, ['widget-no-option', ...widgetSteps], false, 'none');
+  return 'none';
+}
 async function pickInPageInner(doc: Document, el: Element, trigger: Element, value: string, isAborted: () => boolean, context?: PopupPickContext): Promise<'picked' | 'opened' | 'none'> {
   await tryOpenPicker(doc, el, trigger); // 多策略点开弹层（检测不到也不中断）
   if (isAborted()) return 'none';

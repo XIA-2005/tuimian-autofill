@@ -1,6 +1,6 @@
 // 页面内悬浮操作中心（仅顶层 frame 创建）。
 
-import { FillTelemetryEvent, FillTelemetryState, isTelemetryBusy } from '../core/fill-telemetry';
+import { FillTelemetryEvent, FillTelemetryState } from '../core/fill-telemetry';
 
 export interface PanelHandlers {
   onAction(action: string): void;
@@ -17,7 +17,6 @@ const STAGES: Array<{ id: FillTelemetryState['stage']; text: string }> = [
   { id: 'picking', text: '弹窗' },
   { id: 'addingRows', text: '表格' },
   { id: 'verifying', text: '回读' },
-  { id: 'navigating', text: '下一步' },
 ];
 
 /** 功能：转义日志文字，禁止页面字段名称注入操作中心 HTML。 */
@@ -44,15 +43,14 @@ function ensure(): void {
     '</div>',
     '<div class="tui-status" role="status" aria-live="polite">📌 密码、验证码、文件上传和最终提交始终由你操作。</div>',
     '<div class="tui-btns">',
-    '<button type="button" data-act="fill" class="primary">⚡ 一键填充</button>',
-    '<button type="button" data-act="autofill" class="primary wide">🚀 连续填写（自动下一步）</button>',
-    '<button type="button" data-act="stopauto" class="wide tui-stop">⏹ 停止连续填写</button>',
+    '<button type="button" data-act="fill" class="primary wide">⚡ 一键填充（含自动加行与弹窗点选）</button>',
     '<button type="button" data-act="schools" class="wide">🏫 学校目录（报名入口）</button>',
     '<button type="button" data-act="check" class="wide">🩺 提交前体检</button>',
     '<button type="button" data-act="importprofile" class="wide">📥 从本页提取档案</button>',
     '<button type="button" data-act="sessioncrawl" class="wide">🧭 登录后会话爬取</button>',
     '<button type="button" data-act="copymissing">📋 复制漏填项</button>',
     '<button type="button" data-act="copyreport">🛠 复制字段报告</button>',
+    '<button type="button" data-act="clearfill" class="wide">🧽 清除本页已填</button>',
     '<button type="button" data-act="clear">🧹 清除高亮</button>',
     '</div>',
   ].join('');
@@ -139,16 +137,49 @@ export function renderPanelTelemetry(state: FillTelemetryState): void {
     log.innerHTML = visibleEvents.length ? visibleEvents.map(eventHtml).join('') : '<div class="tui-log-empty">当前筛选条件下没有记录。</div>';
     log.scrollTop = log.scrollHeight;
   }
-  const busy = isTelemetryBusy(state.stage);
-  el.querySelectorAll<HTMLButtonElement>('[data-act="fill"],[data-act="autofill"],[data-act="importprofile"],[data-act="sessioncrawl"]').forEach((button) => { button.disabled = busy; });
-  const stop = el.querySelector<HTMLButtonElement>('[data-act="stopauto"]');
-  if (stop) stop.disabled = !busy;
+}
+
+/** 功能：醒目 toast 通知——需要人工介入的关键事件（弹窗待选、行数上限、疑似假保存等）不再只躺在面板日志里。 */
+export function showToast(message: string, opts?: { tone?: 'info' | 'warn' | 'error'; duration?: number }): void {
+  try {
+    let host = document.getElementById('tui-toasts');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'tui-toasts';
+      host.setAttribute('role', 'alert');
+      host.setAttribute('aria-live', 'assertive');
+      (document.body || document.documentElement).appendChild(host);
+    }
+    const tone = opts?.tone || 'info';
+    while (host.children.length >= 4) host.firstElementChild?.remove();
+    const item = document.createElement('div');
+    item.className = `tui-toast tui-toast-${tone}`;
+    const icon = tone === 'error' ? '🔴' : tone === 'warn' ? '⚠️' : 'ℹ️';
+    item.innerHTML = `<span class="tui-toast-icon">${icon}</span><span class="tui-toast-text"></span><button type="button" class="tui-toast-close" title="知道了">✕</button>`;
+    item.querySelector('.tui-toast-text')!.textContent = message;
+    const dismiss = () => item.remove();
+    item.querySelector('.tui-toast-close')?.addEventListener('click', dismiss);
+    host.appendChild(item);
+    setTimeout(dismiss, opts?.duration ?? (tone === 'info' ? 6000 : 10000));
+  } catch {
+    // toast 失败绝不影响填表主流程
+  }
 }
 
 export function initPanel(h: PanelHandlers): void { handlers = h; ensure(); }
 export function showPanel(): void { ensure(); if (el) el.style.display = ''; }
 export function hidePanel(): void { if (el) el.style.display = 'none'; }
 
+/**
+ * 功能：显式控制主操作按钮的可用性。
+ * 不再从遥测阶段推断忙态——迟到的日志事件（补填轮次/子框架回报）会把阶段翻回"进行中"，
+ * 曾导致填写完成后一键填充永久禁用（广东工业大学 ehall 页实测）。
+ */
+export function setPanelBusy(busy: boolean): void {
+  ensure();
+  if (!el) return;
+  el.querySelectorAll<HTMLButtonElement>('[data-act="fill"],[data-act="importprofile"],[data-act="sessioncrawl"],[data-act="clearfill"]').forEach((button) => { button.disabled = busy; });
+}
 /** 功能：显示非填充操作提示；填充期间的主状态由 renderPanelTelemetry 统一控制。 */
 export function setPanelStatus(text: string): void {
   ensure();

@@ -1,7 +1,7 @@
 // 日期控件驱动：统一处理原生日期框、My97/Laydate、Ant/Element 等文本型日期组件。
 
 export type DatePrecision = 'year' | 'month' | 'day';
-export type DateDriverKind = 'native-date' | 'native-month' | 'my97' | 'layui' | 'ant' | 'element' | 'jquery' | 'bootstrap' | 'text';
+export type DateDriverKind = 'native-date' | 'native-month' | 'my97' | 'layui' | 'ant' | 'element' | 'jquery' | 'bootstrap' | 'bhtc' | 'text';
 export type DateValueFormat = 'yyyy' | 'yyyyMM' | 'yyyy-MM' | 'yyyy/MM' | 'yyyy年MM月' | 'yyyyMMdd' | 'yyyy-MM-dd' | 'yyyy/MM/dd' | 'yyyy年MM月dd日';
 
 export interface DateFillResult {
@@ -39,8 +39,8 @@ function visible(el: Element): boolean {
 }
 
 function controlText(el: HTMLInputElement): string {
-  const wrap = el.closest('.ant-picker,.el-date-editor,.layui-input-inline,.form-item,.layui-form-item,.el-form-item,td,label,div');
-  return `${el.type} ${el.className} ${el.id} ${el.name} ${el.placeholder} ${wrap?.className || ''} ${wrap?.textContent || ''}`.toLowerCase();
+  const wrap = el.closest<HTMLElement>('.ant-picker,.el-date-editor,.layui-input-inline,.bhtc-input-group,[xtype="date-ym"],.form-item,.layui-form-item,.el-form-item,td,label,div');
+  return `${el.type} ${el.className} ${el.id} ${el.name} ${el.placeholder} ${wrap?.className || ''} ${wrap?.getAttribute('xtype') || ''} ${wrap?.getAttribute('data-caption') || ''} ${wrap?.getAttribute('data-name') || ''} ${wrap?.textContent || ''}`.toLowerCase();
 }
 
 /** 功能：识别日期组件族，识别结果仅决定安全写入与关闭策略，不执行任何保存操作。 */
@@ -53,6 +53,7 @@ export function detectDateDriver(el: HTMLInputElement): DateDriverKind {
   if (/ant-picker|ant-calendar/.test(text)) return 'ant';
   if (/el-date-editor|el-input__inner/.test(text) && /date|month|年月|日期/.test(text)) return 'element';
   if (/datepicker|hasdatepicker|ui-date/.test(text)) return 'jquery';
+  if (/bhtc-input-group|date-ym/.test(text)) return 'bhtc';
   if (/datetimepicker|form_datetime/.test(text)) return 'bootstrap';
   return 'text';
 }
@@ -101,6 +102,8 @@ function formatDate(parts: DateParts, precision: DatePrecision, el: HTMLInputEle
   const text = controlText(el);
   const separator = text.includes('/') ? '/' : text.includes('.') ? '.' : '-';
   if (precision === 'month') {
+    // 博思 BHTC 的 date-ym 模型回读格式固定为 YYYY-MM；“入学年月”只是标题，不能据此写成中文日期。
+    if (driver === 'bhtc') return `${parts.year}-${month}`;
     if (/yyyy\s*年|年月/.test(text) && !/yyyy[-/.]mm/i.test(text)) return `${parts.year}年${month}月`;
     if (/yyyymm/.test(text) || (driver === 'my97' && /dhu|紧凑/.test(text))) return `${parts.year}${month}`;
     return `${parts.year}${separator}${month}`;
@@ -235,6 +238,7 @@ function pickerPanel(doc: Document, contract?: DateDriverContract): HTMLElement 
     '.layui-laydate:not([style*="display: none"])',
     '.ui-datepicker:not([style*="display: none"])',
     '.bootstrap-datetimepicker-widget:not([style*="display: none"])',
+    '.bhtc-datetimepicker-widget:not([style*="display: none"])',
     '.datepicker:not([style*="display: none"])',
   ];
   for (const pickerDoc of pickerDocuments(doc)) {
@@ -275,11 +279,77 @@ function fireMouse(el: HTMLElement): void {
   el.dispatchEvent(new MouseCtor('click', { bubbles: true, cancelable: true }));
 }
 
+/**
+ * 功能：操作博思 BHTC 年月面板，依次切换到年份视图、选择年份、再选择月份。
+ *
+ * 原理说明：`date-ym` 初次展开仍显示“日”视图，直接搜索月份会点到隐藏节点。
+ * 因此每一步只操作当前可见的 `.bhtc-datepicker-*` 子面板，并通过
+ * `data-action=selectYear/selectMonth` 使用页面自身事件更新内部模型。
+ */
+async function operateBhtcMonthPanel(panel: HTMLElement, parts: DateParts): Promise<boolean> {
+  const targetYear = Number(parts.year);
+  const targetMonth = Number(parts.month || 1);
+  const section = (selector: string): HTMLElement | null =>
+    Array.from(panel.querySelectorAll<HTMLElement>(selector)).find(visible) || null;
+
+  let monthSection = section('.bhtc-datepicker-months');
+  if (!monthSection) {
+    const daySection = section('.bhtc-datepicker-days');
+    const switcher = daySection?.querySelector<HTMLElement>('.bhtc-picker-switch');
+    if (!switcher) return false;
+    fireMouse(switcher);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    monthSection = section('.bhtc-datepicker-months');
+  }
+  if (!monthSection) return false;
+
+  const yearSwitcher = monthSection.querySelector<HTMLElement>('.bhtc-picker-switch');
+  if (!yearSwitcher) return false;
+  fireMouse(yearSwitcher);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  let yearSection = section('.bhtc-datepicker-years');
+  if (!yearSection) return false;
+  let yearChoice: HTMLElement | null = null;
+  // 每次翻动一组年份；20 组足以覆盖合理的教育经历范围，同时避免失控点击。
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const years = Array.from(yearSection.querySelectorAll<HTMLElement>('span.year[data-action="selectYear"]'))
+      .filter((item) => visible(item) && !/disabled/.test(item.className));
+    yearChoice = years.find((item) => Number((item.textContent || '').trim()) === targetYear) || null;
+    if (yearChoice) break;
+    const values = years.map((item) => Number((item.textContent || '').trim())).filter(Number.isFinite);
+    if (!values.length) break;
+    const direction = targetYear < Math.min(...values) ? 'previous' : 'next';
+    const nav = yearSection.querySelector<HTMLElement>(`[data-action="${direction}"]`);
+    if (!nav || !visible(nav)) break;
+    fireMouse(nav);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    yearSection = section('.bhtc-datepicker-years') || yearSection;
+  }
+  if (!yearChoice) return false;
+  fireMouse(yearChoice);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  monthSection = section('.bhtc-datepicker-months');
+  if (!monthSection) return false;
+  const monthChoice = Array.from(monthSection.querySelectorAll<HTMLElement>('span.month[data-action="selectMonth"]'))
+    .find((item) => visible(item) && Number((item.textContent || '').replace(/\D/g, '')) === targetMonth && !/disabled/.test(item.className));
+  if (!monthChoice) return false;
+  fireMouse(monthChoice);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  return true;
+}
+
 async function operatePickerPanel(el: HTMLInputElement, parts: DateParts, precision: DatePrecision, contract?: DateDriverContract): Promise<boolean> {
   fireMouse(el);
   await new Promise((resolve) => setTimeout(resolve, 180));
   let panel = pickerPanel(el.ownerDocument, contract);
   if (!panel) return false;
+  if (detectDateDriver(el) === 'bhtc' && precision === 'month') {
+    const picked = await operateBhtcMonthPanel(panel, parts);
+    dismissDatePicker(el);
+    return picked;
+  }
   const targetYear = Number(parts.year);
   const targetMonth = Number(parts.month || 1);
   // 月面板可在有限范围内安全翻页；超出 120 个月时保留直接写入，避免大量点击。

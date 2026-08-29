@@ -195,12 +195,21 @@ function looksLikePicker(root: HTMLElement): boolean {
   return !!root.querySelector('select,table,[role="listbox"],[role="tree"],[onclick]') || /(查询|搜索|选择|选取|确定|学校|院校|专业)/.test(text);
 }
 
+/**
+ * 扩展自身 UI 容器：这些元素永远不是页面的选择器弹层。
+ * 面板运行日志会显示“弹窗选择框…”等文案且 class/id 命中 [class*="panel"] 弹层选择器，
+ * 若不排除会被误判成“选择器已打开”，触发按钮永远不会被点击（合工大教育步骤 scope-found→exhausted 的根因）。
+ */
+const EXTENSION_UI_SEL = '[id^="tui-"], [class*="tui-panel"], [class*="tui-banner"], [class*="tui-fill-banner"]';
+
 /** 功能：定位 chooseSch/chooseZy 打开的同源 iframe，以及常见 UI 框架的页内弹层。 */
 function pickerScopes(doc: Document, context: PopupPickContext): PickerScope[] {
   const scopes: PickerScope[] = [];
   const seen = new Set<HTMLElement>();
   const add = (scopeDoc: Document, root: HTMLElement): void => {
-    if (!seen.has(root) && visible(root) && looksLikePicker(root)) {
+    if (seen.has(root)) return;
+    if (root.closest(EXTENSION_UI_SEL)) return;
+    if (visible(root) && looksLikePicker(root)) {
       seen.add(root);
       scopes.push({ doc: scopeDoc, root });
     }
@@ -336,6 +345,15 @@ async function pickCascade(
   context: PopupPickContext,
   stages: string[],
 ): Promise<boolean> {
+  // 弹窗已具备“关键字+查询”能力、又没有级联下拉或级联标签时，逐级点选没有着力点：
+  // 结果表行由下方搜索路径的 findRow 精确处理（裸文本格不是可激活控件，点击无效果），
+  // 直接交给搜索路径，避免 16 轮空转烧掉整轮时间预算。
+  const hasVisibleSelect = pickerScopes(doc, context).some((scope) =>
+    Array.from(scope.root.querySelectorAll('select')).some(visible),
+  );
+  const hasSearchable = pickerScopes(doc, context).some((scope) => !!queryInput(scope) && !!queryButton(scope));
+  if (!(context.cascadeLabels || []).length && !hasVisibleSelect && hasSearchable) return false;
+
   const chooseLeaf = async (): Promise<boolean> => {
     for (const scope of pickerScopes(doc, context)) {
       const selects = Array.from(scope.root.querySelectorAll<HTMLSelectElement>('select')).filter(visible);
@@ -426,7 +444,7 @@ async function pickCascade(
   }
 
   // 级联变化可能异步重建第二级 select 或整个 iframe，因此每轮都重新定位上下文。
-  for (let poll = 0; poll < 16; poll++) {
+  for (let poll = 0; poll < 10; poll++) {
     if (await chooseLeaf()) return true;
     await delay(250);
   }

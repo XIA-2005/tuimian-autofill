@@ -2,10 +2,10 @@
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { canLockProfileRow, createRowState, emptyProfile, moveAtomicRow, normalizeProfile, setProfileCode, writeProfileValue } from '../src/core/profile';
-import { closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, fillLanguageExams, FillItem, findAchievementTable, findAwardTable, findExperienceTable, findPickerOption, pickInPage, sleep, trySetSelect } from '../src/core/filler';
+import { closeLeftoverPickers, clearPageFill, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, fillLanguageExams, FillItem, findAchievementTable, findAwardTable, findExperienceTable, findPickerOption, pickInPage, sleep, trySetSelect } from '../src/core/filler';
 import { scanSite } from '../src/core/scanner';
 import { importFromPage } from '../src/core/importer';
-import { findPickerTrigger } from '../src/core/matcher';
+import { findPickerTrigger, probeComponentDropdowns } from '../src/core/matcher';
 import { generateTestProfile } from '../src/core/testdata';
 import { isValidIdCard, runPreSubmitCheck } from '../src/core/checker';
 import { ADAPTERS, allAdapters, declarativeMatchUrl } from '../src/core/adapters';
@@ -22,14 +22,15 @@ import { resolveCodeNameBinding, verifyCodeNameBinding } from '../src/core/popup
 import { pickComponentOption } from '../src/core/component-select-drivers';
 import { pickSchool } from '../src/core/school-picker-driver';
 import { pickMajor } from '../src/core/major-picker-driver';
-import { autoAdvancePageKey, findDeclaredNextButton, visibleValidationErrors } from '../src/core/auto-advance';
 import { decideRowJobRound, nextRowJobIndex, ROW_JOB_FAIL_CAP } from '../src/core/row-job-progress';
 import { applyFillTelemetryCounts, createFillTelemetryState, redactTelemetryText, reduceFillTelemetry, restoreFillTelemetryState, safeTelemetryLabel } from '../src/core/fill-telemetry';
 import { installMainWorldBridge } from '../src/world/main-world';
-import { mainWorldJqueryClick, mainWorldReady, mainWorldVueModelWrite, requestMainWorld } from '../src/core/world-bridge';
+import { mainWorldJqueryClick, mainWorldJqxSelectLabel, mainWorldReady, mainWorldVueModelWrite, requestMainWorld } from '../src/core/world-bridge';
 import { isLockedControl, withUnlocked } from '../src/core/unlock';
 import { detectFakeSave, snapshotTableEvidence } from '../src/core/save-guard';
 import { handleDialogAfterClick, visibleDialogRoots } from '../src/core/filler';
+import { applyRicherRows, blobLooksLike, encodeBlobRows, parseBlobRows, readStashedTableRows, scoreRows, syncTableBlobs } from '../src/core/hidden-blob';
+import { formatIssue, issueMeta } from '../src/core/error-codes';
 
 const html = readFileSync('test/fixture-form.html', 'utf8');
 const dom = new JSDOM(html, { url: 'https://example.edu.cn/gsapp/sys/wdyjsbm/tmybm/tbgrxx.do', runScripts: 'dangerously' });
@@ -453,7 +454,7 @@ check(restoreFillTelemetryState(JSON.stringify(storedTelemetry), 31 * 60_000) ==
   const hfutBasicDom = new JSDOM('<input id="xm"><input id="xmpy"><select id="mz"></select><a class="button bg-sub">显示敏感信息</a><button class="button bg-sub">下一步</button>', { url: 'https://yzbm.hfut.edu.cn/sstm/encrypted-token' });
   hfutBasicDom.window.Element.prototype.getBoundingClientRect = rect as never;
   const hfutBasicPage = matchAdapterPage(hfutPackage, hfutBasicDom.window.document, hfutBasicDom.window.location.href).page;
-  check(hfutBasicPage?.id === 'basic' && findDeclaredNextButton(hfutBasicDom.window.document, hfutBasicPage)?.textContent === '下一步', '合工大连续填写：基本信息页只选择真实 button 下一步，不误点显示敏感信息');
+  check(hfutBasicPage?.id === 'basic', '合工大适配包：基本信息页按稳定字段组合识别');
   const hfutEducationDom = new JSDOM(
     '<input id="bydwm" type="hidden"><input id="bydw" type="hidden"><input id="bkbydwShow"><span class="addon">选择</span>' +
     '<input id="byzydm" type="hidden"><input id="byzymc" type="hidden"><input id="bkbyzyShow"><span class="addon">选择</span>' +
@@ -472,7 +473,6 @@ check(restoreFillTelemetryState(JSON.stringify(storedTelemetry), 31 * 60_000) ==
   const hfutSubmitDom = new JSDOM('<button class="button bg-sub">确认提交</button>', { url: 'https://yzbm.hfut.edu.cn/sstm/submit-token' });
   hfutSubmitDom.window.Element.prototype.getBoundingClientRect = rect as never;
   const hfutSubmitPage = matchAdapterPage(hfutPackage, hfutSubmitDom.window.document, hfutSubmitDom.window.location.href).page!;
-  check(findDeclaredNextButton(hfutSubmitDom.window.document, hfutSubmitPage) === null, '合工大连续填写：申请信息提交页绝不点击确认提交');
   check(nextRowJobIndex(0, 3) === 3 && nextRowJobIndex(3, 3) === 6, '动态表格进度：按本轮起点累计，新增行断点不得造成双重加法');
   check(nextRowJobIndex(0, 5, 13) === 13, '动态表格进度：页面已有行的完成证据能够推进断点');
   check(matchAdapterPackage('https://zhaosheng.eol.cn/99999/user/apply')?.id !== 'shmtu-sszs', '适配包：上海海事大学严格隔离 /10254/');
@@ -522,19 +522,6 @@ check(restoreFillTelemetryState(JSON.stringify(storedTelemetry), 31 * 60_000) ==
   let coreRejected = false;
   try { validateRemoteRules({ schemaVersion: 1, minCoreVersion: '99.0.0', adapters: [], packages: [] }); } catch { coreRejected = true; }
   check(coreRejected, '规则候选校验：最低核心版本不满足时拒绝切换');
-
-  const navDom = new JSDOM(
-    '<button class="button bg-sub">下一步</button><button class="button bg-sub">最终提交</button><span class="field-validation-error">日期格式错误</span>',
-    { url: 'https://yjsy.ustb.edu.cn/ksxt/ssxly/example' },
-  );
-  navDom.window.Element.prototype.getBoundingClientRect = rect as never;
-  const navPage = ustbPackage.pages[0];
-  const safeNext = findDeclaredNextButton(navDom.window.document, navPage);
-  check(safeNext?.textContent === '下一步', '连续填写：只选择适配包声明且文案精确匹配的下一步按钮');
-  safeNext?.remove();
-  check(findDeclaredNextButton(navDom.window.document, navPage) === null, '连续填写：最终提交即使命中同一 CSS 选择器也绝不点击');
-  check(visibleValidationErrors(navDom.window.document, navPage).length === 1, '连续填写：点击前可识别服务器返回的可见校验错误');
-  check(!autoAdvancePageKey(navDom.window.document, navPage).includes('日期格式错误'), '连续填写：步骤签名不记录字段值或错误内容');
 }
 
 // 导入家庭成员按姓名合并，不覆盖已有成员
@@ -683,6 +670,7 @@ void (async () => {
     w.document.body.appendChild(zyCell);
     const rz = await pickInPage(w.document, zyCell.querySelector('[name="zyT"]')!, '测控技术与仪器');
     check(rz === 'picked', '专业选择器：类别过滤后关键字查询点选成功');
+    console.log('DBG rz=', rz, w.sessionStorage.getItem('tui-pick-debug'));
     check((zd.querySelector('select') as HTMLSelectElement).value === '8' && !!zd.querySelector('[data-hit="1"]'), '专业选择器：类别自动设为工学（门类猜测）');
     frameZy.remove();
     zyCell.remove();
@@ -1015,7 +1003,7 @@ void (async () => {
 
   // 主世界桥：白名单命令在页面自身 JS 环境执行；危险全局拒绝；未装桥时快速失败不空等
   {
-    const wB = new JSDOM('<body><div id="bHost"><input id="bIn" v-model="form.school"></div><button id="bBtn"></button></body>', { url: 'https://x.example.edu.cn/world' });
+    const wB = new JSDOM('<body><div id="bHost"><input id="bIn" v-model="form.school"></div><button id="bBtn"></button><div id="bJqx"></div></body>', { url: 'https://x.example.edu.cn/world' });
     const dB = wB.window.document;
     wB.window.Element.prototype.getBoundingClientRect = rect as never;
     installMainWorldBridge(dB);
@@ -1036,11 +1024,25 @@ void (async () => {
     check(!unknown.ok && unknown.reason === 'unknown-cmd', '未注册命令被拒绝');
 
     let jqueryTarget: Element | null = null;
-    const jqueryStub: any = (el: Element) => ({ trigger: (type: string) => { void type; jqueryTarget = el; } });
-    jqueryStub.fn = {};
+    let jqxSelected = '';
+    const jqxItems = [{ label: '华南理工大学' }, { label: '西安理工大学' }];
+    const jqueryStub: any = (el: Element) => ({
+      trigger: (type: string) => { void type; jqueryTarget = el; },
+      jqxDropDownList: (command: string, item?: { label?: string }) => {
+        if (command === 'getItems') return jqxItems;
+        if (command === 'selectItem' && item) jqxSelected = item.label || '';
+        return undefined;
+      },
+    });
+    jqueryStub.fn = { jqxDropDownList() { /* 只用于证明页面已加载 jqx 插件 */ } };
     (wB.window as any).jQuery = jqueryStub;
     const clicked = await mainWorldJqueryClick(dB, dB.getElementById('bBtn')!);
     check(clicked && jqueryTarget === dB.getElementById('bBtn'), 'jquery-click 经主世界桥触发目标元素');
+
+    const jqxPicked = await mainWorldJqxSelectLabel(dB, dB.getElementById('bJqx')!, '西安理工大学');
+    check(jqxPicked.ok && jqxSelected === '西安理工大学', 'jqx-select-label 通过完整数据模型精确选中虚拟列表项');
+    const jqxUnsafeFuzzy = await mainWorldJqxSelectLabel(dB, dB.getElementById('bJqx')!, '华南理工大学广州国际校区');
+    check(!jqxUnsafeFuzzy.ok && jqxUnsafeFuzzy.reason === 'no-match' && jqxSelected === '西安理工大学', 'jqx-select-label 拒绝用过短选项反向模糊匹配长学校名');
 
     const host = dB.getElementById('bHost')!;
     (host as any).__vue__ = {
@@ -1217,6 +1219,442 @@ void (async () => {
 
     const emptyBefore = snapshotTableEvidence(clearedDoc);
     check(detectFakeSave(emptyBefore, clearedDoc) === null, '此前无已填内容 → 不告警');
+  }
+
+  // ===== 隐藏行串（川大/长大式"可见子表+隐藏行码串"）：编解码/同步/跨页 stash/富者优先 =====
+  {
+    const rows = [['2024-10', '奖学金A'], ['2024-11', '奖学金B']];
+    const encoded = encodeBlobRows(rows);
+    check(encoded === '2024-10|奖学金A#2024-11|奖学金B', '隐藏行串编码：| 连格、# 连行');
+    check(JSON.stringify(parseBlobRows(encoded)) === JSON.stringify(rows), '隐藏行串解码与编码互逆');
+    check(encodeBlobRows([['a|b', 'c#d']]) === 'a／b|c＃d', '单元格中的连接符替换为全角，防止串结构破坏');
+    const capped = encodeBlobRows(Array.from({ length: 6 }, (_, i) => [`奖项${i}`, 'x'.repeat(200)]));
+    check(capped.length <= 810 && capped.split('#').length === 6, '超软上限时缩格保行：所有行都保留');
+    check(encodeBlobRows([['只有一行', '', '']]) === '只有一行', '尾部空格修剪、空行丢弃');
+    check(blobLooksLike('2023-01|旧奖#2023-06|旧奖2') === true, '多行串识别为行码串');
+    check(blobLooksLike('a|b') === false && blobLooksLike('10700') === false && blobLooksLike('') === false, '单格/两格单行/空值不误判为行码串');
+    check(scoreRows([['a', ''], ['b', 'c']]) === 3, '富者优先评分 = 非空单元格数');
+    check(scoreRows(applyRicherRows([['a', 'b']], [['x'], ['y', 'z']])) === 3, '富者优先取更富的一组');
+
+    const wBlob = new JSDOM(
+      '<body><form><table id="blobT"><tbody><tr><th>时间</th><th>名称</th></tr>' +
+        '<tr><td><input name="bt0"></td><td><input name="bn0"></td></tr>' +
+        '<tr><td><input name="bt1"></td><td><input name="bn1"></td></tr></tbody></table>' +
+        '<input type="hidden" id="jlcf" value="2023-01|旧奖#2023-06|旧奖2"></form></body>',
+      { url: 'https://x.example.edu.cn/blob' },
+    );
+    const dB = wBlob.window.document;
+    wBlob.window.Element.prototype.getBoundingClientRect = rect as never;
+    const blobTable = dB.querySelector('#blobT') as HTMLTableElement;
+    const blobHidden = dB.querySelector('#jlcf') as HTMLInputElement;
+    (dB.querySelector('[name="bt0"]') as HTMLInputElement).value = '2024-10';
+    (dB.querySelector('[name="bn0"]') as HTMLInputElement).value = '新奖';
+    (dB.querySelector('[name="bt1"]') as HTMLInputElement).value = '2024-11';
+    (dB.querySelector('[name="bn1"]') as HTMLInputElement).value = '新奖2';
+    const out1 = syncTableBlobs(dB, blobTable, { stashKey: 'table:awards' });
+    check(blobHidden.value === '2024-10|新奖#2024-11|新奖2' && out1.synced.length === 1, '写完可见表后隐藏行串按页面实况重编码同步');
+    const stashed1 = readStashedTableRows(dB, 'table:awards');
+    check(!!stashed1 && stashed1.length === 2 && stashed1[0][1] === '新奖', '同步后实况行落盘跨页 stash');
+    // 第二行实况被清空（模拟回发丢行）：隐藏串更富 → 不覆盖并落盘证据
+    (dB.querySelector('[name="bt1"]') as HTMLInputElement).value = '';
+    (dB.querySelector('[name="bn1"]') as HTMLInputElement).value = '';
+    blobHidden.value = '2024-10|新奖#2023-06|旧奖2';
+    const out3 = syncTableBlobs(dB, blobTable, { stashKey: 'table:awards' });
+    check(out3.keptRicher.length === 1 && out3.synced.length === 0 && blobHidden.value === '2024-10|新奖#2023-06|旧奖2', '隐藏串比实况更富时不覆盖（疑似回发丢行证据）');
+    const stashed3 = readStashedTableRows(dB, 'table:awards');
+    check(!!stashed3 && stashed3.length === 2, '更富的旧串落盘 stash 供断点续填核对');
+  }
+
+  // ===== 组件下拉（无原生 select 的 jqx/"请选择..." 组件，广东工业大学 ehall 实测形态） =====
+  {
+    const wWdg = new JSDOM(
+      '<body><table>' +
+      '<tr><td>性别</td><td><input type="hidden" name="XB"><div class="bhtc-input-group"><span class="bhtc-dropdown">请选择...</span><span class="bhtc-input-group-addon"></span></div></td></tr>' +
+      '<tr><td>政治面貌</td><td><input type="hidden" name="ZZMM"><span class="jqx-dropdownlist-state-normal"><div class="jqx-dropdownlist-content">请选择...</span></div></span></td></tr>' +
+      '<tr><td>民族</td><td><span class="bhtc-dropdown">请选择...</span></td></tr>' +
+      '</table></body>',
+      { url: 'https://ehall.example.edu.cn/gsapp/x' },
+    );
+    wWdg.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dWdg = wWdg.window.document;
+    const pWdg = emptyProfile();
+    pWdg.basic.gender = '男';
+    pWdg.basic.politicalStatus = '共青团员';
+    pWdg.basic.nation = '汉族';
+    const resWdg = fillAll(pWdg, dWdg);
+    // 模拟组件行为：点开组件 → body 级浮层 ul/li → 点选项后组件脚本写隐藏域/组件文本
+    const optionFor = (kind: string): string[] => (kind === "XB" ? ["男", "女"] : kind === "ZZMM" ? ["群众", "中共党员", "共青团员"] : ["汉族", "回族"]);
+    dWdg.querySelectorAll("[data-tui-widget='dropdown']").forEach((widget: Element) => {
+      const el = widget as HTMLElement;
+      const key = el.getAttribute('data-tui-widget-key') || '';
+      const kind = key.includes("basic.gender") ? "XB" : key.includes("politicalStatus") ? "ZZMM" : "MZ";
+      el.addEventListener('click', () => {
+        dWdg.querySelector('.wdg-pop')?.remove();
+        const pop = dWdg.createElement('ul');
+        pop.className = 'wdg-pop';
+        for (const opt of optionFor(kind)) {
+          const li = dWdg.createElement('li');
+          li.textContent = opt;
+          li.addEventListener('click', () => {
+            const carrier = dWdg.querySelector(`[data-tui-widget-key="${key}"][data-tui-widget="dropdown-value"]`) as HTMLInputElement | null;
+            if (carrier) carrier.value = opt;
+            el.textContent = opt;
+            el.setAttribute('data-tui-value', opt);
+            pop.remove();
+          });
+          pop.appendChild(li);
+        }
+        dWdg.body.appendChild(pop);
+      });
+    });
+    const wdgItems = resWdg.items.filter((i) => i.status === "picker");
+    check(wdgItems.length === 3, `组件下拉识别：性别/政治面貌/民族 3 个组件字段进入弹窗点选流程（实际 ${wdgItems.length}）`);
+    const xbCarrier = dWdg.querySelector('[name="XB"]') as HTMLInputElement;
+    const zzmmCarrier = dWdg.querySelector('[name="ZZMM"]') as HTMLInputElement;
+    const xbWidget = dWdg.querySelector('[data-tui-widget="dropdown"][data-tui-widget-key*="gender"]') as HTMLElement;
+    const nationWidget = dWdg.querySelector('[data-tui-widget="dropdown"][data-tui-widget-key*="nation"]') as HTMLElement;
+    const xbPick = await pickInPage(dWdg, xbCarrier, '男');
+    console.log('DBG xbPick=', xbPick, 'carrier=', JSON.stringify(xbCarrier.value), 'widget=', JSON.stringify(xbWidget.textContent), 'debug=', wWdg.window.sessionStorage.getItem('tui-pick-debug'));
+    check(xbPick === 'picked' && xbCarrier.value === '男' && xbWidget.textContent === '男', '组件下拉：性别点开浮层点选后组件脚本写回值与文本');
+    const zzmmPick = await pickInPage(dWdg, zzmmCarrier, '共青团员');
+    check(zzmmPick === 'picked' && zzmmCarrier.value === '共青团员', '组件下拉：政治面貌在多选项中精确点选');
+    const nationPick = await pickInPage(dWdg, nationWidget, '汉族');
+    check(nationPick === 'picked' && nationWidget.textContent === '汉族' && nationWidget.getAttribute('data-tui-value') === '汉族', '组件下拉：无隐藏域组件以组件文本为值载体并打已选标记');
+    const xbRepeat = await pickInPage(dWdg, xbCarrier, '男');
+    check(xbRepeat === 'picked', '组件下拉：已选组件幂等跳过，不重复弹层');
+  }
+  // ===== 组件下拉（广工大 ehall 完整形态）：英文选项 jqx-item 预渲染 + 显示输入框 + 标签格分离 =====
+  {
+    const wGdut = new JSDOM(
+      '<body><table>' +
+      '<tr><td>性别</td><td><div class="bhtc-input-group"><input type="text" class="jqx-display-input"><span class="bhtc-dropdown">请选择...</span>' +
+      '<span class="jqx-listitem-state-normal jqx-item">Male</span><span class="jqx-listitem-state-normal jqx-item">Female</span></div></td></tr>' +
+      '<tr><td>政治面貌</td><td><input type="hidden" name="ZZMM"><span class="bhtc-dropdown">请选择...</span>' +
+      '<span class="jqx-listitem-state-normal jqx-item">中共党员</span><span class="jqx-listitem-state-normal jqx-item">共青团员</span><span class="jqx-listitem-state-normal jqx-item">群众</span></td></tr>' +
+      '</table></body>',
+      { url: 'https://ehall.gdut.example.edu.cn/gsapp/x' },
+    );
+    wGdut.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dGdut = wGdut.window.document;
+    const pGdut = emptyProfile();
+    pGdut.basic.gender = '男';
+    pGdut.basic.politicalStatus = '共青团员';
+    const resGdut = fillAll(pGdut, dGdut);
+    const gdutPickers = resGdut.items.filter((i) => i.status === 'picker');
+    check(gdutPickers.length === 2 && gdutPickers.some((i) => i.label === '性别') && gdutPickers.some((i) => i.label === '政治面貌'), '广工大形态：选项列表污染被剥离，性别/政治面貌按前格标签识别为组件点选');
+    check(!resGdut.items.some((i) => i.status === 'noMatch'), '广工大形态：jqx 显示输入框被认领为值载体，不再产生 noMatch 噪音');
+    // 模拟 jqx 组件脚本：点选项后写显示输入框/隐藏域
+    const gdutDisplay = dGdut.querySelector('.jqx-display-input') as HTMLInputElement;
+    dGdut.querySelectorAll('.jqx-item').forEach((opt: Element) => {
+      opt.addEventListener('click', () => {
+        const text = (opt as HTMLElement).textContent || '';
+        if (text === 'Male' || text === 'Female') {
+          gdutDisplay.value = text;
+          (dGdut.querySelector('.bhtc-dropdown') as HTMLElement).textContent = text;
+        } else {
+          (dGdut.querySelector('[name="ZZMM"]') as HTMLInputElement).value = text;
+          (dGdut.querySelectorAll('.bhtc-dropdown')[1] as HTMLElement).textContent = text;
+        }
+      });
+    });
+    const gdutGenderPick = await pickInPage(dGdut, gdutDisplay, '男');
+    check(gdutGenderPick === 'picked' && gdutDisplay.value === 'Male', '广工大形态：性别按别名（男→male）点中英文选项 Male 并回读通过');
+    const gdutZZPick = await pickInPage(dGdut, dGdut.querySelector('[name="ZZMM"]') as HTMLInputElement, '共青团员');
+    check(gdutZZPick === 'picked' && (dGdut.querySelector('[name="ZZMM"]') as HTMLInputElement).value === '共青团员', '广工大形态：政治面貌在预渲染选项列表中精确点选');
+  }
+  // ===== 组件下拉（真实 jqx 嵌套）：最近包装层没有标签，标签与隐藏值字段位于外层 td =====
+  {
+    const wNestedGdut = new JSDOM(
+      '<body><table>' +
+      '<tr><td>性别</td><td><input type="hidden" name="XB"><div class="input-group"><div class="jqx-widget"><span>请选择...</span></div><span class="bhtc-input-group-addon"></span></div></td></tr>' +
+      '<tr><td>政治面貌</td><td><input type="hidden" name="ZZMM"><div class="input-group"><div class="jqx-widget"><span>请选择...</span></div><span class="bhtc-input-group-addon"></span></div></td></tr>' +
+      '</table></body>',
+      { url: 'https://ehall.gdut.example.edu.cn/gsapp/nested' },
+    );
+    wNestedGdut.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dNestedGdut = wNestedGdut.window.document;
+    const pNestedGdut = emptyProfile();
+    pNestedGdut.basic.gender = '男';
+    pNestedGdut.basic.politicalStatus = '共青团员';
+    const nestedResult = fillAll(pNestedGdut, dNestedGdut);
+    const nestedPickers = nestedResult.items.filter((item) => item.status === 'picker');
+    check(
+      nestedPickers.length === 2 && nestedPickers.some((item) => item.field === 'basic.gender') && nestedPickers.some((item) => item.field === 'basic.politicalStatus'),
+      '广工大真实嵌套：跨过无标签 input-group，按外层 td 前一格识别性别与政治面貌',
+    );
+    check(
+      (dNestedGdut.querySelector('[name="XB"]') as HTMLElement).getAttribute('data-tui-widget') === 'dropdown-value' &&
+      (dNestedGdut.querySelector('[name="ZZMM"]') as HTMLElement).getAttribute('data-tui-widget') === 'dropdown-value',
+      '广工大真实嵌套：外层 td 中的 XB/ZZMM 隐藏字段被认领为组件值载体',
+    );
+  }
+  // ===== 组件下拉（零尺寸文字节点 + 页面自身含 tui- 类名）不得被误过滤 =====
+  {
+    const wZeroWidget = new JSDOM(
+      '<body><table><tr><td>性别</td><td><input type="hidden" name="XB"><div class="wisedu-tui-dropdown jqx-dropdownlist" id="genderWidget"><span>请选择...</span></div></td></tr></table></body>',
+      { url: 'https://ehall.gdut.example.edu.cn/gsapp/zero-size' },
+    );
+    const dZeroWidget = wZeroWidget.window.document;
+    wZeroWidget.window.Element.prototype.getBoundingClientRect = function (this: Element) {
+      return this.tagName === 'SPAN' ? ({ width: 0, height: 0 } as DOMRect) : rect();
+    } as never;
+    const pZeroWidget = emptyProfile();
+    pZeroWidget.basic.gender = '男';
+    const zeroResult = fillAll(pZeroWidget, dZeroWidget);
+    check(zeroResult.items.some((item) => item.field === 'basic.gender' && item.status === 'picker'), '广工大零尺寸占位：向上解析可见 jqx 组件且不被页面 tui- 类名误过滤');
+    const zeroProbe = probeComponentDropdowns(dZeroWidget);
+    check(zeroProbe.length === 1 && zeroProbe[0].rawVisible === false && zeroProbe[0].triggerId === 'genderWidget' && zeroProbe[0].fieldAttrs.includes('input:XB'), '组件探针：脱敏输出零尺寸原因、点击本体和字段属性名');
+  }
+  // ===== 组件下拉（广工大真实结构）：bh-form-group + data-caption + 懒加载弹层 + 无名隐藏域写码 =====
+  {
+    const wBh = new JSDOM(
+      '<body><form>' +
+      '<div class="bh-form-group bh-required"><label>性别</label>' +
+      '<div class="bh-ph-8 bh-form-readonly-input"><input type="hidden">' +
+      '<div class="jqx-widget jqx-dropdownlist-state-normal" data-caption="性别" data-name="XBM" role="combobox" aria-owns="listBoxG">' +
+      '<div class="jqx-dropdownlist-content"><span>请选择...</span></div></div></div></div>' +
+      '<div class="bh-form-group bh-required"><label>政治面貌</label>' +
+      '<div class="bh-ph-8 bh-form-readonly-input"><input type="hidden">' +
+      '<div class="jqx-widget jqx-dropdownlist-state-normal" data-caption="政治面貌" data-name="ZZMMM" role="combobox" aria-owns="listBoxZ">' +
+      '<div class="jqx-dropdownlist-content"><span>请选择...</span></div></div></div></div>' +
+      '</form></body>',
+      { url: 'https://ehall.gdut.example.edu.cn/gsapp/y' },
+    );
+    wBh.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dBh = wBh.window.document;
+    // 模拟真实行为：点击组件后约 800ms 才从 data-url 异步渲染选项（广工大实测弹层打开前 DOM 里 0 个选项）；
+    // 点选项后博思框架把代码写入无名隐藏域，并把组件显示文本改为所选标签
+    const bhCodes: Record<string, Record<string, string>> = { 性别: { 男: '1', 女: '2' }, 政治面貌: { 共青团员: '03', 中共党员: '01', 群众: '13' } };
+    const pBh = emptyProfile();
+    pBh.basic.gender = '男';
+    pBh.basic.politicalStatus = '共青团员';
+    const resBh = fillAll(pBh, dBh);
+    const bhPickers = resBh.items.filter((i) => i.status === 'picker');
+    check(bhPickers.length === 2 && bhPickers.some((i) => i.label === '性别') && bhPickers.some((i) => i.label === '政治面貌'), '博思结构：data-caption 识别性别/政治面貌，bh-form-group 作用域命中');
+    check(!resBh.items.some((i) => i.status === 'noMatch'), '博思结构：无名隐藏域载体不产生 noMatch 噪音');
+    // fillAll 打上标记后，再为组件根接上模拟的懒加载弹层行为（点击事件绑定在 jqx 组件根上）
+    for (const widget of Array.from(dBh.querySelectorAll('.jqx-widget[data-tui-widget="dropdown"]')) as HTMLElement[]) {
+      const caption = widget.getAttribute('data-caption') || '';
+      const listBoxId = widget.getAttribute('aria-owns') || 'listBoxX';
+      widget.addEventListener('click', () => {
+        setTimeout(() => {
+          if (dBh.querySelector('#' + listBoxId)) return;
+          const pop = dBh.createElement('div');
+          pop.id = listBoxId;
+          pop.className = 'jqx-listbox';
+          for (const opt of Object.keys(bhCodes[caption] || {})) {
+            const item = dBh.createElement('span');
+            item.className = 'jqx-listitem-state-normal jqx-item';
+            item.textContent = opt;
+            item.addEventListener('click', () => {
+              const carrier = widget.closest('.bh-ph-8')?.querySelector('input[type="hidden"]') as HTMLInputElement;
+              if (carrier) carrier.value = bhCodes[caption][opt] || '';
+              (widget.querySelector('.jqx-dropdownlist-content span') as HTMLElement).textContent = opt;
+              pop.remove();
+            });
+            pop.appendChild(item);
+          }
+          dBh.body.appendChild(pop);
+        }, 800);
+      });
+    }
+    const bhCarriers = Array.from(dBh.querySelectorAll('[data-tui-widget="dropdown-value"]')) as HTMLInputElement[];
+    check(bhCarriers.length === 2, `博思结构：两个组件都认领到值载体（实际 ${bhCarriers.length}）`);
+    const bhGenderPick = await pickInPage(dBh, bhCarriers[0], '男');
+    console.log('DBG bh clicks=', (wBh.window as any)._bhClicks, 'popFlag=', !!(wBh.window as any)._bhPop, 'popInDom=', !!dBh.querySelector('.jqx-listbox'), 'pick=', bhGenderPick);
+    check(bhGenderPick === 'picked' && bhCarriers[0].value === '1', '博思结构：性别懒加载选项点选后隐藏域写入代码 1（男→male 别名或代码回读）');
+    const bhZZPick = await pickInPage(dBh, bhCarriers[1], '共青团员');
+    check(bhZZPick === 'picked' && bhCarriers[1].value === '03', '博思结构：政治面貌懒加载点选并按 VALUE_ALIASES 回读代码 03');
+  }
+  // ===== 组件下拉（真实广工大结构）：可见文字 span 仍须提升到 role=combobox 的 jqx 根节点 =====
+  {
+    const wRoleWidget = new JSDOM(
+      '<body><div class="bh-form-group"><label>性别</label><div class="bh-ph-8 bh-form-readonly-input"><input type="hidden"><div id="realGenderWidget" role="combobox" class="jqx-widget jqx-dropdownlist-state-normal"><div id="dropdownlistWrapperrealGenderWidget"><div class="jqx-dropdownlist-content"><span>请选择...</span></div></div></div></div></div></body>',
+      { url: 'https://ehall.gdut.example.edu.cn/gsapp/role-combobox' },
+    );
+    wRoleWidget.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dRoleWidget = wRoleWidget.window.document;
+    const pRoleWidget = emptyProfile();
+    pRoleWidget.basic.gender = '男';
+    const roleResult = fillAll(pRoleWidget, dRoleWidget);
+    const roleRoot = dRoleWidget.querySelector('#realGenderWidget') as HTMLElement;
+    const roleText = roleRoot.querySelector('span') as HTMLElement;
+    check(roleResult.items.some((item) => item.field === 'basic.gender' && item.status === 'picker'), '广工大真实 jqx：可见文字 span 通过外层标签识别为性别组件');
+    check(roleRoot.getAttribute('data-tui-widget') === 'dropdown' && !roleText.hasAttribute('data-tui-widget'), '广工大真实 jqx：点选标记绑定 role=combobox 根节点而非内层文字 span');
+  }
+  // ===== 广工大教育页：data-caption 优先，排名百分比/整数名次/同年级人数不得串字段 =====
+  {
+    const wGdutEducation = new JSDOM(
+      '<body>' +
+      '<div class="bh-form-group" data-caption="前五学期总评成绩在所学专业同年级的排名（百分比）"><input name="PMBFB"><span>%</span></div>' +
+      '<div class="bh-form-group" data-caption="前五学期总评成绩在所学专业同年级的排名（整数）"><input name="SZZYTNJPM"><span>（若无准确排名，可不填）</span></div>' +
+      '<div class="bh-form-group" data-caption="所在专业同年级人数"><input name="SZZYTNJRS"></div>' +
+      '</body>',
+      { url: 'https://ehall.gdut.example.edu.cn/gsapp/education' },
+    );
+    wGdutEducation.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dGdutEducation = wGdutEducation.window.document;
+    const pGdutEducation = emptyProfile();
+    pGdutEducation.education.className = '软件2101班';
+    pGdutEducation.education.major = '软件工程';
+    pGdutEducation.education.rank = '12';
+    pGdutEducation.education.rankBase = '120';
+    const rGdutEducation = fillAll(pGdutEducation, dGdutEducation);
+    check((dGdutEducation.querySelector('[name="PMBFB"]') as HTMLInputElement).value === '10', '广工大教育页：排名百分比按 12÷120×100 填写为 10，不误填班级');
+    check((dGdutEducation.querySelector('[name="SZZYTNJPM"]') as HTMLInputElement).value === '12', '广工大教育页：整数排名按 SZZYTNJPM 精确识别');
+    check((dGdutEducation.querySelector('[name="SZZYTNJRS"]') as HTMLInputElement).value === '120', '广工大教育页：所在专业同年级人数识别为排名基数，不误填专业');
+    check(rGdutEducation.items.some((item) => item.field === '#rankPercent' && item.label.includes('百分比')), '广工大教育页：data-caption 覆盖百分号辅助节点并保留真实标签');
+  }
+  // ===== 广工大学校下拉：先使用 jqx 内置过滤框，再点选虚拟列表结果 =====
+  {
+    const wGdutSchool = new JSDOM(
+      '<body><div class="bh-form-group"><label>所在学校</label><div class="bh-form-readonly-input"><input type="hidden">' +
+      '<div id="schoolWidget" role="combobox" class="jqx-widget jqx-dropdownlist-state-normal" data-caption="所在学校" aria-owns="schoolListBox">' +
+      '<div class="jqx-dropdownlist-content"><span>请选择...</span></div></div></div></div></body>',
+      { url: 'https://ehall.gdut.example.edu.cn/gsapp/school' },
+    );
+    wGdutSchool.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dGdutSchool = wGdutSchool.window.document;
+    const schoolWidget = dGdutSchool.querySelector('#schoolWidget') as HTMLElement;
+    schoolWidget.addEventListener('click', () => {
+      if (dGdutSchool.querySelector('#schoolListBox')) return;
+      const listBox = dGdutSchool.createElement('div');
+      listBox.id = 'schoolListBox';
+      listBox.className = 'jqx-listbox';
+      const filter = dGdutSchool.createElement('input');
+      filter.className = 'jqx-listbox-filter-input';
+      filter.placeholder = '请查找';
+      // 广工大实页 jqxListBox 在 keyup 后读取过滤框，而不是监听普通 input/change。
+      filter.addEventListener('keyup', () => {
+        listBox.querySelectorAll('[role="option"]').forEach((item: Element) => item.remove());
+        if (filter.value !== '西安交通大学') return;
+        const option = dGdutSchool.createElement('div');
+        option.setAttribute('role', 'option');
+        option.className = 'jqx-listitem-element jqx-item';
+        option.textContent = '西安交通大学';
+        option.addEventListener('click', () => {
+          (schoolWidget.querySelector('span') as HTMLElement).textContent = '西安交通大学';
+          (schoolWidget.parentElement?.querySelector('input[type="hidden"]') as HTMLInputElement).value = '10698';
+        });
+        listBox.appendChild(option);
+      });
+      listBox.appendChild(filter);
+      dGdutSchool.body.appendChild(listBox);
+    });
+    const pGdutSchool = emptyProfile();
+    pGdutSchool.education.university = '西安交通大学';
+    fillAll(pGdutSchool, dGdutSchool);
+    const schoolCarrier = dGdutSchool.querySelector('[data-tui-widget="dropdown-value"]') as HTMLInputElement;
+    const schoolPick = await pickInPage(dGdutSchool, schoolCarrier, '西安交通大学');
+    check(schoolPick === 'picked' && schoolCarrier.value === '10698', '广工大学校下拉：过滤虚拟列表后点选并回读隐藏学校代码');
+    const schoolRefill = fillAll(pGdutSchool, dGdutSchool);
+    check(!schoolRefill.items.some((item) => item.label === '请查找' || item.issueCode === 'E1101'), '广工大学校下拉：jqx 内部“请查找”过滤框不进入字段报告');
+    schoolCarrier.value = '';
+    schoolCarrier.removeAttribute('data-tui-value');
+    schoolWidget.removeAttribute('data-tui-value');
+    (schoolWidget.querySelector('span') as HTMLElement).textContent = '请选择...';
+    dGdutSchool.querySelector('#schoolListBox')?.remove();
+    const schoolMiss = await pickInPage(dGdutSchool, schoolCarrier, '未收录测试大学');
+    check(schoolMiss === 'none', '广工大学校下拉：搜索无候选时收起并返回 none，不阻塞后续本科学制组件');
+  }
+  // ===== 广工大本科学制：由入学/毕业年月谨慎推导，再走真实组件点选 =====
+  {
+    const wGdutDuration = new JSDOM(
+      '<body><div class="bh-form-group"><label>本科学制</label><div class="bh-form-readonly-input"><input type="hidden">' +
+      '<div id="durationWidget" role="combobox" class="jqx-widget jqx-dropdownlist-state-normal" data-caption="本科学制" aria-owns="durationListBox">' +
+      '<div class="jqx-dropdownlist-content"><span>请选择...</span></div></div></div></div></body>',
+      { url: 'https://ehall.gdut.example.edu.cn/gsapp/duration' },
+    );
+    wGdutDuration.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dGdutDuration = wGdutDuration.window.document;
+    const durationWidget = dGdutDuration.querySelector('#durationWidget') as HTMLElement;
+    durationWidget.addEventListener('click', () => {
+      if (dGdutDuration.querySelector('#durationListBox')) return;
+      const listBox = dGdutDuration.createElement('div');
+      listBox.id = 'durationListBox';
+      listBox.className = 'jqx-listbox';
+      for (const label of ['三年制', '四年制', '五年制']) {
+        const option = dGdutDuration.createElement('div');
+        option.setAttribute('role', 'option');
+        option.className = 'jqx-listitem-element jqx-item';
+        option.textContent = label;
+        option.addEventListener('click', () => {
+          (durationWidget.querySelector('span') as HTMLElement).textContent = label;
+          (durationWidget.parentElement?.querySelector('input[type="hidden"]') as HTMLInputElement).value = label === '四年制' ? '4' : label;
+        });
+        listBox.appendChild(option);
+      }
+      dGdutDuration.body.appendChild(listBox);
+    });
+    const pGdutDuration = emptyProfile();
+    pGdutDuration.education.startDate = '2021-09-01';
+    pGdutDuration.education.endDate = '2025-06-30';
+    const durationFill = fillAll(pGdutDuration, dGdutDuration);
+    const durationItem = durationFill.items.find((item) => item.field === '#studyDuration');
+    check(durationItem?.status === 'picker' && durationItem.valuePreview === '四年制', '广工大本科学制：含日的 2021-09-01 至 2025-06-30 谨慎推导为四年制');
+    const durationCarrier = dGdutDuration.querySelector('[data-tui-widget="dropdown-value"]') as HTMLInputElement;
+    const durationPick = await pickInPage(dGdutDuration, durationCarrier, durationItem?.valuePreview || '');
+    check(durationPick === 'picked' && durationCarrier.value === '4', '广工大本科学制：按真实三/四/五年制选项点选四年制并回读代码');
+  }
+  // ===== 问题码体系：码 + 一句话问题 + 用户该做什么 =====
+  {
+    check(issueMeta('E1203')?.action.includes('手动') === true, '问题码携带用户该做什么');
+    check(formatIssue('E1202').startsWith('[E1202]') && formatIssue('E1202').includes('建议'), '问题码格式化为 [码] 问题 —— 建议');
+    check(issueMeta('E9999') === null, '未知问题码不误报');
+  }
+
+  // ===== 长文按页面证据字数上限填写（证据不足绝不猜、超限绝不截断） =====
+  {
+    const wEssay = new JSDOM(
+      '<body><table><tr><td>个人陈述（不超过500字）</td><td><textarea name="zl"></textarea></td></tr></table></body>',
+    );
+    wEssay.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dEssay = wEssay.window.document;
+    const pEssay = emptyProfile();
+    pEssay.essays.push({ kind: '个人陈述', content: '陈述'.repeat(100), charLimit: 0, state: createRowState('manual', 'essay-fit') });
+    fillAll(pEssay, dEssay);
+    const zl = dEssay.querySelector('[name="zl"]') as HTMLTextAreaElement;
+    check(zl.value.length === 200, '长文在页面字数上限内时自动填写');
+
+    const wEssay2 = new JSDOM(
+      '<body><table><tr><td>个人陈述（不超过500字）</td><td><textarea name="zl2"></textarea></td></tr></table></body>',
+    );
+    wEssay2.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dEssay2 = wEssay2.window.document;
+    const pEssay2 = emptyProfile();
+    pEssay2.essays.push({ kind: '个人陈述', content: '超'.repeat(600), charLimit: 0, state: createRowState('manual', 'essay-over') });
+    const resEssay2 = fillAll(pEssay2, dEssay2);
+    check((dEssay2.querySelector('[name="zl2"]') as HTMLTextAreaElement).value === '', '长文超页面字数上限时不填、不截断');
+    check(resEssay2.items.some((i) => i.issueCode === 'E1206' && (i.reason || '').includes('超限')), '超限跳过携带 E1206 与说明');
+
+    const wEssay3 = new JSDOM(
+      '<body><table><tr><td>备注</td><td><textarea name="bz"></textarea></td></tr></table></body>',
+    );
+    wEssay3.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dEssay3 = wEssay3.window.document;
+    const pEssay3 = emptyProfile();
+    pEssay3.essays.push({ kind: '个人陈述', content: '不该写进备注'.repeat(5), charLimit: 0, state: createRowState('manual', 'essay-note') });
+    fillAll(pEssay3, dEssay3);
+    check((dEssay3.querySelector('[name="bz"]') as HTMLTextAreaElement).value === '', '备注类字段绝不拿个人陈述顶上');
+  }
+
+  // ===== 清除本页已填：只清本扩展标记为 filled 的控件 =====
+  {
+    const wClr = new JSDOM(
+      '<body><table><tr><td>姓名</td><td><input name="cn"></td></tr><tr><td>手机</td><td><input name="cp"></td></tr><tr><td>无规则</td><td><input name="cx"></td></tr></table></body>',
+    );
+    wClr.window.Element.prototype.getBoundingClientRect = rect as never;
+    const dClr = wClr.window.document;
+    const pClr = emptyProfile();
+    pClr.basic.name = '张三';
+    pClr.basic.phone = '13800000000';
+    fillAll(pClr, dClr);
+    check((dClr.querySelector('[name="cn"]') as HTMLInputElement).value === '张三', '清除前字段已自动填写');
+    const cleared = clearPageFill(dClr);
+    check(cleared >= 2, `清除本页已填返回清空数量（实际 ${cleared}）`);
+    check((dClr.querySelector('[name="cn"]') as HTMLInputElement).value === '', '标记为 filled 的字段被清空');
+    check((dClr.querySelector('[name="cx"]') as HTMLInputElement).value === '', '无规则字段不受影响');
+    check(!dClr.querySelector('[data-tui]'), '清除后高亮标记全部移除');
   }
 
   // 学习/工作经历表：自动"新增一行"并逐条填写
@@ -2057,18 +2495,22 @@ void (async () => {
     dateWrap.innerHTML =
       '<input id="nativeMonth" type="month">' +
       '<input id="my97Month" class="Wdate" readonly placeholder="yyyyMM">' +
-      '<span class="ant-picker"><input id="antDate" placeholder="YYYY-MM-DD"></span>';
+      '<span class="ant-picker"><input id="antDate" placeholder="YYYY-MM-DD"></span>' +
+      '<div class="bhtc-input-group" xtype="date-ym" data-caption="入学年月" data-name="BKRXNY"><input id="bhtcMonth"></div>';
     w.document.body.appendChild(dateWrap);
     const nativeMonth = dateWrap.querySelector('#nativeMonth') as HTMLInputElement;
     const my97Month = dateWrap.querySelector('#my97Month') as HTMLInputElement;
     const antDate = dateWrap.querySelector('#antDate') as HTMLInputElement;
+    const bhtcMonth = dateWrap.querySelector('#bhtcMonth') as HTMLInputElement;
     const nativeResult = fillDateControl(nativeMonth, '2025-06-18');
     const my97Result = fillDateControl(my97Month, '2021-09');
     antDate.addEventListener('blur', () => setTimeout(() => { antDate.value = '2026-08-27'; }, 20), { once: true });
     const antResult = fillDateControl(antDate, '2003-05-12');
+    const bhtcResult = fillDateControl(bhtcMonth, '2021-09');
     check(nativeResult.ok && nativeMonth.value === '2025-06', '日期驱动：原生 month 控件按 YYYY-MM 写入');
     check(my97Result.ok && my97Result.driver === 'my97' && my97Month.value === '202109', '日期驱动：My97 年月框按 yyyyMM 写入并回读');
     check(antResult.ok && antResult.driver === 'ant', '日期驱动：识别 Ant DatePicker 并完成首次模型事件写入');
+    check(bhtcResult.ok && bhtcResult.driver === 'bhtc' && bhtcMonth.value === '2021-09', '日期驱动：博思 date-ym 不受“入学年月”标题干扰，按 YYYY-MM 写入');
     const declaredWdate = w.document.createElement('input');
     declaredWdate.className = 'Wdate';
     declaredWdate.setAttribute('onclick', "WdatePicker({dateFmt:'yyyyMM'})");
@@ -2323,6 +2765,41 @@ void (async () => {
     check((staleSchoolDoc.querySelector('#staleSchoolSearch') as HTMLInputElement).value === '', '蓝色三联隔离：专业关键字不会写入遗留的 SelUniversity 院校弹窗');
     staleSchoolFrame.remove();
     majorFrame.remove();
+
+    // 合工大教育步骤回归（E2E 曾失败）：扩展面板运行日志文案含"选择"且命中 [class*="panel"]，
+    // 不得被误判成已打开的选择器弹层——触发按钮必须被真正点击，页内 layui 弹窗的行内「选择」完成三联回读。
+    (blue.querySelector('#bydwm') as HTMLInputElement).value = '';
+    (blue.querySelector('#bydw') as HTMLInputElement).value = '';
+    (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '';
+    const fakePanel = w.document.createElement('div');
+    fakePanel.id = 'tui-panel';
+    fakePanel.textContent = '弹窗选择框：将按当前字段精确匹配代码和名称';
+    w.document.body.appendChild(fakePanel);
+    const hfutDialog = w.document.createElement('div');
+    hfutDialog.id = 'hfutSchoolDialog';
+    hfutDialog.className = 'layui-layer';
+    hfutDialog.style.display = 'none';
+    hfutDialog.innerHTML = '<input type="text"><button>查询</button><table><tr><td>10700</td><td>西安理工大学</td><td><button id="chooseHfutSchool">选择</button></td></tr></table>';
+    w.document.body.appendChild(hfutDialog);
+    blue.querySelector('#chooseSch')!.addEventListener('click', () => {
+      hfutDialog.style.display = 'block';
+    });
+    hfutDialog.querySelector('#chooseHfutSchool')?.addEventListener('click', () => {
+      (blue.querySelector('#bydwm') as HTMLInputElement).value = '10700';
+      (blue.querySelector('#bydw') as HTMLInputElement).value = '西安理工大学';
+      (blue.querySelector('#bkbydwShow') as HTMLInputElement).value = '10700 西安理工大学';
+      hfutDialog.style.display = 'none';
+    });
+    const hfutEduStatus = await pickSchool(w.document, blue.querySelector('#bkbydwShow')!, '西安理工大学', {
+      profilePath: 'education.university', pickerProtocol: 'blue-flat',
+      codeSelectors: ['#bydwm'], nameSelectors: ['#bydw'], displaySelectors: ['#bkbydwShow'],
+      triggerSelectors: ['#bkbydwShow + span.addon'],
+    });
+    check(hfutEduStatus === 'picked' && (blue.querySelector('#bydwm') as HTMLInputElement).value === '10700' && (blue.querySelector('#bkbydwShow') as HTMLInputElement).value === '10700 西安理工大学', '合工大教育步骤：扩展面板不误判为选择器弹层，页内弹窗行内「选择」完成三联回读');
+    check((fakePanel.querySelector('input')) === null, '合工大教育步骤：关键字不会误写入扩展面板');
+    fakePanel.remove();
+    hfutDialog.remove();
+
     blue.remove();
   }
 
@@ -2388,6 +2865,31 @@ void (async () => {
     const fullDate = await fillDateControlAsync(panelDate, '2025-06-18', { precision: 'day', hiddenValueSelectors: ['#panelHidden'] });
     check(fullDate.ok && panelHidden.value === '2025-06-18', '日期独立内核：操作真实日期面板并完成可见值、隐藏模型、错误状态回读');
     datePanelWrap.remove();
+  }
+  // ===== 博思 BHTC 年月面板：日视图 → 年视图 → 月视图，并回读隐藏模型 =====
+  {
+    const bhtcWrap = w.document.createElement('div');
+    bhtcWrap.innerHTML =
+      '<div class="bhtc-input-group" xtype="date-ym" data-caption="入学年月"><input id="bhtcPanelInput"></div>' +
+      '<input id="bhtcPanelHidden" type="hidden">' +
+      '<div class="bhtc-datetimepicker-widget">' +
+      '<div class="bhtc-datepicker-days"><span class="bhtc-picker-switch">2026年8月</span></div>' +
+      '<div class="bhtc-datepicker-months" style="display:none"><span class="bhtc-picker-switch">2026</span><span class="month" data-action="selectMonth">9月</span></div>' +
+      '<div class="bhtc-datepicker-years" style="display:none"><span class="year" data-action="selectYear">2021</span></div>' +
+      '</div>';
+    w.document.body.appendChild(bhtcWrap);
+    const bhtcInput = bhtcWrap.querySelector('#bhtcPanelInput') as HTMLInputElement;
+    const bhtcHidden = bhtcWrap.querySelector('#bhtcPanelHidden') as HTMLInputElement;
+    const days = bhtcWrap.querySelector('.bhtc-datepicker-days') as HTMLElement;
+    const months = bhtcWrap.querySelector('.bhtc-datepicker-months') as HTMLElement;
+    const years = bhtcWrap.querySelector('.bhtc-datepicker-years') as HTMLElement;
+    days.querySelector('.bhtc-picker-switch')?.addEventListener('click', () => { days.style.display = 'none'; months.style.display = 'block'; });
+    months.querySelector('.bhtc-picker-switch')?.addEventListener('click', () => { months.style.display = 'none'; years.style.display = 'block'; });
+    years.querySelector('[data-action="selectYear"]')?.addEventListener('click', () => { years.style.display = 'none'; months.style.display = 'block'; });
+    months.querySelector('[data-action="selectMonth"]')?.addEventListener('click', () => { bhtcInput.value = '2021-09'; bhtcHidden.value = '2021-09'; });
+    const bhtcPanelResult = await fillDateControlAsync(bhtcInput, '2021-09', { precision: 'month', hiddenValueSelectors: ['#bhtcPanelHidden'] });
+    check(bhtcPanelResult.ok && bhtcHidden.value === '2021-09', '博思日期驱动：真实选择年份和月份后，可见值与隐藏模型均回读一致');
+    bhtcWrap.remove();
   }
 
   const buptS = SCHOOLS.find((s) => s.name === '北京邮电大学');

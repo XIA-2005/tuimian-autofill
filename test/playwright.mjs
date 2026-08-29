@@ -80,8 +80,8 @@ try {
   const formPage = await context.newPage();
   await formPage.goto(`http://127.0.0.1:${address.port}/fixture`);
   await formPage.waitForSelector('#tui-panel');
-  assert.equal(await formPage.locator('#tui-panel [data-act="autofill"]').count(), 1, '面板应提供连续填写入口');
-  assert.equal(await formPage.locator('#tui-panel [data-act="stopauto"]').count(), 1, '面板应提供停止连续填写入口');
+  assert.equal(await formPage.locator('#tui-panel [data-act="autofill"]').count(), 0, '自动点击下一步入口应已移除');
+  assert.equal(await formPage.locator('#tui-panel [data-act="clearfill"]').count(), 1, '面板应提供清除本页已填入口');
   formPage.on('dialog', (dialog) => dialog.accept());
   await formPage.click('#tui-panel [data-act="fill"]');
   await formPage.waitForFunction(() => document.querySelector('[name="xm"]')?.value === '端到端测试用户', null, { timeout: 10000 });
@@ -112,6 +112,11 @@ try {
   assert.equal(operationCenter.fillDisabled, true, '运行中应禁用重复填充按钮');
   assert.equal(await formPage.locator('[name="pwd"]').inputValue(), '', '密码不得自动填写');
   assert.equal(await formPage.locator('[name="yzm"]').inputValue(), '', '验证码不得自动填写');
+  // 回归（广东工业大学 ehall 页实测缺陷）：填写完成后主操作按钮必须恢复可用，
+  // 迟到的补填/子框架日志不得把面板翻回“进行中”导致一键填充永久禁用。
+  await formPage.waitForFunction(() => document.querySelector('#tui-panel [data-act="fill"]')?.disabled === false, null, { timeout: 20000 });
+  await formPage.click('#tui-panel [data-act="fill"]');
+  await formPage.waitForFunction(() => document.querySelector('[name="xm"]')?.value === '端到端测试用户', null, { timeout: 10000 });
 
   // 使用实际 Edge 内核模拟北科大已验收页面：回读通过后进入下一页，最终提交按钮必须保持未点击。
   await context.route('https://yjsy.ustb.edu.cn/ksxt/ssxly/**', async (route) => {
@@ -182,8 +187,8 @@ try {
   await achievementPage.goto('https://yjsy.ustb.edu.cn/ksxt/ssxly/achievements');
   await achievementPage.waitForSelector('#tui-panel');
   const achievementStartedAt = Date.now();
-  await achievementPage.locator('#tui-panel [data-act="autofill"]').click({ force: true });
-  await achievementPage.waitForURL('**/ksxt/ssxly/rewards', { timeout: 30_000 });
+  await achievementPage.locator('#tui-panel [data-act="fill"]').click({ force: true });
+  await achievementPage.waitForFunction(() => sessionStorage.getItem('academicNonEmpty') === '14', null, { timeout: 30_000 });
   const achievementElapsedMs = Date.now() - achievementStartedAt;
   const academicEvidence = await achievementPage.evaluate(() => ({
     rows: Number(sessionStorage.getItem('academicRows') || 0),
@@ -192,19 +197,19 @@ try {
   }));
   console.log(`Playwright 性能采样：北科大 14 项成果连续填写 ${achievementElapsedMs}ms`);
   assert.equal(achievementElapsedMs > 0, true, '北科大成果流程应记录有效耗时');
-  assert.deepEqual(academicEvidence, { rows: 14, nonEmpty: 14, nextClicked: '1' }, '北科大学术成果应补齐 14 行后自动进入下一步');
-  assert.equal(await achievementPage.locator('h1').textContent(), '奖励情况', '自动下一步应到达后续步骤而非最终提交页');
+  assert.deepEqual(academicEvidence, { rows: 14, nonEmpty: 14, nextClicked: null }, '北科大学术成果应补齐 14 行且不自动点击下一步');
+  assert.equal(achievementPage.url().includes('/ksxt/ssxly/achievements'), true, '填写完成后应停留在当前页，等待用户手动进入下一步');
 
   await optionsPage.evaluate((value) => chrome.storage.local.set({ profile: value }), profile);
 
   const wizardPage = await context.newPage();
   await wizardPage.goto('https://yjsy.ustb.edu.cn/ksxt/ssxly/education');
   await wizardPage.waitForSelector('#tui-panel');
-  await wizardPage.locator('#tui-panel [data-act="autofill"]').click({ force: true });
-  await wizardPage.waitForURL('**/ksxt/ssxly/summary', { timeout: 15000 });
-  await wizardPage.waitForSelector('#finalSubmit');
+  await wizardPage.locator('#tui-panel [data-act="fill"]').click({ force: true });
+  await wizardPage.waitForFunction(() => ((document.querySelector('#rxny') || {}).value || '').length >= 6, null, { timeout: 15000 });
   await wizardPage.waitForTimeout(1500);
-  assert.equal(await wizardPage.evaluate(() => localStorage.getItem('finalSubmitClicked')), null, '连续填写不得点击最终提交');
+  assert.equal(await wizardPage.evaluate(() => localStorage.getItem('finalSubmitClicked')), null, '不得自动点击下一步或最终提交');
+  assert.equal(wizardPage.url().includes('/ksxt/ssxly/education'), true, '教育信息页填写完成后应停留在当前页');
 
   // 合肥工业大学 12 步加密向导：专项契约应点击真正的“下一步”，到上传步骤后立即安全停止。
   await context.route('https://yzbm.hfut.edu.cn/sstm/**', async (route) => {
@@ -238,24 +243,25 @@ try {
   await hfutPage.goto('https://yzbm.hfut.edu.cn/sstm/encrypted-basic-step');
   await hfutPage.waitForSelector('#tui-panel');
   const hfutStartedAt = Date.now();
-  await hfutPage.locator('#tui-panel [data-act="autofill"]').click({ force: true });
-  await hfutPage.waitForURL('**/sstm/upload-step', { timeout: 15000 });
-  console.log(`Playwright 性能采样：合工大基本信息连续填写 ${Date.now() - hfutStartedAt}ms`);
-  await hfutPage.waitForSelector('h1');
-  assert.equal(await hfutPage.locator('h1').textContent(), '上传照片', '合工大连续填写应自动进入下一步');
+  await hfutPage.locator('#tui-panel [data-act="fill"]').click({ force: true });
+  await hfutPage.waitForFunction(() => (document.querySelector('#xm') || {}).value === '端到端测试用户', null, { timeout: 15000 });
+  console.log(`Playwright 性能采样：合工大基本信息一键填充 ${Date.now() - hfutStartedAt}ms`);
   await hfutPage.waitForTimeout(1200);
-  assert.equal(await hfutPage.url().endsWith('/sstm/upload-step'), true, '合工大连续填写到上传页后必须停止，不继续点击');
+  assert.equal(await hfutPage.url().endsWith('/sstm/encrypted-basic-step'), true, '合工大基本信息填写完成后应停留在当前页，不自动进入下一步');
 
   const hfutEducationPage = await context.newPage();
   await hfutEducationPage.goto('https://yzbm.hfut.edu.cn/sstm/encrypted-education-step');
   await hfutEducationPage.waitForSelector('#tui-panel');
-  await hfutEducationPage.locator('#tui-panel [data-act="autofill"]').click({ force: true });
-  await hfutEducationPage.waitForURL('**/sstm/upload-step', { timeout: 20000 });
+  await hfutEducationPage.locator('#tui-panel [data-act="fill"]').click({ force: true });
+  await hfutEducationPage.waitForFunction(() => (document.querySelector('#bydwm') || {}).value === '10700' && (document.querySelector('#byzydm') || {}).value === '080301', null, { timeout: 20000 });
   const hfutPairEvidence = await hfutEducationPage.evaluate(() => ({
-    school: sessionStorage.getItem('hfutSchoolCode'),
-    major: sessionStorage.getItem('hfutMajorCode'),
+    school: (document.querySelector('#bydwm') || {}).value || '',
+    schoolName: (document.querySelector('#bkbydwShow') || {}).value || '',
+    major: (document.querySelector('#byzydm') || {}).value || '',
+    majorName: (document.querySelector('#bkbyzyShow') || {}).value || '',
   }));
-  assert.deepEqual(hfutPairEvidence, { school: '10700', major: '080301' }, '合工大本科院校和专业应分别选中并完成代码名称三联回读');
+  assert.deepEqual(hfutPairEvidence, { school: '10700', schoolName: '10700 西安理工大学', major: '080301', majorName: '080301 测控技术与仪器' }, '合工大本科院校和专业应分别选中并完成代码名称三联回读');
+  assert.equal(hfutEducationPage.url().endsWith('/sstm/encrypted-education-step'), true, '合工大教育步骤填写完成后应停留在当前页');
 
   console.log('Playwright 本地扩展测试全部通过 ✅');
 } finally {

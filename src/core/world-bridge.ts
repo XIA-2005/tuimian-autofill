@@ -88,6 +88,15 @@ export async function mainWorldJqueryClick(doc: Document, el: Element, type = 'c
   return !!res.ok;
 }
 
+/**
+ * 功能：在页面主世界中按显示名精确选中 jqxDropDownList 选项。
+ * 原理：虚拟列表只把少量行渲染到 DOM，通过白名单桥调用页面自身 getItems/selectItem API，
+ * 既能访问完整数据模型，又会触发组件正常的值回写与联动。
+ */
+export function mainWorldJqxSelectLabel(doc: Document, el: Element, label: string): Promise<WorldResult> {
+  return requestMainWorld(doc, 'jqx-select-label', { selector: elementSelector(doc, el), label }, 1200);
+}
+
 /** v-model 直写：页内模板编译的 Vue2 老后台（保留 v-model 属性）的事件模拟兜底 */
 export async function mainWorldVueModelWrite(doc: Document, el: Element, value: unknown): Promise<boolean> {
   const res = await requestMainWorld(doc, 'vue-model-write', { selector: elementSelector(doc, el), value }, 900);

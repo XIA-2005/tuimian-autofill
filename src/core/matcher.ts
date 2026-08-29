@@ -16,7 +16,7 @@ export interface FieldRule {
   /** 从结构化列表合成文本填充 */
   compose?: 'awards' | 'research' | 'socialPractice' | 'experiences';
   /** 从档案推导填充值 */
-  derive?: 'cet4Pass' | 'cet6Pass' | 'cetSummary' | 'applyMajor' | 'applyType' | 'hasSupervisor' | 'universityProvince' | 'applyCollege' | 'applyDirection';
+  derive?: 'cet4Pass' | 'cet6Pass' | 'cetSummary' | 'rankPercent' | 'studyDuration' | 'applyMajor' | 'applyType' | 'hasSupervisor' | 'universityProvince' | 'applyCollege' | 'applyDirection';
   /** 人工长文提示：匹配后标记为跳过并显示该提示（个人陈述/自述等无档案数据的长文） */
   manual?: string;
 }
@@ -57,12 +57,17 @@ export const FIELD_RULES: FieldRule[] = [
   { field: 'education.studentId', keywords: ['学号', '在校学号', '学生证号', '本科学号', '本科生学号', '在校生注册学号'], attrOnly: ['studentid', 'studentno', 'sno', 'xh'], control: 'input' },
   { field: 'education.startDate', keywords: ['入学时间', '入学日期', '入学年月', '入学年份', '本科入学年月', '本科入学年份'], attrOnly: ['enrolldate', 'rxsj', 'rxny'], control: 'input' },
   { field: 'education.endDate', keywords: ['毕业时间', '毕业日期', '毕业年月', '预计毕业时间', '预毕业年月', '预计毕业', '本科毕业年月', '拟毕业时间', '期望毕业时间', '毕业年份'], attrOnly: ['graduatedate', 'bysj', 'byny'], control: 'input' },
+  { field: '#studyDuration', keywords: ['本科学制', '本科学制年限', '本科年制'], attrOnly: ['bkxz'], derive: 'studyDuration', control: 'any' },
   { field: 'education.gpa', keywords: ['gpa', '绩点', '平均学分绩', '平均绩点', '学分绩点', '成绩绩点', '平均学分绩点', '专业绩点', 'gpa绩点'], attrOnly: ['jidian', 'jd'], control: 'input' },
   { field: 'education.score', keywords: ['平均成绩', '加权成绩', '加权平均分', '平均分', '学业成绩', '本人本科前三年平均成绩', '本科成绩'], attrOnly: ['averagescore'], control: 'input' },
+  // 广工大 PMBFB 要求“排名百分比”，档案只保存整数名次和总人数，因此按 名次÷人数×100 推导。
+  { field: '#rankPercent', keywords: ['排名（百分比）', '排名百分比', '排名比例', '专业排名百分比'], negative: ['整数'], attrOnly: ['pmbfb'], derive: 'rankPercent', control: 'input' },
+  // “专业同年级的排名（整数）”虽含“年级”，语义仍是专业整数名次，必须先于通用年级排名规则命中。
+  { field: 'education.rank', keywords: ['专业同年级的排名（整数）', '专业同年级排名（整数）', '排名（整数）'], negative: ['人数', '比例', '百分比'], attrOnly: ['szzytnjpm'], control: 'input' },
   { field: 'education.rank', keywords: ['专业排名', '专业内排名', '成绩排名', '排名名次', '排名', '本科专业排名', '本科排名', '本科所在专业排名', '专业课排名'], negative: ['人数', '比例', '百分比', '综合', '年级'], attrOnly: ['majorrank', 'pm'], control: 'input' },
   { field: 'education.comprehensiveRank', keywords: ['综合排名', '综合测评排名', '综测排名'], negative: ['人数'], attrOnly: ['comprehensiverank', 'zhpm'], control: 'input' },
   { field: 'education.gradeRank', keywords: ['年级排名', '全年级排名'], negative: ['人数'], attrOnly: ['graderank', 'njpm'], control: 'input' },
-  { field: 'education.rankBase', keywords: ['专业人数', '排名人数', '总人数', '年级总人数', '排名基数', '专业年级人数', '本科所在专业人数', '专业总人数', '排名总人数', '班级总人数'], attrOnly: ['ranktotal'], control: 'input' },
+  { field: 'education.rankBase', keywords: ['所在专业同年级人数', '专业同年级人数', '专业人数', '排名人数', '总人数', '年级总人数', '排名基数', '专业年级人数', '本科所在专业人数', '专业总人数', '排名总人数', '班级总人数'], attrOnly: ['szzytnjrs', 'ranktotal'], control: 'input' },
   { field: 'education.rankUnit', keywords: ['排名单位', '排名范围'], attrOnly: ['rankunit'], control: 'select' },
   { field: 'education.foreignLang', keywords: ['所学语种', '外语语种', '语种'], attrOnly: ['foreignlang', 'language'], control: 'select' },
   { field: 'basic.tuimianQual', keywords: ['预计能否获得推免资格', '能否获得推免资格', '是否获得推免资格', '是否推免', '推免资格', '保研资格', '有无推免资格', '是否有推免资格', '预计是否拥有保研资格', '预估是否具有推免资格', '是否能取得推免资格', '推免资格情况'], attrOnly: ['tuimian'], control: 'any' },
@@ -176,6 +181,11 @@ export function getLabelInfo(el: ControlEl): LabelInfo {
   const isChoice = type === 'radio' || type === 'checkbox';
 
   if (!isChoice) {
+    // 博思 bh-form 控件把真实标题放在控件或包装层的 data-caption；它比旁边的“%”后缀、
+    // “若无准确排名可不填”等辅助说明更可信，应在兄弟节点和父容器文本之前使用。
+    const captionOwner = el.closest<HTMLElement>('[data-caption]');
+    const caption = captionOwner?.getAttribute('data-caption');
+    if (caption && caption.trim()) return { text: caption.trim(), source: 'label' };
     const id = el.id;
     if (id) {
       const forLabel = document.querySelector<HTMLLabelElement>(`label[for="${escapeSel(id)}"]`);
@@ -281,6 +291,7 @@ export function findPickerTrigger(el: Element): Element | null {
 
 export function detectField(el: HTMLElement, rules: FieldRule[] = FIELD_RULES): DetectedField {
   const li = getLabelInfo(el as ControlEl);
+  // 组件下拉已认领的元素（值载体/组件本体）：由组件点选内核处理，常规检测直接排除
   const labelExtra = [el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('data-label')]
     .filter((x) => x && x.trim())
     .join(' ');
@@ -302,6 +313,13 @@ export function detectField(el: HTMLElement, rules: FieldRule[] = FIELD_RULES): 
     pickerTrigger: findPickerTrigger(el),
   };
 
+  const widgetMark = (el as HTMLElement).getAttribute ? (el as HTMLElement).getAttribute('data-tui-widget') : null;
+  if (widgetMark === 'dropdown' || widgetMark === 'dropdown-value') return { ...base, skip: 'other' };
+  // jqx 虚拟下拉打开后会动态插入“请查找”过滤框。它只是组件内部工具，不是报名字段，
+  // 否则一次学校点选失败就会在字段报告里额外产生 E1101 噪音。
+  if (el.matches('.jqx-listbox-filter-input') || (normalizeText(el.getAttribute('placeholder') || '') === '请查找' && !!el.closest('.jqx-listbox,[role="listbox"]'))) {
+    return { ...base, skip: 'other' };
+  }
   if (isCaptchaLike(fullHay)) return { ...base, skip: 'captcha' };
   if (el.tagName === 'INPUT') {
     const type = (el.getAttribute('type') || 'text').toLowerCase();
@@ -339,6 +357,221 @@ export function detectField(el: HTMLElement, rules: FieldRule[] = FIELD_RULES): 
   return { ...base, rule: bestRef.rule };
 }
 
+// ===================== 组件下拉（无原生 select 的 JS 组件）通用识别 =====================
+// 很多平台（如 ehall gsapp 的 jqx 组件）把“性别/政治面貌”等下拉渲染成 span/div 组件 + 显示输入框/隐藏域，
+// 页面上没有原生 <select>，常规检测完全看不见 → 这类字段永远填不上（广东工业大学实测）。
+// 难点：jqx 会把选项列表（可能还是英文，如 Male/Female）预渲染在容器里，污染标签匹配。
+// 因此标签提取前先剥离选项列表元素；剥离后仍无标签则取前一格（标签格/控件格分离布局）。
+// 扩展自有 UI 只有 #tui-panel 是稳定根节点。不得用 `[class*="tui-"]` 排除，
+// 因为招生平台自身也可能使用带 tui 字样的组件类名，导致真实下拉整棵祖先链被误伤。
+const WIDGET_OWN_UI_SEL = '#tui-panel';
+const WIDGET_OPTION_EL_SEL = '[class*="listitem"], .jqx-item';
+
+export interface ComponentDropdownProbe {
+  rawTag: string;
+  rawVisible: boolean;
+  triggerTag: string;
+  triggerVisible: boolean;
+  triggerId: string;
+  triggerCls: string;
+  scopeTag: string;
+  scopeCls: string;
+  previousLabel: string;
+  fieldAttrs: string[];
+}
+
+/**
+ * 功能：当“请选择”文字节点本身为零尺寸时，向上寻找真正可点击且可见的组件本体。
+ *
+ * 原理说明：部分 jqx 皮肤把文字放在绝对定位或零尺寸 span 中，点击事件绑定在其父级
+ * `jqx/dropdown/combobox` 容器。结构扫描能看到文字，但旧版 `isVisible(span)` 会提前丢弃它。
+ */
+function resolveVisibleWidgetTrigger(raw: HTMLElement): HTMLElement | null {
+  // 即使文字 span 自身可见，也必须先寻找真正的组件根节点。广工大实页中点击与字段标签关联均挂在
+  // `div[role="combobox"].jqx-widget` 上；若直接返回内层 span，字段作用域只会落到
+  // `.jqx-dropdownlist-content`，从而永远看不到旁边的“性别/政治面貌”。
+  let component: HTMLElement | null = raw;
+  for (let depth = 0; depth < 7 && component; depth++, component = component.parentElement) {
+    if (/^(BODY|FORM|TD|TH)$/i.test(component.tagName)) break;
+    const cls = `${component.getAttribute('class') || ''}`.toLowerCase();
+    const role = `${component.getAttribute('role') || ''}`.toLowerCase();
+    const componentRootLike = role === 'combobox'
+      || /(^|\s)jqx-widget(\s|$)|jqx-dropdownlist-state-normal|(^|\s)jqx-dropdownlist(\s|$)|dropdown-toggle|(^|\s)combobox(\s|$)/.test(cls);
+    if (componentRootLike && isVisible(component)) return component;
+  }
+  if (isVisible(raw)) return raw;
+  let parent = raw.parentElement;
+  for (let depth = 0; depth < 6 && parent; depth++, parent = parent.parentElement) {
+    if (/^(BODY|FORM|TD|TH)$/i.test(parent.tagName)) break;
+    const signature = `${parent.id || ''} ${parent.getAttribute('class') || ''} ${parent.getAttribute('role') || ''}`.toLowerCase();
+    if (isVisible(parent) && /jqx|dropdown|combobox|select|picker|input-group/.test(signature)) return parent;
+  }
+  return null;
+}
+
+/** 功能：查找页面中的组件下拉占位节点，并收敛为唯一的可见点击本体。 */
+function findComponentDropdownCandidates(doc: Document): Array<{ raw: HTMLElement; trigger: HTMLElement }> {
+  const rawCandidates = Array.from(doc.querySelectorAll<HTMLElement>('span, div, a')).filter((el) => {
+    if (el.closest(WIDGET_OWN_UI_SEL)) return false;
+    const text = normalizeText(el.textContent || '');
+    const cls = `${el.getAttribute('class') || ''} ${el.id || ''}`.toLowerCase();
+    const placeholderLike = text === '请选择';
+    const classLike = /jqx-dropdownlist|dropdownlist|dropdown-toggle|combobox/.test(cls) && text.length <= 6;
+    return placeholderLike || classLike;
+  });
+  const innermost = rawCandidates.filter((el) => !rawCandidates.some((other) => other !== el && el.contains(other)));
+  const seenTriggers = new Set<HTMLElement>();
+  const out: Array<{ raw: HTMLElement; trigger: HTMLElement }> = [];
+  for (const raw of innermost) {
+    const trigger = resolveVisibleWidgetTrigger(raw);
+    if (!trigger || seenTriggers.has(trigger)) continue;
+    seenTriggers.add(trigger);
+    out.push({ raw, trigger });
+  }
+  return out;
+}
+
+/**
+ * 功能：确定组件下拉所属的字段作用域。
+ *
+ * 原理说明：jqx 等组件常在控件格内再包一层 `.input-group`。若只取最近的包装层，
+ * 就无法看到前一单元格中的“性别/政治面貌”标签，也找不到包装层外的隐藏值字段。
+ * 因此表格布局优先提升到当前 `td/th`；非表格布局再退回常见表单字段容器。
+ */
+function findWidgetFieldScope(widget: HTMLElement): HTMLElement | null {
+  const tableCell = widget.closest<HTMLElement>('td,th');
+  if (tableCell) return tableCell;
+  // [class*="form-group"] 兼容博思 bh-form-group 等带前缀变体（广工大 ehall 实测）
+  return widget.closest<HTMLElement>('.form-group,[class*="form-group"],.control-group,.form-item,.field,li') || widget.parentElement;
+}
+
+/**
+ * 功能：提取组件字段作用域中的标签文本，并移除预渲染选项和“请选择”占位文本。
+ */
+function cleanWidgetScopeText(scope: HTMLElement): string {
+  const clone = scope.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll(WIDGET_OPTION_EL_SEL).forEach((el) => el.remove());
+  clone.querySelectorAll<HTMLElement>('span,div,a').forEach((el) => {
+    if (normalizeText(el.textContent || '') === '请选择') el.remove();
+  });
+  return clone.textContent || '';
+}
+
+/**
+ * 功能：收集字段作用域中可用于规则匹配的控件属性。
+ *
+ * 安全说明：这里只读取字段的 `id/name/class` 结构，不读取或记录任何用户填写值。
+ */
+function collectWidgetAttributeText(widget: HTMLElement, scope: HTMLElement): string {
+  const parts = [widget.id || '', widget.getAttribute('name') || '', widget.getAttribute('class') || ''];
+  scope.querySelectorAll<HTMLElement>('input,[role="combobox"],[class*="dropdown"],[id*="jqxWidget"]').forEach((el) => {
+    parts.push(el.id || '', el.getAttribute('name') || '', el.getAttribute('class') || '');
+  });
+  return parts.join(' ');
+}
+
+/**
+ * 功能：生成组件下拉脱敏结构探针，供现场报告定位“候选为何未识别”。
+ *
+ * 隐私说明：只输出元素类型、截断后的 id/class、相邻标签和字段属性名；不读取 input.value，
+ * 不包含姓名、证件号、电话、邮箱及任何档案内容。
+ */
+export function probeComponentDropdowns(doc: Document): ComponentDropdownProbe[] {
+  return findComponentDropdownCandidates(doc).slice(0, 12).map(({ raw, trigger }) => {
+    const scope = findWidgetFieldScope(trigger);
+    const previousLabel = scope ? scope.previousElementSibling?.textContent || '' : '';
+    const fieldAttrs = scope
+      ? Array.from(scope.querySelectorAll<HTMLElement>('input,[role="combobox"]')).slice(0, 8).map((el) => `${el.tagName.toLowerCase()}:${(el.getAttribute('name') || el.id || '').slice(0, 32)}`)
+      : [];
+    return {
+      caption: (raw.closest('[data-caption]') as HTMLElement | null)?.getAttribute('data-caption') || '',
+      rawTag: raw.tagName.toLowerCase(),
+      rawVisible: isVisible(raw),
+      triggerTag: trigger.tagName.toLowerCase(),
+      triggerVisible: isVisible(trigger),
+      triggerId: (trigger.id || '').slice(0, 40),
+      triggerCls: (trigger.getAttribute('class') || '').slice(0, 60),
+      scopeTag: (scope?.tagName || '').toLowerCase(),
+      scopeCls: (scope?.getAttribute('class') || '').slice(0, 60),
+      previousLabel: previousLabel.trim().replace(/\s+/g, ' ').slice(0, 30),
+      fieldAttrs,
+    };
+  });
+}
+
+export function detectComponentDropdownFields(doc: Document, rules: FieldRule[] = FIELD_RULES): DetectedField[] {
+  const out: DetectedField[] = [];
+  const seenContainers = new Set<Element>();
+  for (const { trigger: widget } of findComponentDropdownCandidates(doc)) {
+    const container = findWidgetFieldScope(widget);
+    if (!container || seenContainers.has(container)) continue;
+    // 容器里有可见原生 select → 常规检测已覆盖，组件识别不插手
+    if (Array.from(container.querySelectorAll('select')).some((el) => isVisible(el))) continue;
+    // 标签候选 1：容器文本剥离“选项列表 + 占位”后的残余；候选 2：前一格（标签格/控件格分离的表格布局）
+    // 组件自带标签（广工大实测：jqx 根节点带 data-caption="性别"/"政治面貌"，最可信）
+    const caption = (widget.closest('[data-caption]') as HTMLElement | null)?.getAttribute('data-caption') || '';
+    const containerText = cleanWidgetScopeText(container);
+    // WiseDU 的 bh-form 布局不是表格：标签 `<label>` 与值包装层 `.bh-form-readonly-input`
+    // 是同级节点。前一兄弟标签因此对所有字段作用域都有效，不应仅限 td/th。
+    const prevSiblingText = container.previousElementSibling?.textContent || '';
+    const fieldLabelText = container.querySelector('label,.control-label,.form-label')?.textContent || '';
+    const attrHay = normalizeText(collectWidgetAttributeText(widget, container));
+    const scoreOf = (hay: string): { rule: FieldRule; score: number } | null => {
+      let best: { rule: FieldRule; score: number } | null = null;
+      const norm = normalizeText(hay) + ' ' + attrHay;
+      for (const rule of rules) {
+        if (rule.manual) continue;
+        for (const kw of rule.keywords || []) {
+          const k = normalizeText(kw);
+          if (!k || !norm.includes(k)) continue;
+          if (rule.negative && rule.negative.some((n) => norm.includes(normalizeText(n)))) continue;
+          const score = 100 + k.length * 2;
+          if (!best || score > best.score) best = { rule, score };
+        }
+      }
+      return best;
+    };
+    const fromCaption = caption ? scoreOf(caption) : null;
+    if (fromCaption) fromCaption.score += 60; // 组件自声明的标签优先于结构推断
+    const fromContainer = scoreOf(containerText);
+    const fromPrev = scoreOf(prevSiblingText);
+    const fromLabel = scoreOf(fieldLabelText);
+    const fromAttrs = scoreOf(attrHay);
+    const best = [fromCaption, fromPrev, fromLabel, fromContainer, fromAttrs]
+      .filter((item): item is { rule: FieldRule; score: number } => !!item)
+      .sort((a, b) => b.score - a.score)[0] || null;
+    if (!best) continue;
+    // 容器里的可见输入框已被规则命中且带 name（会随表单提交的真字段）→ 常规检测直接填写，组件识别不插手；
+    // 无 name 的命中框是 jqx 等组件的显示框——原生写文本不驱动组件模型，必须走组件点选
+    const visibleInputs = Array.from(container.querySelectorAll<HTMLInputElement>('input:not([type="hidden"]):not([type="password"]):not([type="file"])')).filter((el) => isVisible(el));
+    // 值载体优先级：空隐藏域 → 未被规则命中的可见显示框（jqx 显示输入框）→ 任意隐藏域 → 组件本体
+    const hiddenInputs = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="hidden"]'));
+    const carrier = hiddenInputs.find((h) => !(h.value || '').trim()) || visibleInputs[0] || hiddenInputs[0] || null;
+    seenContainers.add(container);
+    const key = `widget-${best.rule.field}-${out.length}`;
+    widget.setAttribute('data-tui-widget', 'dropdown');
+    widget.setAttribute('data-tui-widget-key', key);
+    let el: HTMLElement = widget;
+    if (carrier) {
+      carrier.setAttribute('data-tui-widget', 'dropdown-value');
+      carrier.setAttribute('data-tui-widget-key', key);
+      widget.setAttribute('data-tui-widget-target', carrier.id ? `#${carrier.id}` : carrier.getAttribute('name') ? `[name="${carrier.getAttribute('name')}"]` : '');
+      el = carrier; // 值载体作为字段控件：回读/去重/快照都走它
+    }
+    // 标签格单独存在时，标签语义已由 prevSiblingText 命中；不要因无 name 的 jqx 显示框本身误命中而跳过组件。
+    const rawLabelText = (caption || (normalizeText(containerText).length >= 2 ? containerText : prevSiblingText)).replace(/\s+/g, ' ').trim();
+    out.push({
+      el: el as ControlEl,
+      rule: best.rule,
+      label: rawLabelText.slice(0, 30) || best.rule.field,
+      labelSource: 'sibling',
+      skip: null,
+      readonly: false,
+      pickerTrigger: widget,
+    });
+  }
+  return out;
+}
 export function detectAllFields(doc: Document, rules: FieldRule[] = FIELD_RULES): DetectedField[] {
   const list: DetectedField[] = [];
   doc.querySelectorAll<HTMLElement>('input, select, textarea').forEach((el) => {

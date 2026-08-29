@@ -8,19 +8,19 @@ import { addSnapshot, applicationChoicesFromPage, captureCurrentPage, commitCraw
 import { scanSite } from '../core/scanner';
 import { runPreSubmitCheck } from '../core/checker';
 import { loadRemoteRules } from '../core/rulesync';
-import { DetectedField, detectAllFields, FIELD_RULES, FieldRule } from '../core/matcher';
-import { clearHighlights, closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, fillLanguageExams, FillItem, FillResult, FillStats, findAchievementTable, findAwardTable, findExperienceTable, findFamilyTable, findLanguageTable, languageExamEntryCount, markEl, pickInPage, sleep, snapshotFillState, trySetSelect } from '../core/filler';
+import { DetectedField, detectAllFields, FIELD_RULES, FieldRule, probeComponentDropdowns } from '../core/matcher';
+import { clearHighlights, clearPageFill, closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, fillLanguageExams, FillItem, FillResult, FillStats, findAchievementTable, findAwardTable, findExperienceTable, findFamilyTable, findLanguageTable, languageExamEntryCount, markEl, pickInPage, sleep, snapshotFillState, trySetSelect } from '../core/filler';
+import { ISSUE_CATALOG, issueMeta } from '../core/error-codes';
 import { ADAPTERS, AUTO_SHOW_PATTERN, allAdapters, extraRulesFor, matchAdapter, PlatformAdapter } from '../core/adapters';
 import { matchAdapterPackage, matchAdapterPage, SCHOOL_ADAPTER_PACKAGES } from '../core/adapter-packages';
 import { SCHOOLS_WITH_PROGRAMS } from '../core/school-programs';
 import { projectProfile } from '../core/projection';
 import { fillAdapterContract } from '../core/control-drivers';
 import { fillDateControlAsync } from '../core/date-drivers';
-import { autoAdvancePageKey, clickDeclaredNext, findDeclaredNextButton, visibleValidationErrors } from '../core/auto-advance';
 import { decideRowJobRound, nextRowJobIndex, ROW_JOB_FAIL_CAP } from '../core/row-job-progress';
 import { detectFakeSave, snapshotTableEvidence, TableEvidence } from '../core/save-guard';
 import { applyFillTelemetryCounts, createFillTelemetryState, FillTelemetryEventInput, FillTelemetryStage, FillTelemetryState, reduceFillTelemetry, restoreFillTelemetryState } from '../core/fill-telemetry';
-import { initPanel, PanelHandlers, renderPanelTelemetry, setPanelStatus, showPanel } from './panel';
+import { initPanel, PanelHandlers, renderPanelTelemetry, setPanelBusy, setPanelStatus, showPanel, showToast } from './panel';
 
 // ===================== 醒目填充横幅 + 进度条 =====================
 let fillBanner: HTMLElement | null = null;
@@ -42,7 +42,6 @@ function profileForCurrentPage(profile: Profile): Profile {
 
 const PROGRESS_KEY = 'tui-fill-progress';
 const TELEMETRY_KEY = 'tui-fill-telemetry-v1';
-const AUTO_WIZARD_KEY = 'tui-auto-wizard-v1';
 
 let telemetryState: FillTelemetryState = (() => {
   try { return restoreFillTelemetryState(sessionStorage.getItem(TELEMETRY_KEY)) || createFillTelemetryState(); }
@@ -63,13 +62,13 @@ function emitTelemetry(event: FillTelemetryEventInput, render = true): void {
 }
 
 /** 功能：开始新一轮填写，清空上一轮日志和统计。 */
-function beginFillTelemetry(autoNext: boolean): void {
+function beginFillTelemetry(): void {
   telemetryState = createFillTelemetryState();
   emitTelemetry({
     stage: 'identifying',
     level: 'info',
-    action: autoNext ? '正在启动连续填写' : '正在识别当前页面',
-    reason: autoNext ? '校验通过后将自动进入下一步，最终提交仍需人工完成' : '正在读取适配包与可写字段',
+    action: '正在识别当前页面',
+    reason: '正在读取适配包与可写字段',
   });
 }
 
@@ -84,47 +83,6 @@ function telemetryStageFromText(stage: string): FillTelemetryStage {
   if (/人工|停止|阻断/.test(stage)) return 'blocked';
   if (/扫描|识别/.test(stage)) return 'identifying';
   return 'filling';
-}
-
-interface AutoWizardState {
-  active: boolean;
-  startedAt: number;
-  steps: number;
-  attempts: Record<string, number>;
-}
-
-let autoAdvanceRunning = false;
-
-/** 功能：读取当前标签页的连续填写状态；超过 30 分钟自动失效。 */
-function readAutoWizard(): AutoWizardState | null {
-  try {
-    const state = JSON.parse(sessionStorage.getItem(AUTO_WIZARD_KEY) || 'null') as AutoWizardState | null;
-    if (!state?.active || Date.now() - state.startedAt > 30 * 60_000 || state.steps >= 20) return null;
-    return state;
-  } catch {
-    return null;
-  }
-}
-
-function writeAutoWizard(state: AutoWizardState | null): void {
-  try {
-    if (state) sessionStorage.setItem(AUTO_WIZARD_KEY, JSON.stringify(state));
-    else sessionStorage.removeItem(AUTO_WIZARD_KEY);
-  } catch {
-    // 忽略禁用 sessionStorage 的特殊环境。
-  }
-}
-
-function startAutoWizard(): void {
-  writeAutoWizard({ active: true, startedAt: Date.now(), steps: 0, attempts: {} });
-}
-
-function stopAutoWizard(message?: string): void {
-  writeAutoWizard(null);
-  if (message && isTop) {
-    setPanelStatus(message);
-    if (/连续填写已停止|最终页|未验收/.test(message)) emitTelemetry({ stage: 'blocked', level: 'warning', action: '连续填写已安全停止', reason: message.replace(/^连续填写已停止：?/, ''), recoverable: true });
-  }
 }
 
 /** 落盘进度：整页回发刷新后，新文档据此恢复横幅与进度条 */
@@ -187,6 +145,25 @@ function setFillProgress(pct: number, stage: string, sub?: string, meta: FillPro
   if (subEl) subEl.textContent = telemetryState.currentLabel || telemetryState.detail || subText;
 }
 
+/** 功能：把"仍需人工"的事项用醒目 toast 顶出来（弹窗待选/选项不匹配/长文未填），不再只躺在面板日志里。 */
+function announceManualWork(): void {
+  const res = lastResult;
+  if (!res || !isTop) return;
+  const pendingPickers = res.items.filter(
+    (i) => i.status === 'picker' && i.el instanceof HTMLElement && document.documentElement.contains(i.el as HTMLElement) && controlEmpty(i.el as Element),
+  );
+  if (pendingPickers.length) {
+    const names = pendingPickers.slice(0, 2).map((i) => i.label).join('、');
+    showToast(`⚠️ ${pendingPickers.length} 个弹窗选择框需要手动选择：${names}${pendingPickers.length > 2 ? ' 等' : ''}（点击字段旁「选择」按钮，详见面板日志）`, { tone: 'warn' });
+  }
+  if (res.stats.failed > 0) {
+    showToast(`⚠️ ${res.stats.failed} 个下拉/单选未能自动选中，请手动处理（建议已写入漏填清单）`, { tone: 'warn' });
+  }
+  if (res.items.some((i) => i.issueCode === 'E1206')) {
+    showToast('ℹ️ 长文未自动填写：页面未给出可信字数上限或档案长文超限，请人工粘贴', { tone: 'info' });
+  }
+}
+
 /** 完成态：100% 绿色，短暂停留后自动收起；此后本页延时轮次不再弹出横幅。弹窗点选进行中不宣告完成 */
 function finishFillBanner(summary: string, sub?: string): void {
   if (!isTop || fillFinished || pickersDepth > 0) return;
@@ -202,6 +179,8 @@ function finishFillBanner(summary: string, sub?: string): void {
     total: telemetryState.counts.total,
   });
   fillFinished = true;
+  setPanelBusy(false); // 本轮结束：主操作按钮立即可用（再次填写/清除已填）
+  announceManualWork();
   try {
     sessionStorage.removeItem(PROGRESS_KEY);
   } catch {
@@ -276,7 +255,8 @@ function recordFillResultTelemetry(items: FillItem[], stats: FillStats): void {
   for (const item of items.slice(0, 100)) {
     const display = statusText[item.status];
     telemetryState = reduceFillTelemetry(telemetryState, {
-      stage: item.status === 'picker' ? 'picking' : 'filling',
+      // 本轮已宣告完成后保留终态阶段：迟到的条目日志（补填轮次/子框架回报）不得把面板翻回"进行中"卡死按钮
+      stage: fillFinished ? telemetryState.stage : item.status === 'picker' ? 'picking' : 'filling',
       level: display.level,
       action: display.action,
       targetLabel: item.label,
@@ -342,21 +322,29 @@ function buildMissingText(res: FillResult, profile: Profile): string {
   const empty = res.items.filter((i) => i.status === 'profileEmpty');
   const lines: string[] = [];
   if (failed.length) {
-    lines.push('【页面有选项但未能自动选中，请人工选择】');
+    lines.push('【页面有选项但未能自动选中，请人工选择】[E1103]');
     failed.forEach((i) => lines.push(`${i.label}：${i.valuePreview || ''}`));
+    lines.push(`处理建议：${issueMeta('E1103')?.action || ''}`);
   }
   if (picker.length) {
     lines.push('');
-    lines.push('【弹窗选择框：点字段旁的「选择」按钮打开选择器，选取以下目标】');
+    lines.push('【弹窗选择框：点字段旁的「选择」按钮打开选择器，选取以下目标】[E1203]');
     picker.forEach((i) => lines.push(`${i.label}：${i.valuePreview || ''}`));
+    lines.push(`处理建议：${issueMeta('E1203')?.action || ''}`);
   }
   if (empty.length) {
     lines.push('');
-    lines.push('【档案中尚未填写，可在「档案编辑器」中补充】');
+    lines.push('【档案中尚未填写，可在「档案编辑器」中补充】[E1102]');
     empty.forEach((i) => {
       const hint = i.field && i.field.startsWith('compose.') ? '请在档案中补充对应经历列表' : `档案字段：${i.field}`;
       lines.push(`${i.label}（${hint}）`);
     });
+  }
+  const manual = res.items.filter((i) => i.status === 'skipped' && i.issueCode === 'E1206');
+  if (manual.length) {
+    lines.push('');
+    lines.push('【长文未自动填写】[E1206]');
+    manual.forEach((i) => lines.push(`${i.label}：${i.reason || ''}`));
   }
   const statements = profile.essays.length ? profile.essays.map((essay) => ({ title: `${essay.kind}${essay.charLimit ? `（上限 ${essay.charLimit} 字）` : ''}`, content: essay.content })) : profile.selfStatements;
   if (statements.length) {
@@ -375,20 +363,22 @@ function buildReport(): string {
     try {
       const raw = sessionStorage.getItem('tui-fill-summary');
       const parsed = raw ? JSON.parse(raw) : null;
-      return parsed ? { at: parsed.at, stats: parsed.stats, items: Array.isArray(parsed.items) ? parsed.items.map((item: any) => ({ label: item.label, field: item.field, status: item.status, reason: item.reason || '' })) : [] } : null;
+      return parsed ? { at: parsed.at, stats: parsed.stats, items: Array.isArray(parsed.items) ? parsed.items.map((item: any) => ({ label: item.label, field: item.field, status: item.status, reason: item.reason || '', issue: item.issue || '' })) : [] } : null;
     } catch { return null; }
   })();
   const siteStructure = scanSite(document);
   siteStructure.url = safeUrl;
   siteStructure.gridTables.forEach((table) => { table.samples = []; });
-  return JSON.stringify(
-    {
-      url: safeUrl,
-      title: document.title,
-      adapter: matchAdapter(location.href, adapters) ? matchAdapter(location.href, adapters)!.id : null,
-      adapterPackage: matchAdapterPackage(location.href, adapterPackages)?.id || null,
-      // 只保留状态和字段名，不包含档案值、姓名、证件、电话、邮箱或真实表格内容。
-      fillSummary,
+    return JSON.stringify(
+      {
+        url: safeUrl,
+        title: document.title,
+        adapter: matchAdapter(location.href, adapters) ? matchAdapter(location.href, adapters)!.id : null,
+        adapterPackage: matchAdapterPackage(location.href, adapterPackages)?.id || null,
+        // 稳定问题码目录：报告中 items.issue 可直接对照"用户该做什么"
+        issueCatalog: ISSUE_CATALOG,
+        // 只保留状态和字段名，不包含档案值、姓名、证件、电话、邮箱或真实表格内容。
+        fillSummary,
       // 弹窗点选调试记录（trigger 命中/点击策略/是否弹出/最终结果）
       pickDebug: (() => {
         try {
@@ -449,6 +439,8 @@ function buildReport(): string {
       })(),
       // 站点架构扫描：网格表格列头/数据行 HTML 样例/加行按钮/弹窗触发器（"先读架构再操作"）
       siteScan: siteStructure,
+      // 组件下拉脱敏探针：只含 DOM 结构属性，不含任何控件值或档案数据。
+      widgetProbe: probeComponentDropdowns(document),
       total: fields.length,
       fields: fields.map((f) => ({
         label: f.label,
@@ -501,6 +493,8 @@ function escapeHtml(s: string): string {
 
 /** 控件是否"空"（未选/未填）——不能复用 fieldValueOf（其对输入框返回 "值|checked"，空框也会返回 "|false" 导致误判"已选过"） */
 function controlEmpty(el: Element): boolean {
+  // 组件下拉（jqx 等无原生值控件）：选择成功后由点选内核打上 data-tui-value 标记
+  if (el.getAttribute('data-tui-value')) return false;
   const tag = el.tagName;
   if (tag === 'SELECT') return (el as HTMLSelectElement).value === '';
   if (tag === 'TEXTAREA') return (el as HTMLTextAreaElement).value.trim() === '';
@@ -837,134 +831,6 @@ function showCheckReport(): void {
   box.querySelector('.tui-cr-close')?.addEventListener('click', closeCheckReport);
 }
 
-/**
- * 功能：在用户主动开启连续填写后，纠正当前页、严格验收并点击适配包声明的下一步。
- * 安全边界：同一步最多点击三次、纠错最多两轮、全流程最多二十步；永不匹配最终提交、上传或锁定按钮。
- */
-async function runValidatedAutoAdvance(profile: Profile): Promise<void> {
-  if (!isTop || autoAdvanceRunning || !readAutoWizard()) return;
-  autoAdvanceRunning = true;
-  try {
-    // 先给日期二次回读、弹窗选择和动态表格任务完成的机会；忙碌时持续等待而不是抢点下一步。
-    for (let round = 0; round < 80; round++) {
-      const state = readAutoWizard();
-      if (!state) return;
-      const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
-      if (!adapterPackage || adapterPackage.commitPolicy !== 'validated-next-only') {
-        stopAutoWizard('连续填写已停止：当前学校尚未声明安全的“下一步”契约');
-        return;
-      }
-      const matched = matchAdapterPage(adapterPackage, document, location.href);
-      const page = matched.allowed && matched.page?.role === 'form' ? matched.page : undefined;
-      if (!page?.nextSelectors?.length) {
-        stopAutoWizard('连续填写已到达最终页或未验收页面，未执行提交');
-        return;
-      }
-      if (pickersDepth > 0 || activePick || rowJobsRunning || readRowJobs().length) {
-        setPanelStatus('🚀 连续填写：等待弹窗选择或表格加行完成…');
-        await sleep(750);
-        continue;
-      }
-
-      // 每轮重新按档案写入，直接纠正被页面脚本清空、格式化错误或服务器驳回的字段。
-      emitTelemetry({ stage: 'verifying', level: 'info', action: '正在回读并校验当前页', targetLabel: page.name });
-      const corrected = fillCurrentDocument(profile);
-      lastResult = corrected;
-      if (corrected.items.some((item) => item.status === 'picker')) {
-        await attemptPickers(corrected.items);
-        if (pickersDepth > 0 || activePick) {
-          await sleep(600);
-          continue;
-        }
-      }
-      await sleep(500);
-
-      // 适配包字段再次回读；代码名称不成对、日期格式不精确等都视为阻断错误。
-      const contractResults = fillAdapterContract(profile, document, location.href, adapterPackage);
-      const contractFailures = contractResults.filter((item) => item.status === 'failed');
-      const unresolvedPickers = corrected.items.filter((item) =>
-        item.status === 'picker' && item.el instanceof HTMLElement && document.documentElement.contains(item.el) && controlEmpty(item.el),
-      );
-      const check = runPreSubmitCheck(document, activeRules);
-      const semanticProblems = check.items.filter((item) => item.level === 'error' || /格式|不一致|大于总人数/.test(item.title));
-      const serverErrors = visibleValidationErrors(document, page);
-
-      const hardProblems = contractFailures.length || unresolvedPickers.length || semanticProblems.length;
-      if (hardProblems) {
-        const pageKey = autoAdvancePageKey(document, page);
-        const corrections = state.attempts[`fix:${pageKey}`] || 0;
-        if (corrections < 2) {
-          state.attempts[`fix:${pageKey}`] = corrections + 1;
-          writeAutoWizard(state);
-          setPanelStatus(`🚀 检测到填写错误，正在自动纠正（${corrections + 1}/2）…`);
-          emitTelemetry({ stage: 'correcting', level: 'warning', action: `正在执行第 ${corrections + 1}/2 轮自动纠正`, reason: '检测到必填、格式或组件回读异常', recoverable: true });
-          await sleep(900);
-          continue;
-        }
-        stopAutoWizard('连续填写已停止：仍有无法自动纠正的必填、格式或组件错误');
-        showCheckReport();
-        return;
-      }
-      if (serverErrors.length) {
-        const pageKey = autoAdvancePageKey(document, page);
-        const corrections = state.attempts[`server-fix:${pageKey}`] || 0;
-        if (corrections < 1) {
-          state.attempts[`server-fix:${pageKey}`] = corrections + 1;
-          writeAutoWizard(state);
-          setPanelStatus('🚀 检测到服务器校验提示，已重新填写，准备再次验证…');
-          emitTelemetry({ stage: 'correcting', level: 'warning', action: '正在处理服务器校验提示', reason: '已按档案重新填写，随后再次回读', recoverable: true });
-          await sleep(900);
-          continue;
-        }
-        // 部分站点只有再次点击下一步才会清除旧错误提示；字段回读已全部通过时允许有限重试。
-      }
-
-      const nextButton = findDeclaredNextButton(document, page);
-      if (!nextButton) {
-        stopAutoWizard('连续填写已停止：未找到经过适配包验收的“下一步”按钮');
-        return;
-      }
-      const pageKey = autoAdvancePageKey(document, page);
-      const clicks = state.attempts[`next:${pageKey}`] || 0;
-      if (clicks >= 3) {
-        stopAutoWizard('连续填写已停止：同一页面连续三次未能进入下一步');
-        showCheckReport();
-        return;
-      }
-      state.attempts[`next:${pageKey}`] = clicks + 1;
-      state.steps += 1;
-      writeAutoWizard(state); // 点击前落盘，整页导航后可继续。
-      setFillProgress(100, '🚀 当前页校验通过，正在进入下一步', `连续填写第 ${state.steps} 步；最终提交仍需人工确认`, {
-        telemetryStage: 'navigating',
-        targetLabel: page.name,
-        level: 'success',
-      });
-      setPanelStatus('🚀 当前页已回读通过，正在自动点击“下一步”…');
-      clickDeclaredNext(nextButton);
-      await sleep(2600);
-
-      // 整页导航时当前脚本会卸载，新页面由持久状态继续；原地校验失败则进入纠错重试。
-      if (!document.documentElement.contains(nextButton)) {
-        setTimeout(() => {
-          if (readAutoWizard()) void chrome.runtime.sendMessage({ type: 'PANEL_FILL' }).catch(() => {});
-        }, 500);
-        return;
-      }
-      if (visibleValidationErrors(document, page).length) {
-        setPanelStatus('🚀 下一步返回校验错误，正在按档案纠正…');
-        emitTelemetry({ stage: 'correcting', level: 'warning', action: '下一步返回校验错误，正在纠正', targetLabel: page.name, recoverable: true });
-        await sleep(700);
-        continue;
-      }
-      // 按钮仍在且没有明确成功证据，保守等待后再有限重试，不把一次 click 当成导航成功。
-      await sleep(900);
-    }
-    stopAutoWizard('连续填写已停止：等待页面响应超时');
-  } finally {
-    autoAdvanceRunning = false;
-  }
-}
-
 // ===================== 学校目录（报名入口导航） =====================
 type SchoolStatus = 'done' | 'doing';
 
@@ -1185,7 +1051,7 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
     const current = jobs[0];
     const currentEntries = current ? entriesOf(current.type, profile) : [];
     const targetLabel = current ? `${rowJobLabel(current.type)} · 第 ${Math.min(current.startIndex + 1, Math.max(1, currentEntries.length))} 行` : '动态表格';
-    setFillProgress(50 + Math.round(45 * ratio), stage, readAutoWizard() ? '逐行新增并填写；完成后将自动校验并进入下一步' : '逐行新增并填写；保存、下一步和提交仍由你操作', {
+    setFillProgress(50 + Math.round(45 * ratio), stage, '逐行新增并填写；保存、下一步和提交仍由你操作', {
       telemetryStage: 'addingRows',
       targetLabel,
       current: sumDone,
@@ -1348,8 +1214,8 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
     continue;
   }
   if (isTop && !jobs.length) {
-    setPanelStatus(readAutoWizard() ? '表格自动加行完成，正在等待连续填写校验…' : '表格自动加行填写完成 ✅（绿色高亮，请核对后提交）');
-    finishFillBanner('表格自动加行填写完成', readAutoWizard() ? '即将自动校验并进入下一步' : '绿色高亮，请核对后提交');
+    setPanelStatus('表格自动加行填写完成 ✅（绿色高亮，请核对后保存）');
+    finishFillBanner('表格自动加行填写完成', '绿色高亮，请核对后保存');
   } else {
     updateRowJobsProgress('🔄 正在自动加行');
   }
@@ -1391,27 +1257,23 @@ function startSafeRowJobs(profile: Profile): void {
 
 const handlers: PanelHandlers = {
   onAction: async (act: string) => {
-    if (act === 'fill' || act === 'autofill') {
-      beginFillTelemetry(act === 'autofill');
-      if (act === 'autofill') startAutoWizard();
-      else stopAutoWizard();
-      setPanelStatus(act === 'autofill' ? '🚀 连续填写已启动：正在填写并校验当前页…' : '正在填充本页…');
+    if (act === 'fill') {
+      setPanelBusy(true);
+      beginFillTelemetry();
+      setPanelStatus('⚡ 正在填充本页（含自动加行与弹窗点选）…');
       try {
         const resp = await chrome.runtime.sendMessage({ type: 'PANEL_FILL' });
         if (resp && resp.ok) setPanelStatus(formatStats(resp.stats));
         else {
-          if (act === 'autofill') stopAutoWizard();
           emitTelemetry({ stage: 'failed', level: 'error', action: '无法开始填写', reason: '请确认已登录并停留在报名填表页', recoverable: true });
+        setPanelBusy(false);
           setPanelStatus('填充失败：请确认已登录并停留在报名填表页');
         }
       } catch {
-        if (act === 'autofill') stopAutoWizard();
         emitTelemetry({ stage: 'failed', level: 'error', action: '扩展后台未就绪', reason: '请刷新页面后重试', recoverable: true });
+        setPanelBusy(false);
         setPanelStatus('扩展后台未就绪：请刷新页面后重试');
       }
-    } else if (act === 'stopauto') {
-      stopAutoWizard('已停止连续填写；当前页面内容不会被清除');
-      emitTelemetry({ stage: 'cancelled', level: 'warning', action: '已停止连续填写', reason: '当前页面已经填写的内容不会被清除', recoverable: true });
     } else if (act === 'schools') {
       showSchoolDirectory();
     } else if (act === 'check') {
@@ -1462,10 +1324,12 @@ const handlers: PanelHandlers = {
       if (activeCrawlController) {
         activeCrawlController.abort();
         activeCrawlController = null;
+        setPanelBusy(false);
         setPanelStatus('正在取消会话爬取…');
         return;
       }
       const crawlController = new AbortController();
+      setPanelBusy(true);
       activeCrawlController = crawlController;
       try {
         const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
@@ -1490,6 +1354,7 @@ const handlers: PanelHandlers = {
         setPanelStatus(`会话爬取已停止：${error instanceof Error ? error.message : String(error)}`);
       } finally {
         if (activeCrawlController === crawlController) activeCrawlController = null;
+        setPanelBusy(false);
       }
     } else if (act === 'copymissing') {
       if (!lastResult) {
@@ -1522,8 +1387,21 @@ const handlers: PanelHandlers = {
       } catch {
         setPanelStatus('字段报告生成失败，请刷新页面重试');
       }
+    } else if (act === 'clearfill') {
+      const answer = window.confirm('清除本页已填：将清空本扩展在本页自动填写的字段值（您手动填写的内容不受影响，也不会改动服务器已保存的数据）。继续吗？');
+      if (!answer) return;
+      const cleared = clearPageFill(document);
+      closeCheckReport();
+      setPanelStatus(cleared ? `已清除本页自动填写的 ${cleared} 个字段；可重新调整档案后再填充` : '本页没有本扩展自动填写的字段');
+      showToast(cleared ? `已清除本页自动填写的 ${cleared} 个字段（手动填写的内容未动）` : '本页没有本扩展自动填写的字段', { tone: 'info' });
+      try {
+        sessionStorage.removeItem(REFILL_KEY); // 清除后停止自动补填，避免马上把值写回去
+        sessionStorage.removeItem(PROGRESS_KEY);
+      } catch {
+        // 忽略
+      }
+      fillFinished = true;
     } else if (act === 'clear') {
-      stopAutoWizard();
       clearHighlights(document);
       closeCheckReport();
       try {
@@ -1558,19 +1436,6 @@ if (isTop) {
   const matched = fields.filter((f) => f.rule).length;
   if (matchAdapter(url, adapters)?.autoShow || AUTO_SHOW_PATTERN.test(url) || (fields.length >= 12 && matched >= 5)) {
     showPanel();
-  }
-  // 连续填写只在同一标签页、同源报名向导内延续；最终页或未声明页面会由安全控制器立即停止。
-  if (readAutoWizard()) {
-    setPanelStatus('🚀 检测到连续填写任务，正在继续当前步骤…');
-    setTimeout(() => {
-      const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
-      const page = adapterPackage ? matchAdapterPage(adapterPackage, document, location.href) : null;
-      if (adapterPackage?.commitPolicy === 'validated-next-only' && page?.allowed && page.page?.role === 'form') {
-        void chrome.runtime.sendMessage({ type: 'PANEL_FILL' }).catch(() => stopAutoWizard('连续填写已停止：扩展后台未就绪'));
-      } else {
-        stopAutoWizard('连续填写已到达最终页或未验收页面，未执行提交');
-      }
-    }, 800);
   }
   // 恢复未完成的自动加行任务（页面整页刷新后继续），并补回可能被失败回发清空的基本字段
   void (async () => {
@@ -1612,6 +1477,7 @@ if (isTop) {
           // 忽略
         }
         setPanelStatus(`⚠️ 上次保存可能未生效：${rowJobLabel(fakeKind)}表格在保存后为空。若非你手动删除，请重新填写并再次保存`);
+        showToast(`🔴 疑似假保存：${rowJobLabel(fakeKind)}表格在保存后内容为空。请核对页面，必要时重新填写并再次保存（若是你手动删除可忽略）`, { tone: 'error', duration: 15000 });
         emitTelemetry({
           stage: 'failed',
           level: 'error',
@@ -1689,7 +1555,6 @@ chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any)
           scheduleCascadeRetries(lastResult.items);
           // 常规字段先落入当前空行，再按“点击新增 → 等待可见行增长 → 填下一条”的顺序续填。
           startSafeRowJobs(profile);
-          if (isTop && readAutoWizard()) void runValidatedAutoAdvance(profile);
           const finalStats = lastResult.stats; // 闭包内引用快照，避免 TS 无法收窄 lastResult 非空
           // 仅在仍有异步工作时补填：稳定页面不再无条件等待并重复扫描 6.5/12/20/30 秒。
           const followupDelays = [2500, 7000, 15000];
@@ -1702,7 +1567,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any)
                 if (pickersDepth > 0) setFillProgress(98, '🔁 自动选择弹窗仍在进行', '请稍候，不要手动关闭弹窗…');
                 else if (readRowJobs().length || rowJobsRunning) setFillProgress(99, '🔁 自动加行仍在进行', '表格行尚未全部添加，稍后自动继续');
                 else if (idx < followupDelays.length - 1 && hasDeferredFillWork()) setFillProgress(96 + idx, '🔁 自动补填进行中…', '检测到异步控件，等待页面完成渲染');
-                else finishFillBanner(`填充完成：已填 ${finalStats.filled} 项`, readAutoWizard() ? '正在执行连续填写校验' : '请核对绿色高亮后保存');
+                else finishFillBanner(`填充完成：已填 ${finalStats.filled} 项`, '请核对绿色高亮后保存');
               }
             }, delay),
           );

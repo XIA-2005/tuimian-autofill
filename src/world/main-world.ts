@@ -15,6 +15,28 @@ function findVueInstance(el: Element | null): any {
 }
 
 /**
+ * 功能：归一化 jqx 下拉项的显示文本，仅用于安全的精确/单向包含匹配。
+ * 原理：去除空白和常见排版标点后转小写，避免学校名中全半角括号或空格造成假性不匹配。
+ */
+function normalizeJqxLabel(value: unknown): string {
+  return String(value ?? '')
+    .replace(/[\s\u3000]+/g, '')
+    .replace(/[：:＊*（）()【】\[\]{}<>《》、，,。.！!？?~～"'“”‘’·\-_/\\—]/g, '')
+    .toLowerCase();
+}
+
+/**
+ * 功能：从 jqxDropDownList `getItems` 返回项中取出用户看到的显示名称。
+ * 原理：jqx 标准项使用 `label`；字符串项直接使用本身，`text` 只作为兼容旧页面的显示字段。
+ */
+function jqxItemLabel(item: unknown): string {
+  if (typeof item === 'string' || typeof item === 'number') return String(item);
+  if (!item || typeof item !== 'object') return '';
+  const record = item as Record<string, unknown>;
+  return String(record.label ?? record.text ?? '');
+}
+
+/**
  * 功能：把主世界桥安装到指定文档（每个 frame 一个实例）。
  * 原理：监听 tui-world-cmd 事件，执行白名单命令，结果写入 data-tui-res-<id> 属性后派发 tui-world-result。
  * 命令处理器全部通过 doc.defaultView / doc 取页面全局与元素，绝不引用模块级全局（跨 frame/多文档安全）。
@@ -37,6 +59,63 @@ export function installMainWorldBridge(doc: Document): void {
       if (!el) return { ok: false, reason: 'no-element' };
       j(el).trigger(String(p.type || 'click'));
       return { ok: true };
+    },
+    // jqx 虚拟列表精确选项：选项可能不在 DOM 中，必须在页面主世界调用插件自身 API。
+    'jqx-select-label': (p) => {
+      const j = win && (win.jQuery || win.$);
+      if (!j || !j.fn) return { ok: false, reason: 'no-jquery' };
+      if (typeof j.fn.jqxDropDownList !== 'function') return { ok: false, reason: 'no-jqx' };
+
+      const selector = String(p.selector || '');
+      if (!selector) return { ok: false, reason: 'bad-selector' };
+      let el: Element | null;
+      try {
+        el = doc.querySelector(selector);
+      } catch {
+        return { ok: false, reason: 'bad-selector' };
+      }
+      if (!el) return { ok: false, reason: 'no-element' };
+
+      const target = normalizeJqxLabel(p.label);
+      if (!target) return { ok: false, reason: 'bad-label' };
+
+      let widget: any;
+      try {
+        widget = j(el);
+      } catch {
+        return { ok: false, reason: 'jqx-init-failed' };
+      }
+      if (!widget || typeof widget.jqxDropDownList !== 'function') return { ok: false, reason: 'no-jqx' };
+
+      let rawItems: unknown;
+      try {
+        rawItems = widget.jqxDropDownList('getItems');
+      } catch {
+        return { ok: false, reason: 'jqx-get-items-failed' };
+      }
+      if (!Array.isArray(rawItems)) return { ok: false, reason: 'jqx-items-unavailable' };
+
+      // 只投影显示名称跨世界返回，避免 jqx 项内 DOM 引用或循环结构无法 JSON 序列化。
+      const items = rawItems.map(jqxItemLabel);
+      const normalizedItems = items.map(normalizeJqxLabel);
+      const exactIndex = normalizedItems.findIndex((label) => label === target);
+      // 单向包含：只允许“选项显示文本包含完整目标”，绝不用 target.includes(item)
+      // 把“华南理工大学广州国际校区”错选成过短的“华南理工大学”。
+      const containsIndex = exactIndex >= 0 ? -1 : normalizedItems.findIndex((label) => !!label && label.includes(target));
+      const matchedIndex = exactIndex >= 0 ? exactIndex : containsIndex;
+      if (matchedIndex < 0) return { ok: false, reason: 'no-match', value: { itemCount: items.length } };
+
+      try {
+        widget.jqxDropDownList('selectItem', rawItems[matchedIndex]);
+      } catch {
+        return { ok: false, reason: 'jqx-select-failed' };
+      }
+      return {
+        ok: true,
+        value: {
+          match: exactIndex >= 0 ? 'exact' : 'contains',
+        },
+      };
     },
     // 调用页面全局函数（如 __doPostBack、WdatePicker、layui.form.render）；限定具名点路径，绝不 eval
     'invoke-fn': (p) => {
