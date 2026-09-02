@@ -8,6 +8,7 @@
     "watch": "node build.mjs --watch",
     "test": "node build.mjs && node test/run.js",
     "test:e2e": "node build.mjs && node test/playwright.mjs",
+    "test:e2e:real": "node test/bundle-real-e2e.mjs && node test/real-e2e.cjs",
     "typecheck": "tsc --noEmit",
     "package": "npm test && node package.mjs"
   },

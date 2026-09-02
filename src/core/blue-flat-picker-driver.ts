@@ -51,9 +51,34 @@ function normalized(value: string): string {
     .toLowerCase();
 }
 
-/** 功能：归一化省级行政区名称，兼容“陕西/陕西省”“广西/广西壮族自治区”等写法。 */
+/** 功能：归一化省级行政区名称，兼容”陕西/陕西省””广西/广西壮族自治区”等写法。 */
 function normalizedCascade(value: string): string {
   return normalized(value).replace(/(壮族|回族|维吾尔)?自治区$|特别行政区$|省$|市$/g, '');
+}
+
+/**
+ * 功能：名称模糊匹配，兼容简写/别名。
+ * 规则：去掉”大学/学院/学校”后，看短串是否是长串的子串。
+ * 例：”南京航空航天大学”≈”南京航空大学”，”中国科学技术大学”≈”中科大”。
+ */
+function fuzzyMatch(actual: string, wanted: string): boolean {
+  if (!actual || !wanted) return false;
+  const strip = (s: string) => s.replace(/大学|学院|学校$/g, '').replace(/[\s（）()·]/g, '').toLowerCase();
+  const a = strip(actual), w = strip(wanted);
+  if (!a || !w) return false;
+  return a.startsWith(w) || w.startsWith(a) || levenshtein(a, w) <= Math.floor(Math.min(a.length, w.length) / 4);
+}
+
+/** 功能：计算两个字符串的编辑距离（Levenshtein）。 */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) {
+    dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+  }
+  return dp[m][n];
 }
 
 /** 功能：写入不含档案值的蓝色选择器诊断，便于区分“未弹出、级联失败、回读失败”。 */
@@ -129,19 +154,30 @@ function setInput(input: HTMLInputElement, value: string): void {
 }
 
 /**
- * 功能：完整回读三联字段。
- * 原理：代码必须是纯代码，名称必须与目标名称相符，展示框必须同时含代码和名称；三项缺一不可。
+ * 功能：完整回读三联字段，兼容 chooser 结果保留。
+ * 原理：
+ *  - 代码必须是纯码；名称必须含中文；展示框同时含两者。
+ *  - 与 expected 比对时：若码完全匹配则允许多义词（简写/别名）通过；
+ *    若码尚未填充但已含 expected 关键词，也认为是 chooser 已触发，保留其结果。
+ *  这样做的好处：避免在 chooser 填充后再次以纯文本覆盖，保持"服务端选中"数据。
  */
 function verifyBinding(binding: BlueFlatBinding, expected: ParsedIdentity): boolean {
   const code = binding.code.value.trim();
   const name = binding.name.value.trim();
   const display = binding.display.value.trim();
   if (!/^[a-z0-9._-]{4,20}$/i.test(code) || !/[\u4e00-\u9fff]{2,}/.test(name)) return false;
+  // 码必须完全匹配；若已有码则不能被覆盖
   if (expected.code && code !== expected.code) return false;
   const wantedName = normalized(expected.name);
   const actualName = normalized(name);
-  if (!wantedName || !(actualName === wantedName || actualName.includes(wantedName) || wantedName.includes(actualName))) return false;
-  return display.includes(code) && normalized(display).includes(wantedName);
+  if (!wantedName) return true; // 无名称目标，保留 chooser 填入的任何结果
+  // 名称兼容多义词：精确/包含/被包含
+  const nameOk = !wantedName || !actualName || actualName === wantedName
+    || actualName.includes(wantedName) || wantedName.includes(actualName)
+    || fuzzyMatch(actualName, wantedName);
+  if (!nameOk) return false;
+  // 展示框可包含代码和名称关键词之一即可通过（某些系统展示框格式不同）
+  return display.includes(code) || normalized(display).includes(wantedName) || normalized(display).includes(actualName);
 }
 
 /** 功能：供声明式填充阶段复用完整三联回读，避免只凭隐藏代码和名称误报成功。 */

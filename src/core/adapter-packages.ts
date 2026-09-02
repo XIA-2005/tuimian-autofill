@@ -291,7 +291,90 @@ export const SCHOOL_ADAPTER_PACKAGES: SchoolAdapterPackage[] = [
     { mode: 'guided', pageOrder: ['education', 'language', 'safe-form-step'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' }), 'blue', 'validated-next-only',
   ),
   pkg('platform-blue', '蓝色系统', '通用报名', 'blue', ['*'], ['*/logon*'], [{ ...page('form', '报名信息', 'form', ['*/apply*', '*/edit*', '*/info*']), fields: commonSchoolMajorDateFields('layui') }], { mode: 'guided', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' }), 'blue'),
+
+  // 蓝色系统专属适配包：schools.ts 中已标记 adapter:"blue-xxx" 的学校。
+  // 这些学校使用 Layui 弹窗 chooseSch/chooseZy，通过 blue-flat 协议完成院校/专业三联回填。
+  // 优先级高于 platform-blue（通配），因为更具体的 host 匹配会先被 resolveAdapters 命中。
+  ...buildBlueSchoolAdapterPackages(),
+
   pkg('platform-jingzhi', '精致系统', '通用报名', 'jingzhi', ['*'], ['*/zsgl/*', '*/tmsgl/*', '*/xlygl/*'], [{ ...page('form', '报名信息填写', 'form', ['*edit*', '*apply*']), fields: commonSchoolMajorDateFields('element') }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }),
+
+  // 复古 ASP 系统预推免（统一契约）：蓝三联 + drpbyyx 复用
+  // 蓝三联：bydwm/bydw/bkbydwShow 弹出 chooseSch 选院校；byzydm/byzymc/bkbyzyShow 弹出 chooseZy 选专业
+  // drpbyyx 下拉：中南/南农/华电等常用，无弹窗即可选院校
+  // 奖励项：txthjmc/txthjsj/txtpm 静态槽（retro-honor-fill.ts 接管）
+  ...(() => {
+    const RETRO_SCHOOL_MAJOR_FIELDS: AdapterFieldContract[] = [
+      {
+        profilePath: 'education.university',
+        labels: ['毕业院校', '本科毕业院校', '毕业学校', '本科学校', '所在学校', '学生来源学校'],
+        selectors: ['input[id*="drpbyyx" i]', 'select[id*="drpbyyx" i]', 'input[id*="bydwm" i]', 'input[id*="bydw" i]', 'input[id*="bkbydwShow" i]', 'input[id*="txtszyxmc" i]'],
+        driver: 'school-picker',
+        codeSelectors: ['input[id*="bydwm" i]', 'input[name*="bydwm" i]'],
+        nameSelectors: ['input[id*="bydw" i]', 'input[name*="bydw" i]', 'input[id*="bkbydwShow" i]', 'input[id*="txtszyxmc" i]'],
+        displaySelectors: ['input[id*="bkbydwShow" i]', 'input[name*="bkbydwShow" i]'],
+        codeNamespace: 'moe.school',
+        picker: {
+          protocol: 'blue-flat',
+          triggerSelectors: ['span.addon[onclick*="chooseSch"]', 'span.addon[onclick*="chooseYx"]', 'a[onclick*="chooseSch"]', 'a[onclick*="chooseYx"]'],
+          frameNames: ['chooseSch', 'chooseYx', 'SelUniversity', 'universitySelectPage', 'SchoolPage'],
+          frameSrcPatterns: ['*chooseSch*', '*chooseYx*', '*SelUniversity*', '*universitySelectPage*', '*school*', '*university*'],
+          searchInputSelectors: ['input[type="text"]', 'input.search', 'input[name="key"]', '#key'],
+          queryButtonSelectors: ['button', 'a', 'input[type="button"]', 'input[value="查询"]', 'input[value="搜索"]'],
+          resultRowSelectors: ['table tr', 'li.result', 'tr.trbg'],
+          chooseSelectors: ['input[type="image"]', 'a', 'input[type="button"]', 'span[onclick]', 'td[onclick]', 'tr[onclick]'],
+        },
+      },
+      {
+        profilePath: 'education.major',
+        labels: ['毕业专业', '本科专业', '所学专业', '专业名称'],
+        selectors: ['input[id*="byzymc" i]', 'input[id*="byzy" i]', 'input[id*="txtbyzy" i]', 'input[id*="bkbyzyShow" i]'],
+        driver: 'major-picker',
+        codeSelectors: ['input[id*="byzydm" i]', 'input[name*="byzydm" i]'],
+        nameSelectors: ['input[id*="byzymc" i]', 'input[id*="byzy" i]', 'input[id*="txtbyzy" i]', 'input[id*="bkbyzyShow" i]'],
+        displaySelectors: ['input[id*="bkbyzyShow" i]', 'input[name*="bkbyzyShow" i]'],
+        codeNamespace: 'moe.major',
+        picker: {
+          protocol: 'blue-flat',
+          triggerSelectors: ['span.addon[onclick*="chooseZy"]', 'span.addon[onclick*="chooseZydm"]', 'a[onclick*="chooseZy"]'],
+          frameNames: ['chooseZy', 'chooseZydm', 'SelMajor', 'SelSubject', 'SelBkdzZydm', 'majorSelectPage', 'MajorPage'],
+          frameSrcPatterns: ['*chooseZy*', '*chooseZydm*', '*SelMajor*', '*SelSubject*', '*SelBkdzZydm*', '*majorSelectPage*', '*major*', '*specialty*'],
+          searchInputSelectors: ['input[type="text"]', 'input.search', 'input[name="key"]', '#key'],
+          queryButtonSelectors: ['button', 'a', 'input[type="button"]', 'input[value="查询"]', 'input[value="搜索"]'],
+          resultRowSelectors: ['table tr', 'li.result', 'tr.trbg'],
+          chooseSelectors: ['input[type="image"]', 'a', 'input[type="button"]', 'span[onclick]', 'td[onclick]', 'tr[onclick]'],
+        },
+      },
+      { profilePath: 'education.college', labels: ['所在院系', '院系', '学院', '所属学院'], selectors: ['input[id*="szxy" i]', 'input[id*="yxmc" i]', 'input[id*="txtszxy" i]'], driver: 'text' },
+      { profilePath: 'basic.birthday', labels: ['出生日期', '出生年月'], selectors: ['input[id*="csrq" i]', 'input[id*="txtcsrq" i]'], driver: 'date', datePrecision: 'day' },
+      { profilePath: 'education.startDate', labels: ['入学年月', '本科入学年月', '入学时间'], selectors: ['input[id*="rxny" i]', 'input[id*="txtrxny" i]'], driver: 'month-picker', datePrecision: 'month' },
+      { profilePath: 'education.endDate', labels: ['毕业年月', '预计毕业年月', '毕业时间'], selectors: ['input[id*="byny" i]', 'input[id*="bkbyny" i]', 'input[id*="txtbkbyny" i]'], driver: 'month-picker', datePrecision: 'month' },
+    ];
+    // 批量声明：竞品 host_school_seed.js 中已显式覆盖的复古系统预推免学校。
+    // 任何字段映射差异只在 spec 内调整，适配包结构保持一致。
+    return ([
+      // [id, 学校名, 域名, pathPatterns]
+      ['retro-tmsgl-csu', '中南大学', 'yjszsgl.csu.edu.cn', ['*/zsgl2026/*', '*/zsgl/*', '*/tmsgl/*']],
+      ['retro-tmsgl-hnu', '湖南大学', 'yjszsxt.hnu.edu.cn', ['*/zsxt2026/*', '*/zsxt/*', '*/tmsgl/*']],
+      ['retro-tmsgl-jiangnan', '江南大学', 'yzgmis.jiangnan.edu.cn', ['*/zsgl/*', '*/tmsgl/*', '*/register*']],
+      ['retro-tmsgl-njau', '南京农业大学', 'yzglxt.njau.edu.cn', ['*/gts/*', '*/tmsgl/*']],
+      ['retro-tmsgl-ncepu', '华北电力大学', 'yjszs.ncepu.edu.cn', ['*/zsgl/*', '*/tmsgl/*']],
+      ['retro-tmsgl-ujs', '江苏大学', 'yjszsgl.ujs.edu.cn', ['*/zsgl/*', '*/tmsgl/*']],
+      ['retro-tmsgl-hnucm', '湖南中医药大学', 'yjsxt.hnucm.edu.cn', ['*/zsgl/*', '*/tmsgl/*']],
+      ['retro-tmsgl-sjtu', '上海交通大学', 'ga.sjtu.edu.cn', ['*/zsgl/*', '*/ytmgl/*', '*/xlygl/*']],
+      ['retro-tmsgl-bjut', '北京工业大学', 'webrecdoc.bjut.edu.cn', ['*/zsgl/*', '*/tmsgl/*', '*/xlygl/*']],
+    ] as [string, string, string, string[]][]).map(([id, schoolName, host, pathPatterns]) =>
+      pkg(
+        id, schoolName, '预推免', 'jingzhi', [host], pathPatterns,
+        [
+          page('shell', '登录/项目选择', 'shell', ['*login*', '*tmsgl*', '*register*']),
+          { ...page('form', '报名信息', 'form', ['*'], ['input,select,textarea']), fields: RETRO_SCHOOL_MAJOR_FIELDS },
+        ],
+        { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS },
+        exp({ sessionCrawl: 'experimental' }),
+      ),
+    );
+  })(),
   pkg('platform-cover', '封面系统', '通用报名', 'cover', ['*'], ['*/gsapp/sys/*', '*/geapp/sys/*'], [{ ...page('form', '填报页面', 'form', ['*entrance*', '*apply*', '*info*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }),
   pkg('muc-tm', '中央民族大学', '预推免', 'other', ['yjszs.muc.edu.cn'], ['*'], [{ ...page('form', '报名信息', 'form', ['*']), fields: commonSchoolMajorDateFields() }], { mode: 'session', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
   pkg('xmu-pre', '厦门大学', '预推免', 'other', ['ssyjsbm.xmu.edu.cn'], ['*'], [{ ...page('form', '报名工作区', 'form', ['*']), fields: commonSchoolMajorDateFields() }], { mode: 'session', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
@@ -315,7 +398,122 @@ export const SCHOOL_ADAPTER_PACKAGES: SchoolAdapterPackage[] = [
     return pkg(id, school, program, 'other', [host], ['*'], [{ ...page('form', '报名信息', 'form', ['*'], ['input,select,textarea']), fields: commonSchoolMajorDateFields(component as AdapterFieldContract['componentDriver']) }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ registerFill: id === 'chd-xly' ? 'experimental' : 'directory' }), projection);
   }),
   pkg('ucas-pre', '中国科学院大学', '预推免', 'other', ['zxsq.ucas.ac.cn'], ['*'], [{ ...page('form', '报名信息', 'form', ['*']), fields: commonSchoolMajorDateFields() }], { mode: 'guided', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ pluginExtract: 'directory', sessionCrawl: 'directory' })),
+
+  // P3：对照竞品补齐的 cover_system / jingzhi_system / retro_system 学校（与 platform-* 不冲突时优先）
+  pkg('gdut-gsapp', '广东工业大学', '预推免', 'cover', ['yjsxt.gdut.edu.cn'], ['*/gsapp/*'], [{ ...page('form', '填报页面', 'form', ['*entrance*', '*apply*', '*info*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  pkg('hainanu-gsapp', '海南大学', '预推免', 'cover', ['ehall.hainanu.edu.cn'], ['*/gsapp/*'], [{ ...page('form', '填报页面', 'form', ['*entrance*', '*apply*', '*info*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  pkg('jnu-gsapp', '暨南大学', '预推免', 'cover', ['yjsxt.jnu.edu.cn'], ['*/gsapp/*'], [{ ...page('form', '填报页面', 'form', ['*entrance*', '*apply*', '*info*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  pkg('gzhu-gsapp', '广州大学', '预推免', 'cover', ['yjsyxt.gzhu.edu.cn'], ['*/gsapp/*'], [{ ...page('form', '填报页面', 'form', ['*entrance*', '*apply*', '*info*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  pkg('whu-gsapp', '武汉大学', '预推免', 'cover', ['yz.whu.edu.cn', 'ehall.whu.edu.cn'], ['*'], [{ ...page('form', '填报页面', 'form', ['*entrance*', '*apply*', '*info*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  pkg('ucas-tms', '中国科学院大学', '推免', 'other', ['zhaosheng.ucas.ac.cn'], ['*/sign_up/*', '*/TMS/*'], [{ ...page('form', '报名信息', 'form', ['*']), fields: commonSchoolMajorDateFields() }], { mode: 'session', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  pkg('sysu-enroll', '中山大学', '预推免', 'jingzhi', ['enroll.sysu.edu.cn'], ['*/yjszs/plugins/*'], [{ ...page('form', '报名信息', 'form', ['*entrance*']), fields: commonSchoolMajorDateFields('element') }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  pkg('nwafu-yjszs', '西北农林科技大学', '预推免', 'jingzhi', ['yjszs.nwafu.edu.cn', 'yjszs.nwsuaf.edu.cn'], ['*/yjszs/plugins/*'], [{ ...page('form', '报名信息', 'form', ['*entrance*']), fields: commonSchoolMajorDateFields('element') }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  pkg('hunnu-tmsgl', '湖南师范大学', '预推免', 'jingzhi', ['yjsyzsxt.hunnu.edu.cn'], ['*/zsxt2025/*', '*/zsxt/*', '*/tmsgl/*'], [
+    page('shell', '登录/项目选择', 'shell', ['*login*', '*tmsgl*']),
+    { ...page('form', '报名信息', 'form', ['*'], ['input,select,textarea']), fields: [
+      { profilePath: 'education.university', labels: ['毕业院校', '本科毕业院校', '毕业学校', '本科学校'], selectors: ['input[id*="drpbyyx" i]', 'select[id*="drpbyyx" i]', 'input[id*="bydwm" i]', 'input[id*="bydw" i]', 'input[id*="bkbydwShow" i]'], driver: 'school-picker', codeSelectors: ['input[id*="bydwm" i]'], nameSelectors: ['input[id*="bydw" i]', 'input[id*="bkbydwShow" i]'], displaySelectors: ['input[id*="bkbydwShow" i]'], codeNamespace: 'moe.school', picker: { protocol: 'blue-flat', triggerSelectors: ['span.addon[onclick*="chooseSch"]', 'a[onclick*="chooseSch"]'], frameNames: ['chooseSch', 'SelUniversity'], frameSrcPatterns: ['*chooseSch*', '*school*'], searchInputSelectors: ['input[type="text"]'], queryButtonSelectors: ['button', 'a', 'input[type="button"]'], resultRowSelectors: ['table tr'], chooseSelectors: ['input[type="image"]', 'a', 'span[onclick]'] } },
+      { profilePath: 'education.major', labels: ['毕业专业', '本科专业', '所学专业'], selectors: ['input[id*="byzymc" i]', 'input[id*="byzy" i]', 'input[id*="bkbyzyShow" i]'], driver: 'major-picker', codeSelectors: ['input[id*="byzydm" i]'], nameSelectors: ['input[id*="byzymc" i]', 'input[id*="bkbyzyShow" i]'], displaySelectors: ['input[id*="bkbyzyShow" i]'], codeNamespace: 'moe.major', picker: { protocol: 'blue-flat', triggerSelectors: ['span.addon[onclick*="chooseZy"]'], frameNames: ['chooseZy', 'SelMajor'], frameSrcPatterns: ['*chooseZy*', '*major*'], searchInputSelectors: ['input[type="text"]'], queryButtonSelectors: ['button', 'a', 'input[type="button"]'], resultRowSelectors: ['table tr'], chooseSelectors: ['input[type="image"]', 'a', 'span[onclick]'] } },
+      { profilePath: 'basic.birthday', labels: ['出生日期', '出生年月'], selectors: ['input[id*="csrq" i]'], driver: 'date', datePrecision: 'day' },
+      { profilePath: 'education.startDate', labels: ['入学年月'], selectors: ['input[id*="rxny" i]'], driver: 'month-picker', datePrecision: 'month' },
+      { profilePath: 'education.endDate', labels: ['毕业年月'], selectors: ['input[id*="byny" i]'], driver: 'month-picker', datePrecision: 'month' },
+    ] },
+  ], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  // 中国矿业大学（蓝色系统，已有 platform-blue 通配；这里只补 host 限定，避免路径冲突）
+  pkg('blue-cumt', '中国矿业大学', '预推免', 'blue', ['yzs.cumt.edu.cn'], ['*/yzbm/logon*', '*/apply*'], [{ ...page('form', '报名信息', 'form', ['*']), fields: commonSchoolMajorDateFields('layui') }], { mode: 'guided', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' }), 'blue'),
+  // 中国地质大学（简约系统，竞品 cug_tms / cug_xly 分支）
+  pkg('cug-tms', '中国地质大学', '预推免', 'jingzhi', ['epo.cug.edu.cn'], ['*/Open/ZsTkssTms/*'], [{ ...page('form', '报名信息', 'form', ['*Signin*']), fields: commonSchoolMajorDateFields() }], { mode: 'session', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  pkg('cug-xly', '中国地质大学', '夏令营', 'jingzhi', ['epo.cug.edu.cn'], ['*/Open/ZsTkssXly/*'], [{ ...page('form', '报名信息', 'form', ['*Signin*']), fields: commonSchoolMajorDateFields() }], { mode: 'session', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  // 北京林业大学（other，其他系统）
+  pkg('bjfu-tm', '北京林业大学', '推免', 'other', ['yzbm.bjfu.edu.cn'], ['*'], [{ ...page('form', '报名信息', 'form', ['*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  // 沈阳药科大学（other）
+  pkg('syphu-ybm', '沈阳药科大学', '推免', 'other', ['yjs.syphu.edu.cn'], ['*'], [{ ...page('form', '报名信息', 'form', ['*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  // 北京协和医学院（other）
+  pkg('pumc-tm', '北京协和医学院', '推免', 'other', ['yzbtm.pumc.edu.cn'], ['*'], [{ ...page('form', '报名信息', 'form', ['*login*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  // 中央财经大学（other）
+  pkg('cufe-yzgl', '中央财经大学', '推免', 'other', ['yzgl.cufe.edu.cn'], ['*'], [{ ...page('form', '报名信息', 'form', ['*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  // 东北师范大学（other）
+  pkg('nenu-ybm', '东北师范大学', '推免', 'other', ['yz.nenu.edu.cn'], ['*'], [{ ...page('form', '报名信息', 'form', ['*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  // 厦门大学夏令营分支
+  pkg('xmu-dxsxly', '厦门大学', '夏令营', 'other', ['dxsxly.xmu.edu.cn'], ['*'], [{ ...page('form', '报名工作区', 'form', ['*']), fields: commonSchoolMajorDateFields() }], { mode: 'session', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
 ];
+
+/**
+ * 功能：批量生成蓝色系统专属适配包。
+ * 适配包使用 blue-flat 协议声明院校/专业三联字段；与通用 platform-blue 共存，resolveAdapters 会按 host 精确匹配优先命中。
+ * 新增学校时只追加 [id, 学校名, 域名] 即可。
+ */
+export function buildBlueSchoolAdapterPackages(): SchoolAdapterPackage[] {
+  const BLUE_SCHOOL_MAJOR_FIELDS: AdapterFieldContract[] = [
+    {
+      profilePath: 'education.university',
+      labels: ['毕业院校', '本科毕业院校', '毕业学校', '本科学校'],
+      selectors: ['input[id*="bydwm" i]', 'input[id*="bkbydwShow" i]', 'input[name*="bydwm" i]'],
+      driver: 'school-picker',
+      codeSelectors: ['input[id*="bydwm" i]', 'input[name*="bydwm" i]'],
+      nameSelectors: ['input[id*="bydw" i]', 'input[id*="bkbydwShow" i]', 'input[name*="bydw" i]'],
+      displaySelectors: ['input[id*="bkbydwShow" i]', 'input[name*="bkbydwShow" i]'],
+      codeNamespace: 'moe.school',
+      picker: {
+        protocol: 'blue-flat',
+        triggerSelectors: ['span.addon[onclick*="chooseSch"]', 'span.addon[onclick*="chooseYx"]', 'a[onclick*="chooseSch"]', 'a[onclick*="chooseYx"]'],
+        frameNames: ['chooseSch', 'chooseYx', 'SelUniversity', 'universitySelectPage', 'SchoolPage'],
+        frameSrcPatterns: ['*chooseSch*', '*chooseYx*', '*SelUniversity*', '*universitySelectPage*', '*school*', '*university*'],
+        searchInputSelectors: ['input[type="text"]', 'input.search', 'input[name="key"]', '#key'],
+        queryButtonSelectors: ['button', 'a', 'input[type="button"]', 'input[value="查询"]', 'input[value="搜索"]'],
+        resultRowSelectors: ['table tr', 'li.result', 'tr.trbg'],
+        chooseSelectors: ['input[type="image"]', 'a', 'input[type="button"]', 'span[onclick]', 'td[onclick]', 'tr[onclick]'],
+      },
+    },
+    {
+      profilePath: 'education.major',
+      labels: ['毕业专业', '本科专业', '所学专业', '专业名称'],
+      selectors: ['input[id*="byzydm" i]', 'input[id*="byzymc" i]', 'input[name*="byzydm" i]', 'input[name*="byzymc" i]'],
+      driver: 'major-picker',
+      codeSelectors: ['input[id*="byzydm" i]', 'input[name*="byzydm" i]'],
+      nameSelectors: ['input[id*="byzymc" i]', 'input[id*="byzy" i]', 'input[name*="byzymc" i]'],
+      displaySelectors: ['input[id*="bkbyzyShow" i]', 'input[name*="bkbyzyShow" i]'],
+      codeNamespace: 'moe.major',
+      picker: {
+        protocol: 'blue-flat',
+        triggerSelectors: ['span.addon[onclick*="chooseZy"]', 'span.addon[onclick*="chooseZydm"]', 'a[onclick*="chooseZy"]'],
+        frameNames: ['chooseZy', 'chooseZydm', 'SelMajor', 'SelSubject', 'SelBkdzZydm', 'majorSelectPage', 'MajorPage'],
+        frameSrcPatterns: ['*chooseZy*', '*chooseZydm*', '*SelMajor*', '*SelSubject*', '*SelBkdzZydm*', '*majorSelectPage*', '*major*', '*specialty*'],
+        searchInputSelectors: ['input[type="text"]', 'input.search', 'input[name="key"]', '#key'],
+        queryButtonSelectors: ['button', 'a', 'input[type="button"]', 'input[value="查询"]', 'input[value="搜索"]'],
+        resultRowSelectors: ['table tr', 'li.result', 'tr.trbg'],
+        chooseSelectors: ['input[type="image"]', 'a', 'input[type="button"]', 'span[onclick]', 'td[onclick]', 'tr[onclick]'],
+      },
+    },
+    { profilePath: 'basic.birthday', labels: ['出生日期', '出生年月'], selectors: ['input[id*="csrq" i]', 'input[id*="txtcsrq" i]'], driver: 'date', datePrecision: 'day' },
+    { profilePath: 'education.startDate', labels: ['入学年月', '本科入学年月'], selectors: ['input[id*="rxny" i]', 'input[id*="txtrxny" i]'], driver: 'month-picker', datePrecision: 'month' },
+    { profilePath: 'education.endDate', labels: ['毕业年月', '预计毕业年月'], selectors: ['input[id*="byny" i]', 'input[id*="bkbyny" i]', 'input[id*="txtbkbyny" i]'], driver: 'month-picker', datePrecision: 'month' },
+  ];
+  const entries: [string, string, string][] = [
+    ['blue-seu', '东南大学', 'gsas.seu.edu.cn'],
+    ['blue-fudan', '复旦大学', 'gsas.fudan.edu.cn'],
+    ['blue-cags', '中国地质科学院', 'gsas.cags.ac.cn'],
+    ['blue-ustc', '中国科学技术大学', 'xspt.ustc.edu.cn'],
+    ['blue-bit', '北京理工大学', 'yz.bit.edu.cn'],
+    ['blue-tongji', '同济大学', 'yzbm.tongji.edu.cn'],
+    ['blue-xjtu', '西安交通大学', 'yzbm.xjtu.edu.cn'],
+    ['blue-uestc', '电子科技大学', 'yzbm.uestc.edu.cn'],
+    ['blue-cupl', '中国政法大学', 'yzbm.cupl.edu.cn'],
+    ['blue-cpu', '中国药科大学', 'yzs.cpu.edu.cn'],
+    ['blue-cup', '中国石油大学', 'gmss.cup.edu.cn'],
+    ['blue-cau', '中国农业大学', 'yzk.cau.edu.cn'],
+    ['blue-buct', '北京化工大学', 'yzbm.buct.edu.cn'],
+    ['blue-hfut', '合肥工业大学', 'yzbm.hfut.edu.cn'],
+    ['blue-sustech', '南方科技大学', 'yzbm.sustech.edu.cn'],
+  ];
+  return entries.map(([id, schoolName, host]) =>
+    pkg(
+      id, schoolName, '通用报名', 'blue', [host], ['*/logon*', '*/apply*', '*/edit*'],
+      [{ ...page('form', '报名信息', 'form', ['*']), fields: BLUE_SCHOOL_MAJOR_FIELDS }],
+      { mode: 'guided', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS },
+      exp({ sessionCrawl: 'experimental' }),
+    ),
+  );
+}
 
 export function validateAdapterPackage(raw: unknown): SchoolAdapterPackage {
   if (!raw || typeof raw !== 'object') throw new Error('适配包不是对象');
@@ -353,7 +551,24 @@ export function validateAdapterPackage(raw: unknown): SchoolAdapterPackage {
 }
 
 export function matchAdapterPackage(url: string, packages: SchoolAdapterPackage[] = SCHOOL_ADAPTER_PACKAGES): SchoolAdapterPackage | undefined {
-  return packages.find((p) => declarativeMatchUrl(p.match, url));
+  // 按 host 精确度排序：精确 host（不含 *）优先于通配 host（如 `*`）
+  const matches = packages.filter((p) => declarativeMatchUrl(p.match, url));
+  if (!matches.length) return undefined;
+  const score = (p: SchoolAdapterPackage): number => {
+    // 计算 host 精确度分数：精确 host 数越多越具体，得分越高
+    const hosts = p.match?.hosts || [];
+    let s = 0;
+    for (const h of hosts) {
+      if (h === '*') s -= 100; // 通配 host 排在最末
+      else if (h.startsWith('*.')) s += 5; // 子域通配
+      else s += 20; // 精确 host 优先
+    }
+    // pathPatterns 也参与：精确 > 通配
+    const paths = p.match?.pathPatterns || [];
+    s += paths.length;
+    return s;
+  };
+  return matches.sort((a, b) => score(b) - score(a))[0];
 }
 
 function glob(pattern: string, value: string): boolean {

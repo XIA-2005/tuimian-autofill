@@ -10,6 +10,7 @@ import { PopupPickContext, resolveCodeNameBinding, verifyCodeNameBinding } from 
 import { pickSchool } from './school-picker-driver';
 import { pickMajor } from './major-picker-driver';
 import { pickComponentOption } from './component-select-drivers';
+import { fillRetroHonorSlots } from './retro-honor-fill';
 import { withUnlocked } from './unlock';
 import { mainWorldJqxSelectLabel } from './world-bridge';
 import {
@@ -372,6 +373,28 @@ function hasPopupBehavior(d: DetectedField): boolean {
   return false;
 }
 
+/**
+ * 蓝色系统复古奖励槽（上交/中南/南农/湖南等）：
+ * 填写页只有 txthjmc0~4 / txthjsj0~4 / txtpm0~4 静态文本框，无动态表格。
+ * 在 fillAll 中，detectAllFields 之前调用：把槽内控件加入 handled 防止被报 noMatch，
+ * 同时把填写结果并入 preItems/preStats 统一计入报告。
+ */
+function fillRetroHonorTablesInFillAll(
+  profile: Profile,
+  doc: Document,
+  handled: Set<Element>,
+  preItems: FillItem[],
+  preStats: { filled: number; profileEmpty: number },
+): void {
+  const { filled, items } = fillRetroHonorSlots(profile, doc);
+  for (const item of items) {
+    preItems.push(item);
+    if (item.el) handled.add(item.el);
+    if (item.status === 'filled') preStats.filled++;
+    else if (item.status === 'profileEmpty') preStats.profileEmpty++;
+  }
+}
+
 export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FIELD_RULES): FillResult {
   clearHighlights(doc);
   // 先处理"家庭成员表格"与"外语/计算机水平表格"（列头定义含义的裸表格），其单元格不再参与常规匹配
@@ -382,6 +405,9 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
   fillCetTables(profile, doc, handled, preItems, preStats);
   fillExperienceTables(profile, doc, handled, preItems, preStats);
   fillAwardTables(profile, doc, handled, preItems, preStats);
+  // 蓝色系统复古奖励槽（上交/中南/南农/湖南等）：无动态表，只有 txthjmc/txthjsj/txtpm 静态输入。
+  // 必须在 detectAllFields 之前处理并把控件加入 handled，否则常规匹配会把它们全部打 noMatch。
+  fillRetroHonorTablesInFillAll(profile, doc, handled, preItems, preStats);
 
   // 组件下拉（页面上没有原生 select 的 jqx/自定义组件，如 ehall gsapp 的性别/政治面貌）先识别：
   // 它会把值载体（隐藏域/组件显示输入框）打上 data-tui-widget 标记，随后常规检测自动排除这些元素（消除 noMatch 噪音）
