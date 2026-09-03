@@ -1,4 +1,4 @@
-// 内容脚本入口：每个 frame 运行一份。顶层 frame 负责悬浮面板、自动填充、体检与消息协调。
+// 内容脚本入口：每个 frame 运行一份。顶层 frame 负责悬浮面板、自动填充与消息协调。
 
 import { Profile } from '../core/profile';
 import { loadProfile, saveProfile } from '../core/storage';
@@ -9,7 +9,7 @@ import { scanSite } from '../core/scanner';
 import { runPreSubmitCheck } from '../core/checker';
 import { loadRemoteRules } from '../core/rulesync';
 import { DetectedField, detectAllFields, FIELD_RULES, FieldRule, probeComponentDropdowns } from '../core/matcher';
-import { clearHighlights, clearPageFill, closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, fillLanguageExams, FillItem, FillResult, FillStats, findAchievementTable, findAwardTable, findExperienceTable, findFamilyTable, findLanguageTable, languageExamEntryCount, markEl, pickInPage, sleep, snapshotFillState, trySetSelect } from '../core/filler';
+import { clearHighlights, clearPageFill, closeLeftoverPickers, directFillRegionTriplets, fillAchievements, fillAll, fillAwardRows, fillExperiences, fillFamilyMembers, fillLanguageExams, FillItem, FillResult, FillStats, findAchievementTable, findAwardTable, findExperienceTable, findFamilyTable, findLanguageTable, languageExamEntryCount, markEl, pickInPage, sleep, snapshotFillState, trySetSelect, visibleDialogRoots } from '../core/filler';
 import { ISSUE_CATALOG, issueMeta } from '../core/error-codes';
 import { ADAPTERS, AUTO_SHOW_PATTERN, allAdapters, extraRulesFor, matchAdapter, PlatformAdapter } from '../core/adapters';
 import { matchAdapterPackage, matchAdapterPage, SCHOOL_ADAPTER_PACKAGES } from '../core/adapter-packages';
@@ -22,7 +22,8 @@ import { detectFakeSave, snapshotTableEvidence, TableEvidence } from '../core/sa
 import { applyFillTelemetryCounts, createFillTelemetryState, FillTelemetryEventInput, FillTelemetryStage, FillTelemetryState, reduceFillTelemetry, restoreFillTelemetryState } from '../core/fill-telemetry';
 import { initPanel, PanelHandlers, renderPanelTelemetry, setPanelBusy, setPanelStatus, showPanel, showToast } from './panel';
 import { startCaptchaAssistant } from './captcha-orchestrator';
-import { markPickerDone, markPickerFailed } from '../core/picker-state-machine';
+import { isPickerManual, markPickerDone, markPickerFailed, markPickerManual } from '../core/picker-state-machine';
+import { PickerHandoffCompleteSource, PickerHandoffController } from './picker-handoff';
 
 // ===================== 醒目填充横幅 + 进度条 =====================
 let fillBanner: HTMLElement | null = null;
@@ -35,6 +36,11 @@ let activePick: { key: string; at: number } | null = null;
 // 行任务互斥：防止延时补填轮次与主流程并发重跑（重复点"添加"）
 let rowJobsRunning = false;
 let activeCrawlController: AbortController | null = null;
+// 人工接管队列的页面级生命周期：新一轮填写或页面卸载时统一失效，防止旧轮询恢复错误队列。
+let pickerRunGeneration = 0;
+let pickerReleaseTimer: ReturnType<typeof setInterval> | null = null;
+let pickerReleasePending = false;
+const manuallySkippedPickerIds = new Set<string>();
 
 /** 根据当前学校适配包，把八类原子表投影为旧填充内核可消费的临时视图。 */
 function profileForCurrentPage(profile: Profile): Profile {
@@ -217,14 +223,23 @@ function restoreProgressBanner(): void {
 }
 
 const isTop = window === window.top;
+const pickerHandoffController = isTop ? new PickerHandoffController(document) : null;
 let adapters: PlatformAdapter[] = ADAPTERS;
 let adapterPackages = SCHOOL_ADAPTER_PACKAGES;
 let activeRules: FieldRule[] = [...FIELD_RULES, ...extraRulesFor(location.href)];
 
-function fillCurrentDocument(profile: Profile): FillResult {
+/**
+ * 功能：使用既有专项契约与完整字段驱动填写当前文档。
+ *
+ * 用户主动填写时重置 picker 尝试；延时补填保留本轮人工跳过状态，
+ * 使人工接管闭环不会被后台重试重新打开同一弹窗。
+ */
+function fillCurrentDocument(profile: Profile, resetPickerAttempts = false): FillResult {
   const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
   const contractItems = fillAdapterContract(profile, document, location.href, adapterPackage);
-  const result = fillAll(profile, document, activeRules);
+  const result = fillAll(profile, document, activeRules, {
+    resetPickerAttempts,
+  });
   for (const item of contractItems) {
     if (item.status !== 'skipped' || !item.el || !item.pickerContext || result.items.some((existing) => existing.el === item.el && existing.status === 'picker')) continue;
     result.items.push({
@@ -357,7 +372,7 @@ function buildMissingText(res: FillResult, profile: Profile): string {
   return lines.join('\n') || '没有漏填项 🎉';
 }
 
-/** 不包含任何填写值，仅结构与匹配结果，用于反馈给开发者改进规则 */
+/** 不包含任何填写值，仅结构与匹配结果，用于反馈给开发者改进规则。 */
 function buildReport(): string {
   const fields = detect();
   const safeUrl = (() => { try { const u = new URL(location.href); return `${u.origin}${u.pathname}`; } catch { return ''; } })();
@@ -505,7 +520,7 @@ function controlEmpty(el: Element): boolean {
 }
 
 function hasDeferredFillWork(): boolean {
-  if (pickersDepth > 0 || activePick || rowJobsRunning || readRowJobs().length) return true;
+  if (pickersDepth > 0 || activePick || pickerReleasePending || pickerHandoffController?.hasActiveTask() || rowJobsRunning || readRowJobs().length) return true;
   const pendingPicker = Array.from(document.querySelectorAll<HTMLElement>('[data-tui-picker-profile]')).some((el) => controlEmpty(el));
   if (pendingPicker) return true;
   return Array.from(document.querySelectorAll<HTMLSelectElement>('select')).some((el) => {
@@ -515,7 +530,8 @@ function hasDeferredFillWork(): boolean {
 }
 
 /** 联动下拉自动重试：目标选项一旦出现立即填充；仅在仍有未完成项时保留兜底轮次。 */
-function scheduleCascadeRetries(items: FillItem[]): void {
+function scheduleCascadeRetries(items: FillItem[], stats?: FillStats): void {
+  if (!isTop) return;
   const retrySelects = () => {
     let pending = false;
     for (const it of items) {
@@ -561,54 +577,233 @@ function scheduleCascadeRetries(items: FillItem[]): void {
     }
   }, 350);
   // 弹窗驱动本身带有 iframe/结果回读等待；先快速尝试，未完成时再保留 1200ms 兜底，减少稳定页面空等。
-  setTimeout(() => void attemptPickers(items), 80);
+  setTimeout(() => void attemptPickers(items, stats), 80);
+}
+
+/** 功能：为 picker 构造稳定字段标识；无 profile path 时退化到控件名/id/标签。 */
+function pickerFieldId(item: FillItem, el: HTMLElement): string {
+  return item.pickerContext?.profilePath || item.field || (el as HTMLInputElement).name || el.id || item.label;
+}
+
+/** 功能：停止“跳过后等待弹窗释放”的唯一轮询，防止跨轮次残留回调。 */
+function clearPickerReleaseWait(): void {
+  if (pickerReleaseTimer) clearInterval(pickerReleaseTimer);
+  pickerReleaseTimer = null;
+  pickerReleasePending = false;
 }
 
 /**
- * 断点续填核心：当 picker 弹窗已打开、用户手动选择时，
- * 周期扫描 controlEmpty，字段有值后自动 markPickerDone（无需等下一次 fillAll 重跑）。
- * 最多等 120s，轮询间隔 1.5s。
+ * 功能：开始新的 picker 运行代次，并清理上一轮接管 UI、轮询和本轮跳过集合。
+ * 仅用户主动点击一键填充时调用；自动补填不得清除此集合。
  */
-async function waitForPickerManualDone(
+function beginPickerRun(): void {
+  pickerRunGeneration++;
+  clearPickerReleaseWait();
+  pickerHandoffController?.destroy();
+  manuallySkippedPickerIds.clear();
+}
+
+/** 功能：销毁当前 picker 接管生命周期；页面卸载或用户清理时调用，不恢复任何旧队列。 */
+function destroyPickerRun(): void {
+  pickerRunGeneration++;
+  clearPickerReleaseWait();
+  pickerHandoffController?.destroy();
+}
+
+/**
+ * 功能：字段已完成后等待原弹窗真正释放，再启动下一 picker。
+ * 即使目标字段先于弹窗关闭完成回填，也不会把下一字段的输入发送到旧弹窗。
+ */
+function resumePickerQueueWhenSafe(
+  items: FillItem[],
+  stats: FillStats | undefined,
+  roots: HTMLElement[],
+  generation: number,
+): void {
+  clearPickerReleaseWait();
+  const resume = (): void => {
+    clearPickerReleaseWait();
+    if (generation === pickerRunGeneration) void attemptPickers(items, stats);
+  };
+  const stillOpen = (): boolean => {
+    const visibleNow = new Set(visibleDialogRoots(document));
+    return roots.length ? roots.some((root) => root.isConnected && visibleNow.has(root)) : false;
+  };
+  if (!stillOpen()) {
+    setTimeout(resume, 0);
+    return;
+  }
+  pickerReleasePending = true;
+  pickerReleaseTimer = setInterval(() => {
+    if (generation !== pickerRunGeneration) {
+      clearPickerReleaseWait();
+      return;
+    }
+    if (!stillOpen()) resume();
+  }, 600);
+}
+
+/**
+ * 功能：把人工回填收敛为单次成功事件，并恢复同一轮剩余 picker 队列。
+ * 触发条件：按钮确认或轮询确认控件非空；退出条件：代次过期、元素断连或该项已经完成。
+ */
+function completeManualPicker(
   item: FillItem,
   el: HTMLElement,
-): Promise<void> {
-  const MAX_WAIT = 120_000;   // 2 分钟超时
-  const INTERVAL = 1_500;     // 1.5s 轮询
-  const fieldId = item.field || '';
+  items: FillItem[],
+  stats: FillStats | undefined,
+  roots: HTMLElement[],
+  generation: number,
+  source: PickerHandoffCompleteSource,
+): void {
+  if (generation !== pickerRunGeneration || !el.isConnected || controlEmpty(el) || item.status === 'filled') return;
+  const fieldId = pickerFieldId(item, el);
+  item.status = 'filled';
+  item.reason = source === 'button' ? '人工选择后回读通过' : '检测到人工选择已回填';
+  manuallySkippedPickerIds.delete(fieldId);
+  markEl(el, 'filled');
+  try { markPickerDone(fieldId, el.ownerDocument || document); } catch { /* 状态存储失败不影响页面结果 */ }
 
-  const start = Date.now();
-  while (Date.now() - start < MAX_WAIT) {
-    await sleep(INTERVAL);
-    // 页面可能已导航，el 已不在 DOM
-    if (!(el as Element).isConnected) break;
-    // picker 弹窗可能已关闭，字段值已被用户填入
+  if (stats) {
+    stats.filled += 1;
+    stats.picker = Math.max(0, stats.picker - 1);
+  }
+  // FILL_DONE 可能已用跨 frame 的可序列化副本替换 lastResult；同步其中对应项与总计。
+  if (lastResult && lastResult.items !== items) {
+    const mirrored = lastResult.items.find((candidate) => candidate.status === 'picker' && candidate.field === item.field && candidate.label === item.label);
+    if (mirrored) {
+      mirrored.status = 'filled';
+      mirrored.reason = item.reason;
+      lastResult.stats.filled += 1;
+      lastResult.stats.picker = Math.max(0, lastResult.stats.picker - 1);
+    }
+  }
+  if (isTop) {
+    telemetryState = applyFillTelemetryCounts(telemetryState, {
+      filled: telemetryState.counts.filled + 1,
+      waiting: Math.max(0, telemetryState.counts.waiting - 1),
+    });
+    emitTelemetry({
+      stage: 'picking',
+      level: 'success',
+      action: source === 'button' ? '人工选择已确认并回读通过' : '已自动检测到人工选择回填',
+      targetLabel: item.label,
+      field: item.field,
+      recoverable: true,
+    });
+    setPanelStatus(`✅ ${item.label} 已回填，正在继续后续弹窗任务`);
+  }
+  resumePickerQueueWhenSafe(items, stats, roots, generation);
+}
+
+/**
+ * 功能：用户跳过后等待当前弹窗关闭或字段被实际回填，再恢复后续队列。
+ * 只保留一个页面级轮询，并持续到弹窗关闭、字段回填、元素销毁或页面卸载；
+ * 弹窗仍占用页面时绝不冒险打开下一个 picker。
+ */
+function waitForSkippedPickerRelease(
+  item: FillItem,
+  el: HTMLElement,
+  items: FillItem[],
+  stats: FillStats | undefined,
+  roots: HTMLElement[],
+  generation: number,
+): void {
+  clearPickerReleaseWait();
+  pickerReleasePending = true;
+  const checkRelease = (): void => {
+    if (generation !== pickerRunGeneration || !el.isConnected) {
+      clearPickerReleaseWait();
+      return;
+    }
     if (!controlEmpty(el)) {
-      // 用户手动完成选择，标记为 done
-      try {
-        markPickerDone(fieldId, el.ownerDocument || document);
-        if (isTop) emitTelemetry({
+      clearPickerReleaseWait();
+      completeManualPicker(item, el, items, stats, roots, generation, 'automatic');
+      return;
+    }
+    const visibleNow = new Set(visibleDialogRoots(document));
+    const currentDialogStillOpen = roots.length
+      ? roots.some((root) => root.isConnected && visibleNow.has(root))
+      : visibleNow.size > 0;
+    if (!currentDialogStillOpen) {
+      clearPickerReleaseWait();
+      void attemptPickers(items, stats);
+      return;
+    }
+  };
+  pickerReleaseTimer = setInterval(checkRelease, 600);
+  checkRelease();
+}
+
+/**
+ * 功能：将当前 picker 移交给用户，并把完成/跳过动作接回原队列。
+ * 安全原因由调用方提供固定脱敏文本，不读取或展示 valuePreview。
+ */
+function handoffPicker(
+  item: FillItem,
+  el: HTMLElement,
+  items: FillItem[],
+  stats: FillStats | undefined,
+  roots: HTMLElement[],
+  safeReason: string,
+): void {
+  if (!pickerHandoffController) return;
+  const generation = pickerRunGeneration;
+  const fieldId = pickerFieldId(item, el);
+  try { markPickerManual(fieldId, safeReason, document); } catch { /* 忽略 */ }
+  pickerHandoffController.show({
+    fieldLabel: item.label,
+    safeReason,
+    targetEl: el,
+    isFilled: () => el.isConnected && !controlEmpty(el),
+    isPopupOpen: roots.length ? () => {
+      const visible = new Set(visibleDialogRoots(document));
+      return roots.some((root) => root.isConnected && visible.has(root));
+    } : undefined,
+    onComplete: (source) => completeManualPicker(item, el, items, stats, roots, generation, source),
+    onPopupClosed: () => {
+      if (generation !== pickerRunGeneration) return;
+      if (isTop) emitTelemetry({
+        stage: 'picking',
+        level: 'warning',
+        action: '选择窗口已关闭，字段仍待人工处理',
+        targetLabel: item.label,
+        field: item.field,
+        reason: '未检测到字段回填，本轮不再自动打开该字段',
+        recoverable: true,
+      });
+      resumePickerQueueWhenSafe(items, stats, [], generation);
+    },
+    onSkip: () => {
+      if (generation !== pickerRunGeneration) return;
+      manuallySkippedPickerIds.add(fieldId);
+      try { markPickerManual(fieldId, '用户选择本轮跳过，保留人工待处理', document); } catch { /* 忽略 */ }
+      if (isTop) {
+        emitTelemetry({
           stage: 'picking',
-          level: 'success',
-          action: '人工确认后自动标记完成（断点续填）',
+          level: 'warning',
+          action: '已跳过当前弹窗字段',
           targetLabel: item.label,
           field: item.field,
+          reason: '本轮停止自动重试，字段仍保留为人工待处理',
+          recoverable: true,
         });
-      } catch { /* 忽略 */ }
-      break;
-    }
-    // 仍为空：用户可能还在弹窗里，继续等待
-  }
+        setPanelStatus(`⏭️ ${item.label} 已在本轮跳过；关闭当前弹窗后将继续其他任务`);
+      }
+      waitForSkippedPickerRelease(item, el, items, stats, roots, generation);
+    },
+  });
 }
 
 /** 弹窗选择框自动点选一次（已填的不动，无法匹配的留给人工） */
-async function attemptPickers(items: FillItem[]): Promise<void> {
+async function attemptPickers(items: FillItem[], stats?: FillStats): Promise<void> {
+  if (!isTop) return;
   // 全局互斥：多个延时补填轮次不得同时运行不同字段的弹窗任务。
-  if (pickersDepth > 0 || activePick) return;
+  if (pickersDepth > 0 || activePick || pickerReleasePending || pickerHandoffController?.hasActiveTask()) return;
   pickersDepth += 1;
   let manualHint: string | null = null;
   try {
-    manualHint = await attemptPickersInner(items);
+    manualHint = await attemptPickersInner(items, stats);
   } finally {
     pickersDepth -= 1;
   }
@@ -624,7 +819,7 @@ async function attemptPickers(items: FillItem[]): Promise<void> {
   }
 }
 
-async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
+async function attemptPickersInner(items: FillItem[], stats?: FillStats): Promise<string | null> {
   // 地区三联直写优先：直接写 6 位区划码+名称，免开树弹窗（东华/北理工式 chooseArea，成熟填表软件同款做法）；树弹窗仅兜底
   directFillRegionTriplets(document, items);
   // 代码+名称成对字段共用同一个"选择"按钮：同字段+同单元格/同行的项只处理一次
@@ -678,6 +873,9 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
     if (deadFields.has(it.field)) continue; // 同字段兄弟项（代码/名称/隐藏框）共用同一弹窗，本轮已失败就不再重复弹
     const el = it.el as HTMLElement | undefined;
     if (!el || !document.documentElement.contains(el)) continue;
+    const fieldId = pickerFieldId(it, el);
+    // 人工接管或用户本轮跳过的字段由卡片/释放轮询负责，延时补填不得再次打开它。
+    if (manuallySkippedPickerIds.has(fieldId) || isPickerManual(fieldId, document)) continue;
     if (!controlEmpty(el)) continue; // 已选过（保存后页面可能已回显）→ 不动
     const cell = el.closest('td,th') || el.parentElement;
     const scopeKey = cell || el.closest('tr');
@@ -734,15 +932,15 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
     } finally {
       if (activePick && activePick.key === failKey) activePick = null;
     }
-    if (res !== 'opened') closeLeftoverPickers(document); // 清理遗留弹层，防止旧弹窗叠在下一字段上
     if (!controlEmpty(el)) {
+      if (res !== 'opened') closeLeftoverPickers(document); // 成功后清理旧壳，避免遮挡下一字段
       it.status = 'filled';
       markEl(el, 'filled');
       if (isTop) emitTelemetry({ stage: 'picking', level: 'success', action: '弹窗选中并确认完成', targetLabel: it.label, field: it.field, current: pickIdx, total: pickTotal });
       fails[failKey] = 0;
       // 断点续填：标记 picker 为 done，sessionStorage 中该 field 移出可恢复列表
       try {
-        markPickerDone(it.field || '', document);
+        markPickerDone(fieldId, document);
       } catch { /* 忽略 */ }
       try {
         const r2 = JSON.parse(sessionStorage.getItem('tui-pick-rounds') || '{}');
@@ -754,13 +952,14 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
     } else {
       await sleep(800); // 回发型选择器点选后主页面值可能稍后才回填
       if (!controlEmpty(el)) {
+        if (res !== 'opened') closeLeftoverPickers(document);
         it.status = 'filled';
         markEl(el, 'filled');
         if (isTop) emitTelemetry({ stage: 'picking', level: 'success', action: '弹窗回填并回读通过', targetLabel: it.label, field: it.field, current: pickIdx, total: pickTotal });
         fails[failKey] = 0;
         // 断点续填：标记 picker 为 done
         try {
-          markPickerDone(it.field || '', document);
+          markPickerDone(fieldId, document);
         } catch { /* 忽略 */ }
         try {
           const r2 = JSON.parse(sessionStorage.getItem('tui-pick-rounds') || '{}');
@@ -769,8 +968,12 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
         } catch {
           // 忽略
         }
-      } else if (res === 'opened') {
-        // 弹窗已打开并填好（服务器结果慢/需人工点对勾）：不记失败，提示人工两步，弹窗保持打开
+      } else if (res === 'opened' || (isTop && visibleDialogRoots(document).length > 0)) {
+        // 仅在驱动明确报告 opened，或页面仍存在可见弹窗时进入人工接管，避免误导用户操作不存在的弹窗。
+        const handoffRoots = visibleDialogRoots(document);
+        const safeReason = res === 'opened'
+          ? '自动匹配未能安全确认最终结果，需要你在已打开的选择窗口中核对'
+          : '自动选择后尚未检测到可靠回填，需要你在当前选择窗口中确认';
         manualHint = it.label;
         if (isTop) emitTelemetry({
           stage: 'picking',
@@ -778,16 +981,18 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
           action: '弹窗已打开，等待人工确认',
           targetLabel: it.label,
           field: it.field,
-          reason: '请在当前弹窗选择匹配项并确认，完成后插件将继续',
+          reason: safeReason,
           current: pickIdx,
           total: pickTotal,
           recoverable: true,
         });
         fails[failKey] = 0;
         deadFields.add(it.field);
-        // 断点续填（修复）：picker 弹窗打开后，周期扫描 controlEmpty，
-        // 用户手动选完后字段有值 → markPickerDone（不再死等下一轮 fillAll 重跑）
-        void waitForPickerManualDone(it, el as HTMLElement).catch(() => {/* 扫描超时/出错不阻塞 */});
+        if (isTop) handoffPicker(it, el, items, stats, handoffRoots, safeReason);
+        else {
+          // 子 frame 无法创建顶层操作卡片，但仍标记人工态并停止该 frame 队列，避免重复弹窗。
+          try { markPickerManual(fieldId, safeReason, document); } catch { /* 忽略 */ }
+        }
         // 当前弹窗仍占用页面：必须停止整条队列，禁止专业任务把关键字写进院校弹窗。
         try {
           sessionStorage.setItem('tui-pick-fails', JSON.stringify(fails));
@@ -797,12 +1002,14 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
         break;
       } else if (res === 'picked') {
         // 已点选但值未回填（服务器慢/页面被回发清空）：不记失败，允许下一轮再试
+        closeLeftoverPickers(document);
         fails[failKey] = 0;
       } else {
+        closeLeftoverPickers(document);
         fails[failKey] = (fails[failKey] || 0) + 1;
         // 断点续填：标记 picker 失败（累加 attempt，超过 MAX 转 failed）
         try {
-          markPickerFailed(it.field || '', 'pickInPage-returned-non-picked', document);
+          markPickerFailed(fieldId, 'pickInPage-returned-non-picked', document);
         } catch { /* 忽略 */ }
         if (isTop) emitTelemetry({
           stage: 'picking',
@@ -833,7 +1040,7 @@ function scheduleRestorePasses(profile: Profile): void {
     const res = fillCurrentDocument(profile);
     writeTableEvidence(document); // 补填后的表格状态是下一次保存的比对基线
     if (isTop && pickersDepth === 0) setFillProgress(93, '🔁 保存后自动补填', '恢复被回发清空的字段…');
-    if (attemptPickersToo) scheduleCascadeRetries(res.items);
+    if (attemptPickersToo) scheduleCascadeRetries(res.items, res.stats);
   };
   setTimeout(() => run(true), 900);
   setTimeout(() => run(false), 2600);
@@ -1033,6 +1240,7 @@ function readTableEvidence(): TableEvidence[] {
 let rowJobsRerun = false;
 
 async function processRowJobs(profile: Profile): Promise<void> {
+  if (!isTop) return;
   if (rowJobsRunning) {
     rowJobsRerun = true; // 已有流程在跑：结束后立即自动再跑一轮（第一遍点击常因回发刷新丢上下文而漏行）
     try {
@@ -1077,6 +1285,7 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
     if (zeroRounds >= 6) break; // 等 3 秒仍无网格：不再空等，交给填写函数按"本页无该表"处理
     await sleep(500);
   }
+  if (!isTop) return;
   const entriesOf = (type: RowJob['type'], profile: Profile): unknown[] => {
     switch (type) {
       case 'achievements':
@@ -1299,6 +1508,7 @@ async function processRowJobsInner(profile: Profile): Promise<void> {
  * 不允许借“保存/添加落库”换行，也不会点击下一步或提交。
  */
 function startSafeRowJobs(profile: Profile): void {
+  if (!isTop) return;
   const jobs: RowJob[] = [];
   if (findAchievementTable(document) && profile.research.some((row) => row.title?.trim())) jobs.push({ type: 'achievements', startIndex: 0, attempt: 0 });
   if (findAwardTable(document) && profile.awards.some((row) => row.content?.trim())) jobs.push({ type: 'awards', startIndex: 0, attempt: 0 });
@@ -1314,7 +1524,7 @@ const handlers: PanelHandlers = {
     if (act === 'fill') {
       setPanelBusy(true);
       beginFillTelemetry();
-      setPanelStatus('⚡ 正在填充本页（含自动加行与弹窗点选）…');
+      setPanelStatus('⚡ 正在扫描页面并自动填写…');
       try {
         const resp = await chrome.runtime.sendMessage({ type: 'PANEL_FILL' });
         if (resp && resp.ok) setPanelStatus(formatStats(resp.stats));
@@ -1444,6 +1654,7 @@ const handlers: PanelHandlers = {
     } else if (act === 'clearfill') {
       const answer = window.confirm('清除本页已填：将清空本扩展在本页自动填写的字段值（您手动填写的内容不受影响，也不会改动服务器已保存的数据）。继续吗？');
       if (!answer) return;
+      destroyPickerRun();
       const cleared = clearPageFill(document);
       closeCheckReport();
       setPanelStatus(cleared ? `已清除本页自动填写的 ${cleared} 个字段；可重新调整档案后再填充` : '本页没有本扩展自动填写的字段');
@@ -1456,6 +1667,7 @@ const handlers: PanelHandlers = {
       }
       fillFinished = true;
     } else if (act === 'clear') {
+      destroyPickerRun();
       clearHighlights(document);
       closeCheckReport();
       try {
@@ -1477,6 +1689,10 @@ const handlers: PanelHandlers = {
 if (isTop) {
   initPanel(handlers);
   renderPanelTelemetry(telemetryState);
+  // 页面跳转/回发前立即释放接管卡片和轮询；新文档会创建全新的 content-script 实例。
+  window.addEventListener('pagehide', () => {
+    destroyPickerRun();
+  }, { once: true });
   try {
     sessionStorage.removeItem('tui-pb-fired'); // 新文档已载入：上一文档的卸载信号作废，避免阻断本页自动加行
     // 弹窗失败计数只在单页生命周期内有效：每次页面载入都给选择器全新机会（旧版本失败不得拖累新版本；成熟填表软件同款——失败防护不跨会话）
@@ -1547,7 +1763,7 @@ if (isTop) {
   if (/[?&]tui-autotest=[12]/.test(location.search)) {
     const run = (rawProfile: Profile) => {
       const profile = profileForCurrentPage(rawProfile);
-      const res = fillCurrentDocument(profile);
+      const res = fillCurrentDocument(profile, true);
       const marker = document.createElement('div');
       marker.id = 'tui-autotest-result';
       marker.textContent = JSON.stringify({ ...res.stats, extId: chrome.runtime.id || '' });
@@ -1576,9 +1792,10 @@ chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any)
       // 日历等工具 iframe（几乎没有可匹配字段）不执行填充，避免覆盖主页面诊断数据
       if (window !== window.top && detect().filter((f) => f.rule).length < 3) return false;
       try {
+        beginPickerRun();
         // 先读一遍页面架构再操作（网格/加行按钮/弹窗结构），供适配逻辑与后续诊断
         sessionStorage.setItem('tui-site-scan', JSON.stringify(scanSite(document)));
-        // 每次用户主动点「一键填充」都重置弹窗失败计数：上一轮失败不应让新一轮直接跳过（否则选择器失败 3 次后被永久跳过）
+        // 每次用户主动点「一键填充」都重置弹窗失败计数：上一轮失败不应让新一轮直接跳过。
         sessionStorage.removeItem('tui-pick-fails');
         sessionStorage.removeItem('tui-pick-rounds');
         // 清除过期回发信号：上一次导航的 pagehide 时间戳不得让本轮点击被"回发刚发生"误拦 8 秒
@@ -1595,7 +1812,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any)
             fillFinished = false;
             setFillProgress(2, '⚡ 正在扫描页面并填充', '请稍候…');
           }
-          lastResult = fillCurrentDocument(profile);
+          lastResult = fillCurrentDocument(profile, true);
           if (isTop) {
             const t = lastResult.stats.total || 1;
             const done = lastResult.stats.filled + lastResult.stats.skipped + lastResult.stats.failed;
@@ -1606,7 +1823,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any)
           } catch {
             // 忽略
           }
-          scheduleCascadeRetries(lastResult.items);
+          scheduleCascadeRetries(lastResult.items, lastResult.stats);
           // 常规字段先落入当前空行，再按“点击新增 → 等待可见行增长 → 填下一条”的顺序续填。
           startSafeRowJobs(profile);
           const finalStats = lastResult.stats; // 闭包内引用快照，避免 TS 无法收窄 lastResult 非空

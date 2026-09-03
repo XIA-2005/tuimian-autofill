@@ -33,6 +33,8 @@ import { applyRicherRows, blobLooksLike, encodeBlobRows, parseBlobRows, readStas
 import { formatIssue, issueMeta } from '../src/core/error-codes';
 import { getHighlightFailures, runHighlightTests } from '../src/core/highlight.test';
 import { getHighlightUIFailures, runHighlightUITests } from '../src/content/highlight-ui.test';
+import { getPickerHandoffFailures, runPickerHandoffTests } from '../src/content/picker-handoff.test';
+import { getPanelFailures, runPanelTests } from '../src/content/panel.test';
 
 const html = readFileSync('test/fixture-form.html', 'utf8');
 const dom = new JSDOM(html, { url: 'https://example.edu.cn/gsapp/sys/wdyjsbm/tmybm/tbgrxx.do', runScripts: 'dangerously' });
@@ -124,7 +126,7 @@ function check(cond: boolean, msg: string): void {
   }
 }
 
-// ===== 漏填高亮 PR2 · UI 渲染红阶段测试（必须 FAIL，绿阶段实现后转 PASS） =====
+// ===== 漏填高亮 UI 渲染测试 =====
 try {
   runHighlightUITests();
   for (const f of getHighlightUIFailures()) {
@@ -134,8 +136,8 @@ try {
   check(false, '[highlight-ui] runHighlightUITests 抛错：' + (e instanceof Error ? e.message : String(e)));
 }
 
-// ===== 漏填高亮 PR1 · 红阶段测试（必须 FAIL，绿阶段实现后转 PASS） =====
-// 独立模块在 src/core/highlight.test.ts；这里只把它的失败列表注入到主测试计数。
+// ===== 漏填高亮核心逻辑测试 =====
+// 独立模块在 src/core/highlight.test.ts；这里将失败列表注入主测试计数。
 try {
   runHighlightTests();
   for (const f of getHighlightFailures()) {
@@ -598,14 +600,17 @@ for (let i = 0; i < 5; i++) {
 check(genOk, '测试数据生成器：5 次生成均合法（校验位/生日一致、关键字段非空）');
 
 if (failedCount > 0) {
-  console.error(`\n${failedCount} 项断言失败`);
-  process.exit(1);
+  // 异步 picker 与人工接管测试仍需继续执行；最终统一在文件末尾返回退出码。
+  console.error(`\n当前同步阶段已有 ${failedCount} 项断言失败，继续执行异步测试…`);
 } else {
-  console.log('\n全部断言通过 ✅');
+  console.log('\n同步阶段全部断言通过，继续执行异步测试…');
 }
 
 // 弹窗选择自动点选（异步）
 void (async () => {
+  await runPickerHandoffTests();
+  for (const failure of getPickerHandoffFailures()) check(false, '[picker-handoff] ' + failure);
+
   const target = w.document.querySelector('[name="bkbydwShow"]') as HTMLInputElement;
   // 模拟真实弹窗：点击选项后回填主页面输入框（否则工具会继续走选择器窗口流程）
   w.document.querySelectorAll('.popup [role="option"]').forEach((li: Element) => {
@@ -2931,7 +2936,7 @@ void (async () => {
   // 3. 用户主动点击重置：resetActivePickerAttempts 把未完成项 attempt 清零
   // 4. done 状态：成功后切到 done，attempt=0，再次 startPicker 不重置
   // 5. FillStats.pickerResumeCount 在 fillAll 中正确计入
-  const { clearPickerState, getResumablePickers, isPickerExhausted, markPickerDone, markPickerFailed, markPickerStep, resetActivePickerAttempts, startPicker, MAX_PICKER_ATTEMPT } = await import('../src/core/picker-state-machine');
+  const { clearPickerState, getResumablePickers, isPickerExhausted, isPickerManual, markPickerDone, markPickerFailed, markPickerManual, markPickerStep, resetActivePickerAttempts, startPicker, MAX_PICKER_ATTEMPT } = await import('../src/core/picker-state-machine');
   // 用 jsdom window 模拟 sessionStorage
   const pickerDom = new JSDOM(`<!doctype html><html><body></body></html>`, { url: 'http://example.edu.cn/' });
   const pickerStore = (pickerDom.window as any).sessionStorage as Storage;
@@ -2995,7 +3000,17 @@ void (async () => {
   const afterDoneState = JSON.parse(pickerStore.getItem(PICKER_KEY) || '{}');
   check(afterDoneState.pickers?.['basic.birthPlace']?.state === 'done', '已 done 状态持久化到 sessionStorage');
 
-  // 场景 6：FillStats.pickerResumeCount 字段在 fillAll 中正确反映
+  // 场景 6：人工状态在自动补填中保持，本次用户主动 reset 后恢复自动尝试。
+  clearPickerState(pickerDom.window.document);
+  startPicker('education.major', { profilePath: 'education.major' }, '软件工程', pickerDom.window.document);
+  markPickerManual('education.major', '用户本轮跳过', pickerDom.window.document);
+  startPicker('education.major', { profilePath: 'education.major' }, '软件工程', pickerDom.window.document);
+  check(isPickerManual('education.major', pickerDom.window.document), 'picker人工状态：自动补填再次 startPicker 仍保持 manual');
+  resetActivePickerAttempts(pickerDom.window.document);
+  const afterManualReset = getResumablePickers(pickerDom.window.document);
+  check(afterManualReset[0]?.record.state === 'opening' && !isPickerManual('education.major', pickerDom.window.document), 'picker人工状态：下一次用户主动填写恢复 opening');
+
+  // 场景 7：FillStats.pickerResumeCount 字段在 fillAll 中正确反映
   // 不依赖 fillAll 的字段触发副作用，直接验证：fillAll 跑后，sessionStorage 中已登记的 picker
   // 数量应正确反映在 stats.pickerResumeCount 上（reset-on-click 后 attempt=0，但 state 仍 opening，resumable 仍可见）
   clearPickerState(pickerDom.window.document);
@@ -3009,7 +3024,7 @@ void (async () => {
   const resumableAfter = getResumablePickers(pickerDom.window.document).length;
   check(resumableAfter === 2, `fillAll 后 getResumablePickers 数量=2（sessionStorage 中有 2 个未完成 picker），实际=${resumableAfter}`);
 
-  // 场景 7：clearPickerState 后所有记录消失
+  // 场景 8：clearPickerState 后所有记录消失
   clearPickerState(pickerDom.window.document);
   check(getResumablePickers(pickerDom.window.document).length === 0, 'clearPickerState: 清空所有记录');
   check(isPickerExhausted('education.university', pickerDom.window.document) === false, 'clearPickerState: exhausted 状态也清空');
@@ -3160,6 +3175,9 @@ void (async () => {
   // 此处不调用 startCaptchaAssistant（需要 chrome.*），仅验证模块加载不抛错
   // 测试通过：import 成功 + 上面 5 个 PASS 已证明检测器正确
   check(true, '降级路径：orchestrator 模块可独立导入不抛错');
+
+  runPanelTests();
+  for (const failure of getPanelFailures()) check(false, '[panel] ' + failure);
 
   if (failedCount > 0) {
     console.error(`\n${failedCount} 项断言失败`);

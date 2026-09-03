@@ -5,6 +5,7 @@
 //   idle → opening → searching → clicking → verifying → done / failed
 //   - done：单次 session 内成功
 //   - failed：attempt 达上限 3，标 'failed'，由外层填 'skipped' 转人工
+//   - manual：用户已接管或主动跳过；本轮禁止自动重试，下次主动填写恢复 opening
 //
 // reset 语义：用户主动点击"一键填充"时清零（reset-on-click 行为，与 rowJobsDebug 对齐）。
 // sessionStorage key: tui-picker-state
@@ -33,6 +34,7 @@ export type PickerStateName =
   | 'searching'
   | 'clicking'
   | 'verifying'
+  | 'manual'
   | 'done'
   | 'failed';
 
@@ -150,7 +152,7 @@ export function markPickerStep(
  * 功能：登记一个新 picker 任务（首次识别或恢复时调用）。
  *  - 写入 state='opening'、attempt 0、清空 lastError
  *  - 缓存 value 和 context 用于后续 markPickerStep
- *  - 如果之前已经 done，attempt 仍置 0（不重复断点）
+ *  - 如果之前已经 done 或 manual，保持原状态（自动补填不得解除人工接管）
  */
 export function startPicker(
   fieldId: string,
@@ -160,8 +162,8 @@ export function startPicker(
 ): PickerStateRecord {
   const snap = loadPickerState(doc);
   const prev = snap.pickers[fieldId];
-  // 已经是 done 状态：保留 attempt=0，状态保持 done（说明上一次已成功）
-  const baseState: PickerStateName = prev?.state === 'done' ? 'done' : 'opening';
+  // done 不重复激活；manual 只允许由下一次用户主动 reset 恢复，后台补填不得覆盖。
+  const baseState: PickerStateName = prev?.state === 'done' || prev?.state === 'manual' ? prev.state : 'opening';
   const rec: PickerStateRecord = {
     state: baseState,
     attempt: 0,
@@ -194,6 +196,16 @@ export function markPickerDone(fieldId: string, doc?: Document | null): void {
   markPickerStep(fieldId, 'done', doc);
 }
 
+/** 功能：标记 picker 由用户人工接管；保留在可恢复列表中，但本轮不再自动重试。 */
+export function markPickerManual(fieldId: string, reason: string, doc?: Document | null): PickerStateRecord {
+  return markPickerStep(fieldId, 'manual', doc, reason);
+}
+
+/** 功能：判断 picker 是否处于本轮人工待处理状态。 */
+export function isPickerManual(fieldId: string, doc?: Document | null): boolean {
+  return loadPickerState(doc).pickers[fieldId]?.state === 'manual';
+}
+
 /** 功能：标记 picker 失败（attempt +1，超过 MAX 自动转 failed）。 */
 export function markPickerFailed(fieldId: string, error: string, doc?: Document | null): PickerStateRecord {
   const snap = loadPickerState(doc);
@@ -222,7 +234,14 @@ export function resetActivePickerAttempts(doc?: Document | null): number {
   const snap = loadPickerState(doc);
   let resetCount = 0;
   for (const rec of Object.values(snap.pickers)) {
-    if (rec.state !== 'done' && rec.attempt > 0) {
+    if (rec.state === 'manual') {
+      // 只有用户主动开始新一轮填写时才调用 reset；人工跳过项因此重新获得一次自动尝试机会。
+      rec.state = 'opening';
+      rec.attempt = 0;
+      rec.lastError = undefined;
+      rec.updatedAt = Date.now();
+      resetCount++;
+    } else if (rec.state !== 'done' && rec.attempt > 0) {
       rec.attempt = 0;
       rec.lastError = undefined;
       rec.updatedAt = Date.now();

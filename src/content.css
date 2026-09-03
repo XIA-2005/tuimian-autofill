@@ -1,13 +1,16 @@
 /* 填表助手：高亮标记 */
-.tui-filled {
+.tui-filled,
+.tui-highlight-green {
   outline: 2px solid rgba(34, 197, 94, 0.85) !important;
   outline-offset: 1px !important;
 }
-.tui-missing {
+.tui-missing,
+.tui-highlight-red {
   outline: 2px dashed rgba(239, 68, 68, 0.9) !important;
   outline-offset: 1px !important;
 }
-.tui-empty {
+.tui-empty,
+.tui-highlight-yellow {
   outline: 2px dashed rgba(245, 158, 11, 0.9) !important;
   outline-offset: 1px !important;
 }
@@ -536,6 +539,122 @@
 @keyframes tui-banner-pulse {
   0%, 100% { transform: translateX(-50%) scale(1); }
   50% { transform: translateX(-50%) scale(1.03); }
+}
+
+/* ===================== 弹窗选择器人工接管卡片 ===================== */
+#tui-picker-handoff {
+  position: fixed !important;
+  right: 16px !important;
+  bottom: 16px !important;
+  z-index: 2147483600 !important;
+  box-sizing: border-box !important;
+  width: min(360px, calc(100vw - 32px)) !important;
+  max-height: min(440px, calc(100vh - 32px)) !important;
+  overflow: auto !important;
+  padding: 14px !important;
+  border: 2px solid #f59e0b !important;
+  border-radius: 14px !important;
+  background: #fffbeb !important;
+  color: #422006 !important;
+  box-shadow: 0 14px 38px rgba(120, 53, 15, .28) !important;
+  font: 13px/1.5 "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif !important;
+  word-break: break-word !important;
+}
+#tui-picker-handoff .tui-picker-handoff-heading {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+  margin-bottom: 8px !important;
+}
+#tui-picker-handoff .tui-picker-handoff-eyebrow {
+  color: #b45309 !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  letter-spacing: .08em !important;
+}
+#tui-picker-handoff .tui-picker-handoff-heading strong {
+  color: #78350f !important;
+  font-size: 17px !important;
+}
+#tui-picker-handoff .tui-picker-handoff-state {
+  margin-bottom: 8px !important;
+  padding: 6px 9px !important;
+  border-radius: 8px !important;
+  background: #fef3c7 !important;
+  color: #92400e !important;
+  font-weight: 700 !important;
+}
+#tui-picker-handoff .tui-picker-handoff-instruction,
+#tui-picker-handoff .tui-picker-handoff-reason {
+  margin: 7px 0 !important;
+}
+#tui-picker-handoff .tui-picker-handoff-reason {
+  color: #78716c !important;
+  font-size: 12px !important;
+}
+#tui-picker-handoff .tui-picker-handoff-reason::before {
+  content: "安全原因：" !important;
+  color: #92400e !important;
+  font-weight: 700 !important;
+}
+#tui-picker-handoff .tui-picker-handoff-feedback {
+  min-height: 0 !important;
+  margin-top: 8px !important;
+  color: #b91c1c !important;
+  font-weight: 700 !important;
+}
+#tui-picker-handoff .tui-picker-handoff-feedback:not(:empty) {
+  padding: 7px 9px !important;
+  border-radius: 8px !important;
+  background: #fef2f2 !important;
+}
+#tui-picker-handoff .tui-picker-handoff-actions {
+  display: grid !important;
+  grid-template-columns: 1fr auto !important;
+  gap: 8px !important;
+  margin-top: 11px !important;
+}
+#tui-picker-handoff button {
+  min-height: 38px !important;
+  padding: 8px 11px !important;
+  border: 1px solid #d97706 !important;
+  border-radius: 8px !important;
+  cursor: pointer !important;
+  font: inherit !important;
+  font-weight: 700 !important;
+}
+#tui-picker-handoff .tui-picker-handoff-continue {
+  background: #d97706 !important;
+  color: #fff !important;
+}
+#tui-picker-handoff .tui-picker-handoff-skip {
+  background: #fff !important;
+  color: #92400e !important;
+}
+#tui-picker-handoff button:focus-visible {
+  outline: 3px solid #2563eb !important;
+  outline-offset: 2px !important;
+}
+
+@media (min-width: 821px) {
+  #tui-picker-handoff {
+    right: 422px !important;
+    top: 16px !important;
+    bottom: auto !important;
+  }
+}
+
+@media (max-width: 520px) {
+  #tui-picker-handoff {
+    right: 10px !important;
+    bottom: 10px !important;
+    width: calc(100vw - 20px) !important;
+    max-height: 46vh !important;
+    padding: 12px !important;
+  }
+  #tui-picker-handoff .tui-picker-handoff-actions {
+    grid-template-columns: 1fr !important;
+  }
 }
 
 /* ===================== 醒目 toast 通知（需要人工介入的关键事件） ===================== */

@@ -78,6 +78,11 @@ export interface FillResult {
   items: FillItem[];
 }
 
+export interface FillAllOptions {
+  /** 仅用户主动开始新一轮填写时为 true；自动补填必须为 false，避免解除人工跳过。 */
+  resetPickerAttempts?: boolean;
+}
+
 /** 常见编码值 → 显示文本 的别名映射（用于下拉框/单选） */
 const VALUE_ALIASES: Record<string, string[]> = {
   男: ['男', '1', '01', 'm', 'male'],
@@ -404,12 +409,18 @@ function fillRetroHonorTablesInFillAll(
   }
 }
 
-export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FIELD_RULES): FillResult {
+/**
+ * 功能：识别并填写当前页面字段，同时生成可回读的结果清单。
+ *
+ * 用户主动发起新一轮填写时重置 picker 尝试；延时补填传入 false，保留本轮人工跳过状态，
+ * 避免人工接管后的字段被后台轮次再次打开。其余字段继续沿用既有完整填写能力。
+ */
+export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FIELD_RULES, options: FillAllOptions = {}): FillResult {
   clearHighlights(doc);
   // reset-on-click：用户主动点击"一键填充"时清零 picker 状态机的未完成项 attempt
   // （与 rowJobsDebug 的 reset-on-click 行为对齐）。sessionStorage 仍保留状态证据，
   // 但 attempt 归 0、state 回到 'idle'，让用户从干净状态重新开始。
-  resetActivePickerAttempts(doc);
+  if (options.resetPickerAttempts !== false) resetActivePickerAttempts(doc);
   // 断点续填计数：read-on-click 后仍可能存在 "state≠done" 的 picker 字段（如 opening 阶段被中断）。
   // 这里记录的是 reset 之后的"可恢复 picker 字段数"，供 fillSummary 展示。
   const pickerResumeCount = getResumablePickers(doc).length;
@@ -454,6 +465,10 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
       markEl(d.el, 'missing');
       continue;
     }
+    const isDateLike =
+      d.rule.field === 'basic.birthday' ||
+      /(?:^|\.)(?:startDate|endDate|date|birthday)$/i.test(d.rule.field || '') ||
+      (d.el.tagName === 'INPUT' && ['date', 'month'].includes((d.el as HTMLInputElement).type));
     if (d.rule.manual) {
       // 人工长文类（个人陈述/自述/研究计划等）：页面给出可信字数上限、档案长文放得下才自动填写（绝不静默截断）
       const essay = pickEssayForManual(profile, d.label);
@@ -520,10 +535,6 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
     // 弹窗选择框（只读/禁用/隐藏输入框 + 选择按钮、Show 显示框）：不直接注入文本（真实值往往是隐藏编码），交给自动点选处理。
     // 日期类字段除外：值本质就是文本（年月格式），直接注入并同步页面状态。
     const input = d.el as HTMLInputElement;
-    const isDateLike =
-      d.rule.field === 'basic.birthday' ||
-      /(?:^|\.)(?:startDate|endDate|date|birthday)$/i.test(d.rule.field || '') ||
-      (d.el.tagName === 'INPUT' && ['date', 'month'].includes((d.el as HTMLInputElement).type));
     if (hasPopupBehavior(d) && !isDateLike) {
       stats.picker++;
       const codeEntry = profile.codebook[d.rule.field];

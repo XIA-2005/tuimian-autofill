@@ -1,10 +1,10 @@
-// 漏填高亮 · PR1 核心逻辑 · 红阶段测试
+// 漏填高亮核心逻辑测试
 //
 // 测试方式：本文件 export runHighlightTests() 供 test/run.ts 调用；
 // 也支持独立执行 `node test/run-highlight.mjs`（见 test/run-highlight.mjs）。
 //
-// 铁律 3：断言用业务不变量（正则/范围/关系/互斥），不用示例值。
-// 铁律 4：正常路径 / 异常路径 / 边界值 三类各 ≥ 1 case。
+// 断言以业务不变量（正则/范围/关系/互斥）为主。
+// 覆盖正常路径、异常路径与边界值。
 //
 // 7 个必须覆盖的边界：
 //   1. 正常路径：字段已填（绿色）
@@ -76,7 +76,7 @@ function safeBuild(result: FillResult, profile: Profile): HighlightMap {
 // ============================================================================
 
 export function runHighlightTests(): void {
-  console.log('\n=== highlight PR1 · 红阶段测试 ===');
+  console.log('\n=== highlight 核心逻辑测试 ===');
 
   // ---- 1. 正常路径：字段已填 → 绿色（filled） ----
   {
@@ -166,7 +166,7 @@ export function runHighlightTests(): void {
 
   // ---- 7. 边界值：fieldStates[path].locked === true → 不参与三色判定 ----
   //     业务不变量：locked 字段不进入 green/red/yellow 三色列表。
-  //     classifyFieldStatus 对 locked 字段应返回 null/undefined，绿阶段才可返回。
+  //     classifyFieldStatus 对 locked 字段应返回 null/undefined。
   {
     const profile = mkProfile();
     profile.fieldStates['basic.name'] = {

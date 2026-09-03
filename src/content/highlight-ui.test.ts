@@ -1,17 +1,13 @@
-// 漏填高亮 · PR2 UI 渲染 · 红阶段测试
+// 漏填高亮 UI 渲染测试
 //
 // 测试方式：export runHighlightUITests() 供 test/run.ts 调用。
-// 目标：highlight-ui.ts 尚未实现 → 测试 FAIL。
-//
-// 禁止条款铁律：
-//   - 不准改 content.css
-//   - 不准 mock DOM 查询，只用 jsdom
-//   - 断言不准依赖具体控件 id/name/label，只用 data-tui-path
+// 使用 jsdom 验证 DOM 渲染；断言不依赖具体控件 id/name/label，
+// 仅通过 data-tui-path 定位目标控件。
 import { JSDOM } from 'jsdom';
 import { emptyProfile, Profile } from '../core/profile';
 import { FillResult } from '../core/highlight';
 
-// ---- 依赖尚未实现的模块：动态 require 让 esbuild 编译期通过、运行期抛错计入 FAIL ----
+// ---- 动态加载 UI 模块，便于隔离 DOM 测试 ----
 type HighlightUI = {
   renderHighlights: (
     result: FillResult,
@@ -75,7 +71,7 @@ function mkProfile(overrides: Partial<Profile> = {}): Profile {
 // ============================================================================
 
 export function runHighlightUITests(): void {
-  console.log('\n=== highlight-ui PR2 · 红阶段测试 ===');
+  console.log('\n=== highlight-ui UI 渲染测试 ===');
 
   // ---- 边界 1：页面无任何表单控件 → 统计全为 0 ----
   {
