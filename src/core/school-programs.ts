@@ -12,6 +12,7 @@ interface ProgramSeed {
 }
 
 const OVERRIDES: Record<string, ProgramSeed[]> = {
+  '南京航空航天大学': [{ id: 'nuaa-ssxly', name: '夏令营/推免个人信息', kind: 'summer-camp', entry: 'https://yzsbm.nuaa.edu.cn/logon', adapterId: 'nuaa-ssxly' }],
   '北京邮电大学': [{ id: 'bupt-pre', name: '预推免', kind: 'pre-recommendation', entry: 'https://yzfs.bupt.edu.cn/MasterTm/Signin.aspx', adapterId: 'minimal-bupt-mastertm' }],
   '南京理工大学': [
     { id: 'njust-pre', name: '预推免', kind: 'pre-recommendation', entry: 'http://202.119.85.163/Open/RecruitTkssTmYbm/signin.aspx', adapterId: 'minimal-njust-tm' },

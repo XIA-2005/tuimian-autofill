@@ -125,6 +125,11 @@ export interface DetectedField {
   pickerTrigger: Element | null;
 }
 
+export interface DetectFieldOptions {
+  /** DOMParser 生成的离屏文档没有布局尺寸；仅在已通过适配包白名单校验的只读页面中启用。 */
+  ignoreVisibility?: boolean;
+}
+
 function escapeSel(s: string): string {
   return (s || '').replace(/["\\]/g, '\\$&');
 }
@@ -289,7 +294,7 @@ export function findPickerTrigger(el: Element): Element | null {
   return null;
 }
 
-export function detectField(el: HTMLElement, rules: FieldRule[] = FIELD_RULES): DetectedField {
+export function detectField(el: HTMLElement, rules: FieldRule[] = FIELD_RULES, options: DetectFieldOptions = {}): DetectedField {
   const li = getLabelInfo(el as ControlEl);
   // 组件下拉已认领的元素（值载体/组件本体）：由组件点选内核处理，常规检测直接排除
   const labelExtra = [el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('data-label')]
@@ -326,7 +331,7 @@ export function detectField(el: HTMLElement, rules: FieldRule[] = FIELD_RULES): 
     if (type === 'password') return { ...base, skip: 'password' };
     if (['submit', 'button', 'reset', 'file', 'image', 'range'].includes(type)) return { ...base, skip: 'other' };
   }
-  if (!isHiddenInput && !isVisible(el)) return { ...base, skip: 'hidden' };
+  if (!isHiddenInput && !options.ignoreVisibility && !isVisible(el)) return { ...base, skip: 'hidden' };
 
   const bestRef: { rule: FieldRule | null; score: number } = { rule: null, score: 0 };
   const tryKeywords = (rule: FieldRule, kws: string[] | undefined, hay: string, tier: number) => {

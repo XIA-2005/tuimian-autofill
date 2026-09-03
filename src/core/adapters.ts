@@ -99,13 +99,26 @@ export interface AdapterPageContract {
   nextSelectors?: string[];
   /** 点击下一步前及服务器驳回后需要检查的页面错误容器。 */
   validationErrorSelectors?: string[];
+  /** 反向采集时必须忽略的历史值、页面标记等控件。 */
+  extractIgnoreSelectors?: string[];
   fields?: AdapterFieldContract[];
+}
+
+export interface DiscoveredCrawlPage {
+  /** 必须与 pages 中的页面 id 一致。 */
+  pageId: string;
+  /** 只接受链接可见文本的精确匹配，禁止模糊命中上传、提交等页面。 */
+  linkTexts: string[];
+  /** 动态令牌之外仍稳定的栏目路径白名单；发现链接和发起 GET 前均需命中。 */
+  pathPatterns: string[];
 }
 
 export interface AdapterCrawlPlan {
   mode: 'plugin' | 'session' | 'guided';
   /** 会话爬取只允许访问这里声明的同源 GET/只读页面。 */
   readOnlyPaths?: string[];
+  /** URL 含会话令牌时，从当前登录页面按精确栏目文本发现同源只读页。 */
+  discoveredPages?: DiscoveredCrawlPage[];
   pageOrder: string[];
   blockPathPatterns?: string[];
 }

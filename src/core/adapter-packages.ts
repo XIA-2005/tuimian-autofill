@@ -133,6 +133,33 @@ const blueTripleSchoolMajorFields = (): AdapterFieldContract[] => [{
 
 export const SCHOOL_ADAPTER_PACKAGES: SchoolAdapterPackage[] = [
   pkg(
+    'nuaa-ssxly', '南京航空航天大学', '夏令营/推免个人信息', 'blue', ['yzsbm.nuaa.edu.cn'], ['/ssxly/*'],
+    [
+      { ...page('basic', '基本信息', 'crawl-only', ['*xly/jbxx*'], ['#step1Form', '#xm', '#xmpy', '#mz', '#zzmmm', '#yddh', '#dzxx']), extractIgnoreSelectors: ['#dzxxOld', '#oyddh', '#odzxx', '#olxdh'] },
+      page('family', '家庭主要成员', 'crawl-only', ['*xly/jtcy*'], ['#jtcyForm', '#jtcy', '#jtable']),
+      page('education', '学习信息', 'crawl-only', ['*xly/xxxx*'], ['#xwxlxxForm', '#bkbydwShow', '#bkbyzyShow', '#byny', '#gpa', '#cjpm', '#cjpmzrs']),
+      page('language', '外语水平', 'crawl-only', ['*xly/wysp*'], ['#kswyspForm', '#kswyspym', '#jtable']),
+      page('experience', '学习和工作经历', 'crawl-only', ['*xly/xxgzjl*'], ['#xxgzjlForm', '#xxgzjl', '#jtable']),
+      page('academic', '学术成果', 'crawl-only', ['*xly/xscg*'], ['#xslwyzzForm', '#fblwzz', '#jtable']),
+      page('awards', '奖励情况', 'crawl-only', ['*xly/jlcf*'], ['#jlcfForm', '#jlcf', '#jtable']),
+    ],
+    {
+      mode: 'session',
+      pageOrder: ['basic', 'family', 'education', 'language', 'experience', 'academic', 'awards'],
+      discoveredPages: [
+        { pageId: 'basic', linkTexts: ['基本信息'], pathPatterns: ['*xly/jbxx*'] },
+        { pageId: 'family', linkTexts: ['家庭主要成员'], pathPatterns: ['*xly/jtcy*'] },
+        { pageId: 'education', linkTexts: ['学习信息'], pathPatterns: ['*xly/xxxx*'] },
+        { pageId: 'language', linkTexts: ['外语水平'], pathPatterns: ['*xly/wysp*'] },
+        { pageId: 'experience', linkTexts: ['学习和工作经历'], pathPatterns: ['*xly/xxgzjl*'] },
+        { pageId: 'academic', linkTexts: ['学术成果'], pathPatterns: ['*xly/xscg*'] },
+        { pageId: 'awards', linkTexts: ['奖励情况'], pathPatterns: ['*xly/jlcf*'] },
+      ],
+      blockPathPatterns: [...FORM_SHELL_BLOCKS, '*logout*', '*password*', '*passwd*', '*upload*', '*submit*', '*save*', '*commit*', '*finish*', '*delete*', '*remove*', '*xly/bkxx*'],
+    },
+    exp({ pluginExtract: 'verified', sessionCrawl: 'verified' }),
+  ),
+  pkg(
     'lzu-ytms', '兰州大学', '预推免', 'other', ['yjszs.lzu.edu.cn'], ['*/lzuyjsytms/*'],
     [
       page('workspace', '工作区', 'shell', ['*/wlogin.html', '*/main*']),
@@ -559,13 +586,15 @@ export function validateAdapterPackage(raw: unknown): SchoolAdapterPackage {
     !stringList(field.picker?.searchInputSelectors) || !stringList(field.picker?.queryButtonSelectors) || !stringList(field.picker?.resultRowSelectors) ||
     !stringList(field.picker?.chooseSelectors) || !stringList(field.picker?.categorySelectSelectors),
   ))) throw new Error('字段契约选择器必须是字符串数组');
-  if (p.pages.some((x) => !stringList(x.nextSelectors) || !stringList(x.validationErrorSelectors))) throw new Error('页面导航契约选择器必须是字符串数组');
+  if (p.pages.some((x) => !stringList(x.nextSelectors) || !stringList(x.validationErrorSelectors) || !stringList(x.extractIgnoreSelectors))) throw new Error('页面导航或提取契约选择器必须是字符串数组');
   if (p.pages.some((x) => x.fields?.some((field) => field.picker?.protocol && !['minimal', 'blue-flat'].includes(field.picker.protocol)))) throw new Error('字段契约弹窗协议无效');
   const dateFormats = new Set(['yyyy', 'yyyyMM', 'yyyy-MM', 'yyyy/MM', 'yyyy年MM月', 'yyyyMMdd', 'yyyy-MM-dd', 'yyyy/MM/dd', 'yyyy年MM月dd日']);
   if (p.pages.some((x) => x.fields?.some((field) => field.dateFormat && !dateFormats.has(field.dateFormat)))) throw new Error('字段契约日期格式无效');
   if (!p.crawl || !Array.isArray(p.crawl.pageOrder)) throw new Error('爬取契约格式错误');
   if (p.crawl.pageOrder.some((id) => !p.pages.some((pageItem) => pageItem.id === id))) throw new Error('爬取步骤引用了不存在的页面契约');
   if (p.crawl.readOnlyPaths?.some((path) => typeof path !== 'string' || !path.startsWith('/') || /:\/\/|\.\./.test(path))) throw new Error('会话爬取白名单必须是同源绝对路径');
+  if (p.crawl.discoveredPages?.some((item) => !item || typeof item.pageId !== 'string' || !p.pages.some((pageItem) => pageItem.id === item.pageId) || !Array.isArray(item.linkTexts) || !item.linkTexts.length || item.linkTexts.some((text) => typeof text !== 'string' || !text.trim()) || !Array.isArray(item.pathPatterns) || !item.pathPatterns.length || item.pathPatterns.some((path) => typeof path !== 'string' || !path.trim() || /:\/\/|\.\./.test(path)))) throw new Error('动态栏目发现契约格式错误');
+  if (p.crawl.discoveredPages && new Set(p.crawl.discoveredPages.map((item) => item.pageId)).size !== p.crawl.discoveredPages.length) throw new Error('动态栏目发现契约页面重复');
   if (!['never', 'manual-save-only', 'validated-next-only'].includes(p.commitPolicy)) throw new Error('提交策略格式错误');
   if (!p.capabilities || Object.values(p.capabilities).some((status) => !['directory', 'experimental', 'verified', 'drifted'].includes(status))) throw new Error('能力状态格式错误');
   const rejectExecutable = (value: unknown, seen = new Set<unknown>()): void => {
@@ -604,10 +633,37 @@ function glob(pattern: string, value: string): boolean {
   return new RegExp(`^${escaped}$`, 'i').test(value);
 }
 
-export function isCrawlPathBlocked(adapter: SchoolAdapterPackage, rawUrl: string): boolean {
+/**
+ * 功能：返回 URL 可用于安全门禁的路径候选。
+ * 原理：南航把 `xly/jbxx#会话标识` 编进 /ssxly/ 后的 Base64URL 段；这里只在内存中解码，
+ * 不返回给快照、不写入存储，并限制为可打印短文本，避免把任意二进制内容带入匹配器。
+ */
+export function crawlUrlPathCandidates(rawUrl: string): string[] {
   let path = rawUrl;
-  try { const url = new URL(rawUrl); path = `${url.pathname}${url.search}${url.hash}`; } catch { /* 保留原串 */ }
-  return !!adapter.crawl.blockPathPatterns?.some((pattern) => glob(pattern, path));
+  let pathname = '';
+  try {
+    const url = new URL(rawUrl);
+    pathname = url.pathname;
+    path = `${url.pathname}${url.search}${url.hash}`;
+  } catch { return [path]; }
+  const candidates = [path];
+  const token = pathname.split('/').filter(Boolean).at(-1) || '';
+  if (!/^[A-Za-z0-9_-]{16,2048}$/.test(token) || typeof atob !== 'function') return candidates;
+  try {
+    const base64 = token.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(token.length / 4) * 4, '=');
+    const decoded = atob(base64);
+    if (decoded.length <= 2048 && /^[\x20-\x7E]+$/.test(decoded)) candidates.push(decoded);
+  } catch { /* 非 Base64URL 动态段按普通路径处理。 */ }
+  return candidates;
+}
+
+/** 功能：判断原始路径或安全解码后的逻辑路径是否命中给定白名单。 */
+export function matchesCrawlPathPatterns(patterns: string[], rawUrl: string): boolean {
+  return crawlUrlPathCandidates(rawUrl).some((candidate) => patterns.some((pattern) => glob(pattern, candidate)));
+}
+
+export function isCrawlPathBlocked(adapter: SchoolAdapterPackage, rawUrl: string): boolean {
+  return !!adapter.crawl.blockPathPatterns?.some((pattern) => crawlUrlPathCandidates(rawUrl).some((candidate) => glob(pattern, candidate)));
 }
 
 export interface PageMatchResult {
@@ -625,11 +681,10 @@ export function fingerprintDocument(doc: Document): string {
 }
 
 export function matchAdapterPage(adapter: SchoolAdapterPackage, doc: Document, rawUrl: string): PageMatchResult {
-  let path = rawUrl;
-  try { const u = new URL(rawUrl); path = `${u.pathname}${u.search}${u.hash}`; } catch { /* 保留原串 */ }
+  const paths = crawlUrlPathCandidates(rawUrl);
   const fp = fingerprintDocument(doc);
   for (const p of adapter.pages) {
-    if (!p.pathPatterns.some((x) => glob(x, path))) continue;
+    if (!paths.some((path) => p.pathPatterns.some((pattern) => glob(pattern, path)))) continue;
     if (p.titlePatterns?.length && !p.titlePatterns.some((x) => glob(x, doc.title))) continue;
     if (p.requiredSelectors?.length && !p.requiredSelectors.every((x) => !!doc.querySelector(x))) continue;
     if (p.forbiddenSelectors?.some((x) => !!doc.querySelector(x))) continue;

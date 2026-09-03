@@ -4,7 +4,7 @@ import { Profile } from '../core/profile';
 import { loadProfile, saveProfile } from '../core/storage';
 import { generateTestProfile } from '../core/testdata';
 import { importFromPage } from '../core/importer';
-import { addSnapshot, applicationChoicesFromPage, captureCurrentPage, commitCrawlMerge, crawlDeclaredReadOnlyPages, loadCrawlSession, previewCrawlMerge, rememberApplicationChoice, saveCrawlSession } from '../core/crawl';
+import { addSnapshot, applicationChoicesFromPage, captureCurrentPage, commitCrawlMerge, crawlCompletionFailures, crawlDeclaredReadOnlyPages, loadCrawlSession, previewCrawlMerge, rememberApplicationChoice, saveCrawlSession } from '../core/crawl';
 import { scanSite } from '../core/scanner';
 import { runPreSubmitCheck } from '../core/checker';
 import { loadRemoteRules } from '../core/rulesync';
@@ -1144,7 +1144,7 @@ function showSchoolDirectory(): void {
       const row = document.createElement('div');
       row.className = 'tui-school-item' + (s.host === curHost || s.programs?.some((p) => p.host === curHost) ? ' current' : '');
       const badges: string[] = [];
-      if (s.adapter) badges.push('<span class="tui-school-badge adapter" title="有专项适配">已适配</span>');
+      if (s.adapter || s.programs?.some((program) => Object.values(program.capabilities).some((status) => status === 'verified' || status === 'experimental'))) badges.push('<span class="tui-school-badge adapter" title="有专项适配">已适配</span>');
       if (s.host === curHost || s.programs?.some((p) => p.host === curHost)) badges.push('<span class="tui-school-badge current">当前站点</span>');
       const programs = s.programs || [];
       row.innerHTML =
@@ -1598,9 +1598,17 @@ const handlers: PanelHandlers = {
       try {
         const adapterPackage = matchAdapterPackage(location.href, adapterPackages);
         if (!adapterPackage) throw new Error('当前站点没有声明式适配包');
-        if (adapterPackage.crawl.mode !== 'session' || !adapterPackage.crawl.readOnlyPaths?.length) throw new Error('该项目未声明可读取的只读页面；请逐页使用“从本页提取档案”');
+        if (adapterPackage.crawl.mode !== 'session' || (!adapterPackage.crawl.readOnlyPaths?.length && !adapterPackage.crawl.discoveredPages?.length)) throw new Error('该项目未声明可读取的只读页面；请逐页使用“从本页提取档案”');
         setPanelStatus('正在读取白名单内的只读页面；再次点击“登录后会话爬取”可取消…');
-        const result = await crawlDeclaredReadOnlyPages(adapterPackage, location.href, fetch, { signal: crawlController.signal, timeoutMs: 12000, minIntervalMs: 350 });
+        const result = await crawlDeclaredReadOnlyPages(adapterPackage, location.href, fetch, { signal: crawlController.signal, timeoutMs: 12000, minIntervalMs: 350, currentDocument: document });
+        const incomplete = crawlCompletionFailures(adapterPackage, result);
+        if (incomplete.length) {
+          const pageNames = new Map(adapterPackage.pages.map((pageItem) => [pageItem.id, pageItem.name]));
+          const details = incomplete.map((item) => `${pageNames.get(item.path) || item.path}：${item.reason}`).join('\n');
+          window.alert(`会话爬取未完成，未写入个人档案。结果已脱敏暂存，可排查后重试。\n\n${details}`);
+          setPanelStatus(`会话爬取未完成：${incomplete.length} 个栏目失败，未合并档案。`);
+          return;
+        }
         const profile = await loadProfile();
         const preview = previewCrawlMerge(profile, result.session);
         const newFields = preview.items.filter((x) => x.kind === 'new').length;

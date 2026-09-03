@@ -14,7 +14,7 @@ import { SCHOOLS } from '../src/core/schools';
 import { matchAdapterPackage, matchAdapterPage, SCHOOL_ADAPTER_PACKAGES, validateAdapterPackage } from '../src/core/adapter-packages';
 import { SCHOOLS_WITH_PROGRAMS } from '../src/core/school-programs';
 import { projectProfile } from '../src/core/projection';
-import { addSnapshot, applicationChoicesFromPage, commitCrawlMerge, createCrawlSession, previewCrawlMerge, rememberApplicationChoice } from '../src/core/crawl';
+import { addSnapshot, applicationChoicesFromPage, commitCrawlMerge, createCrawlSession, crawlCompletionFailures, crawlDeclaredReadOnlyPages, discoverDeclaredReadOnlyPages, previewCrawlMerge, rememberApplicationChoice } from '../src/core/crawl';
 import { fillAdapterContract } from '../src/core/control-drivers';
 import { validateRemoteRules } from '../src/core/rulesync';
 import { fillDateControl, fillDateControlAsync } from '../src/core/date-drivers';
@@ -50,6 +50,7 @@ const w = dom.window as any;
 (globalThis as any).MouseEvent = w.MouseEvent;
 (globalThis as any).KeyboardEvent = w.KeyboardEvent;
 (globalThis as any).Node = w.Node;
+(globalThis as any).DOMParser = w.DOMParser;
 
 // jsdom 的 getBoundingClientRect 恒为 0，会导致可见性判断失效，这里打桩
 const rect = () => ({ width: 200, height: 24, top: 0, left: 0, right: 200, bottom: 24, x: 0, y: 0, toJSON: () => ({}) });
@@ -118,6 +119,7 @@ console.log('STATS', JSON.stringify(res.stats));
 res.items.forEach((i) => console.log(`${i.status.padEnd(13)} ${i.label}  ${i.field || ''}`));
 
 let failedCount = 0;
+let nuaaCrawlTestPromise: Promise<void> = Promise.resolve();
 function check(cond: boolean, msg: string): void {
   if (cond) console.log('PASS: ' + msg);
   else {
@@ -531,6 +533,108 @@ check(restoreFillTelemetryState(JSON.stringify(storedTelemetry), 31 * 60_000) ==
   const selectedSession = rememberApplicationChoice(crawlSession, choices, 0);
   check(choices.length === 2 && choiceBlocked && !!selectedSession.selectedApplicationKey, '北邮报名记录：多行必须用户确认并记住所选分支');
 
+  // 南航动态栏目采集：使用随机不透明令牌，验证发现逻辑不依赖任何账号专属 URL。
+  const nuaaPackage = SCHOOL_ADAPTER_PACKAGES.find((item) => item.id === 'nuaa-ssxly')!;
+  const nuaaOrigin = 'https://yzsbm.nuaa.edu.cn';
+  /** 功能：生成与南航真实页面一致的 Base64URL 动态栏目地址，不把逻辑路由直接暴露在 pathname 中。 */
+  const nuaaEncodedLink = (route: string, marker: string): string => `/ssxly/${Buffer.from(`MyHeartWillGoOn${route}#${marker}`, 'utf8').toString('base64url')}`;
+  const nuaaLinks: Record<string, string> = {
+    basic: nuaaEncodedLink('xly/jbxx', 'random-basic-a7f2'), family: nuaaEncodedLink('xly/jtcy', 'random-family-c913'), education: nuaaEncodedLink('xly/xxxx', 'random-study-10bd'),
+    language: nuaaEncodedLink('xly/wysp', 'random-lang-22ef'), experience: nuaaEncodedLink('xly/xxgzjl', 'random-work-3a91'), academic: nuaaEncodedLink('xly/xscg', 'random-paper-44c0'), awards: nuaaEncodedLink('xly/jlcf', 'random-award-5d18'),
+  };
+  const nuaaNav = new JSDOM(`<nav>
+    <a href="https://evil.example/ssxly/fake">基本信息</a>
+    <a href="${nuaaEncodedLink('xly/deleteRecord', 'danger-delete')}">基本信息</a>
+    <a href="${nuaaEncodedLink('xly/remove', 'danger-remove')}">基本信息</a>
+    <a href="${nuaaEncodedLink('xly/save', 'danger-save')}">基本信息</a>
+    <a href="${nuaaEncodedLink('xly/submit', 'danger-submit')}">基本信息</a>
+    <a href="${nuaaEncodedLink('xly/not-basic', 'wrong-route')}">基本信息</a>
+    <a href="${nuaaLinks.basic}">基本信息</a><a href="${nuaaLinks.family}">家庭主要成员</a><a href="${nuaaLinks.education}">学习信息</a>
+    <a href="${nuaaLinks.language}">外语水平</a><a href="${nuaaLinks.experience}">学习和工作经历</a><a href="${nuaaLinks.academic}">学术成果</a><a href="${nuaaLinks.awards}">奖励情况</a>
+    <a href="${nuaaEncodedLink('xly/bkxx', 'application')}">申请信息</a><a href="/ssxly/upload">上传材料</a><a href="/logout">退出</a><a href="/password">修改密码</a><a href="/submit">提交</a>
+  </nav>`, { url: `${nuaaOrigin}${nuaaLinks.academic}` });
+  const discoveredNuaa = discoverDeclaredReadOnlyPages(nuaaPackage, nuaaNav.window.document, nuaaNav.window.location.href);
+  check(discoveredNuaa.length === 7 && discoveredNuaa.every((item) => new URL(item.url).origin === nuaaOrigin), '南航动态发现：只接受七个 HTTPS 同源白名单栏目');
+  check(discoveredNuaa.every((item) => !/bkxx|upload|logout|password|delete|remove|save|submit|not-basic|evil/i.test(item.url)), '南航动态发现：错误路由、申请、上传、登出、密码、写操作及跨域链接全部排除');
+
+  /** 功能：生成南航查看状态页面；所有资料控件均禁用，用于验证非渲染 HTML 的只读提取。 */
+  const nuaaFixtures: Record<string, string> = {
+    basic: `<form id="step1Form"><label for="xm">姓名</label><input id="xm" value="测试同学" disabled><label for="xmpy">姓名拼音</label><input id="xmpy" value="TEST STUDENT" disabled><label for="mz">民族</label><input id="mz" value="汉族" disabled><label for="zzmmm">政治面貌</label><input id="zzmmm" value="共青团员" disabled><label for="xyjrm">军人状态</label><select id="xyjrm" disabled><option selected>非军人</option></select><label for="csdmmc">出生地</label><input id="csdmmc" value="江苏省南京市" disabled><label for="jgdmmc">籍贯</label><input id="jgdmmc" value="江苏省南京市" disabled><label for="txdz">通信地址</label><input id="txdz" value="测试路1号" disabled><label for="yzbm">邮编</label><input id="yzbm" value="210000" disabled><label for="lxdh">固定电话</label><input id="lxdh" value="025-00000000" disabled><label for="yddh">手机</label><input id="yddh" value="13800000000" disabled><label for="dzxxOld">历史邮箱</label><input id="dzxxOld" value="old@example.test" disabled><label for="dzxx">邮箱</label><input id="dzxx" value="new@example.test" disabled></form>`,
+    family: `<form id="jtcyForm"><section id="jtcy"><table id="jtable"><tr><th>姓名</th><th>与本人关系</th><th>工作单位及职务</th><th>联系电话</th><th>政治面貌</th></tr><tr><td><input value="测试家长" disabled></td><td><input value="父子" disabled></td><td><input value="测试单位" disabled></td><td><input value="13900000000" disabled></td><td><input value="群众" disabled></td></tr></table></section></form>`,
+    education: `<form id="xwxlxxForm"><label for="bkbydwShow">本科毕业学校</label><input id="bkbydwShow" value="测试大学" disabled><input id="bydw" value="测试大学" disabled><input id="bydwm" value="10000" disabled><label for="byyxmc">所在院系</label><input id="byyxmc" value="测试学院" disabled><label for="bkbyzyShow">本科专业</label><input id="bkbyzyShow" value="测试专业" disabled><input id="byzymc" value="测试专业" disabled><input id="byzydm" value="080000" disabled><label for="byny">预计毕业年月</label><input id="byny" value="2027-06" disabled><label for="zcxh">学号</label><input id="zcxh" value="20230001" disabled><label for="gpa">GPA</label><input id="gpa" value="3.80" disabled><label for="cjpm">专业排名</label><input id="cjpm" value="5" disabled><label for="cjpmzrs">总人数</label><input id="cjpmzrs" value="120" disabled></form>`,
+    language: `<form id="kswyspForm"><section id="kswyspym"><table id="jtable"><tr><th>外语水平</th><th>成绩</th><th>取得成绩时间</th><th>备注</th></tr><tr><td><input value="CET-4" disabled></td><td><input value="520" disabled></td><td><input value="2024-06" disabled></td><td></td></tr><tr><td><input value="雅思" disabled></td><td><input value="7.0" disabled></td><td><input value="2025-03" disabled></td><td></td></tr></table></section></form>`,
+    experience: `<form id="xxgzjlForm"><section id="xxgzjl"><table id="jtable"><tr><th>起始时间</th><th>结束时间</th><th>单位</th><th>职务</th></tr><tr><td><input value="2023-09" disabled></td><td><input value="2024-06" disabled></td><td><input value="测试实验室" disabled></td><td><input value="助理" disabled></td></tr></table></section></form>`,
+    academic: `<form id="xslwyzzForm"><section id="fblwzz"><table id="jtable"><tr><th>学术成果名称</th><th>时间</th><th>刊物</th><th>排名</th></tr><tr><td><input value="测试论文" disabled></td><td><input value="2025-01" disabled></td><td><input value="测试期刊" disabled></td><td><input value="1" disabled></td></tr></table></section></form>`,
+    awards: `<form id="jlcfForm"><section id="jlcf"><table id="jtable"><tr><th>奖励名称</th><th>时间</th><th>级别</th><th>授予单位</th></tr><tr><td><input value="测试奖学金" disabled></td><td><input value="2024-12" disabled></td><td><input value="校级" disabled></td><td><input value="测试大学" disabled></td></tr></table></section></form>`,
+  };
+  const nuaaRequests: Array<{ url: string; method: string }> = [];
+  nuaaCrawlTestPromise = (async () => {
+  const originalChrome = (globalThis as any).chrome;
+  (globalThis as any).chrome = { storage: { session: { set: async () => undefined, get: async () => ({}), remove: async () => undefined } } };
+  const nuaaFetcher = (async (input: string | URL | Request, init?: RequestInit) => {
+    const href = String(input);
+    nuaaRequests.push({ url: href, method: String(init?.method || 'GET') });
+    const key = Object.entries(nuaaLinks).find(([, path]) => href.endsWith(path))?.[0];
+    return new Response(key ? nuaaFixtures[key] : '<form id="wrongForm"></form>', { status: key ? 200 : 404, headers: { 'content-type': 'text/html' } });
+  }) as typeof fetch;
+  const nuaaCrawl = await crawlDeclaredReadOnlyPages(nuaaPackage, nuaaNav.window.location.href, nuaaFetcher, { currentDocument: nuaaNav.window.document, minIntervalMs: 0, timeoutMs: 1000 });
+  (globalThis as any).chrome = originalChrome;
+  check(nuaaCrawl.fetched === 7 && nuaaCrawl.failures.length === 0 && nuaaRequests.length === 7 && nuaaRequests.every((item) => item.method === 'GET'), '南航会话爬取：七页全部仅以 GET 读取');
+  check(crawlCompletionFailures(nuaaPackage, nuaaCrawl).length === 0 && nuaaRequests.every((item) => !/delete|remove|save|submit|not-basic/i.test(item.url)), '南航请求门禁：完整会话可合并且危险同名链接保持零请求');
+  check(Object.values(nuaaCrawl.session.snapshots).every((item) => item.url.includes('/[dynamic-page]#') && !/random-|MyHeartWillGoOn/i.test(item.url)), '南航快照：不持久化动态令牌或完整账号专属 URL');
+  const nuaaBasic = nuaaCrawl.session.snapshots.basic;
+  check(nuaaBasic.values['basic.email'] === 'new@example.test' && !Object.values(nuaaBasic.values).includes('old@example.test'), '南航基本信息：禁用控件可提取且历史字段明确排除');
+  check(nuaaCrawl.session.snapshots.family.tables.familyMembers?.length === 1 && nuaaCrawl.session.snapshots.language.tables.languageExams?.length === 2, '南航列表：家庭成员与多种外语记录进入正式快照集合');
+  check(!!(nuaaCrawl.session.snapshots.language.values['education.cet4'] === '520' && nuaaCrawl.session.snapshots.language.tables.languageExams?.some((item) => item.kind === '雅思')), '南航外语表：识别四级、雅思、成绩与日期');
+  const nuaaAtomicCounts = [nuaaCrawl.session.snapshots.experience.tables.studentWorkExperiences?.length || 0, nuaaCrawl.session.snapshots.academic.tables.academicPapers?.length || 0, nuaaCrawl.session.snapshots.awards.tables.honorsScholarships?.length || 0];
+  check(nuaaAtomicCounts.every((count) => count === 1), `南航动态表格：经历、成果和奖励完成分类（${nuaaAtomicCounts.join('/')}）`);
+  const nuaaProfile = emptyProfile();
+  nuaaProfile.basic.email = 'manual@example.test';
+  nuaaProfile.fieldStates['basic.email'] = { locked: true, source: 'manual', updatedAt: new Date().toISOString(), confidence: 'verified' };
+  nuaaProfile.familyMembers.push({ name: '测试家长', relation: '父子', org: '测试单位', phone: '13900000000', politicalStatus: '群众' });
+  nuaaProfile.languageExams.push({ kind: 'CET-4', score: '520', date: '2024-06', level: '', certificateNo: '' });
+  const nuaaPreview = previewCrawlMerge(nuaaProfile, nuaaCrawl.session);
+  commitCrawlMerge(nuaaProfile, nuaaCrawl.session, { lockImported: true });
+  check(nuaaProfile.basic.email === 'manual@example.test' && nuaaProfile.familyMembers.length === 1 && nuaaProfile.languageExams.length === 2 && nuaaPreview.duplicateRows >= 2, '南航合并：锁定值不覆盖，家庭和外语记录去重后追加');
+  const nuaaFreshProfile = emptyProfile();
+  commitCrawlMerge(nuaaFreshProfile, nuaaCrawl.session, { lockImported: true });
+  const importedFamilyState = nuaaFreshProfile.familyMembers[0]?.state;
+  check(!!importedFamilyState?.locked && importedFamilyState.source === 'crawl' && importedFamilyState.sourceAdapterId === 'nuaa-ssxly' && importedFamilyState.sourcePageId === 'family' && !!importedFamilyState.id, '南航家庭成员：合并后保留来源栏目、适配包、稳定 ID 和锁定状态');
+  const legacyFamilyProfile = normalizeProfile({ ...emptyProfile(), familyMembers: [{ name: '旧成员', relation: '亲属', org: '', phone: '', politicalStatus: '' }] });
+  check(legacyFamilyProfile.familyMembers.length === 1 && !legacyFamilyProfile.familyMembers[0].state, '南航家庭成员：旧档案没有行状态时继续兼容');
+
+  const missingNav = new JSDOM(nuaaNav.window.document.documentElement.outerHTML.replace(`<a href="${nuaaLinks.language}">外语水平</a>`, ''), { url: `${nuaaOrigin}${nuaaLinks.basic}` });
+  (globalThis as any).chrome = { storage: { session: { set: async () => undefined } } };
+  const missingResult = await crawlDeclaredReadOnlyPages(nuaaPackage, missingNav.window.location.href, nuaaFetcher, { currentDocument: missingNav.window.document, minIntervalMs: 0, timeoutMs: 1000 });
+  check(missingResult.fetched === 6 && missingResult.failures.some((item) => item.path === 'language' && /未发现/.test(item.reason)), '南航异常处理：缺少栏目产生明确失败项且不误合并');
+  check(crawlCompletionFailures(nuaaPackage, missingResult).some((item) => item.path === 'language'), '南航完整性门禁：缺少栏目时禁止进入合并流程');
+
+  const mismatchFetcher = (async (input: string | URL | Request) => {
+    const href = String(input);
+    const key = Object.entries(nuaaLinks).find(([, path]) => href.endsWith(path))?.[0];
+    return new Response(key === 'academic' ? '<form id="wrongForm"></form>' : nuaaFixtures[key || 'basic'], { status: 200 });
+  }) as typeof fetch;
+  const mismatchResult = await crawlDeclaredReadOnlyPages(nuaaPackage, nuaaNav.window.location.href, mismatchFetcher, { currentDocument: nuaaNav.window.document, minIntervalMs: 0, timeoutMs: 1000 });
+  check(mismatchResult.fetched === 6 && mismatchResult.failures.some((item) => item.path === 'academic' && /结构|契约|选择器/.test(item.reason)), '南航异常处理：页面结构错配时停止该页采集');
+  check(crawlCompletionFailures(nuaaPackage, mismatchResult).some((item) => item.path === 'academic'), '南航完整性门禁：结构错配时禁止进入合并流程');
+
+  const redirectFetcher = (async (input: string | URL | Request) => {
+    const href = String(input);
+    const key = Object.entries(nuaaLinks).find(([, path]) => href.endsWith(path))?.[0] || 'basic';
+    const response = new Response(nuaaFixtures[key], { status: 200 });
+    if (key === 'basic') Object.defineProperty(response, 'url', { value: `${nuaaOrigin}/logon` });
+    return response;
+  }) as typeof fetch;
+  const redirectResult = await crawlDeclaredReadOnlyPages(nuaaPackage, nuaaNav.window.location.href, redirectFetcher, { currentDocument: nuaaNav.window.document, minIntervalMs: 0, timeoutMs: 1000 });
+  check(redirectResult.fetched === 6 && redirectResult.failures.some((item) => item.path === 'basic'), '南航异常处理：登录重定向不进入快照');
+
+  const timeoutFetcher = (async () => { throw new DOMException('Aborted', 'AbortError'); }) as typeof fetch;
+  const timeoutResult = await crawlDeclaredReadOnlyPages(nuaaPackage, nuaaNav.window.location.href, timeoutFetcher, { currentDocument: nuaaNav.window.document, minIntervalMs: 0, timeoutMs: 1000 });
+  check(timeoutResult.fetched === 0 && timeoutResult.failures.length === 7 && timeoutResult.failures.every((item) => /超时|取消/.test(item.reason)), '南航异常处理：请求超时产生明确失败项且不误合并');
+  check(crawlCompletionFailures(nuaaPackage, timeoutResult).length === 7, '南航完整性门禁：全部超时时逐项报告且禁止合并');
+  (globalThis as any).chrome = originalChrome;
+  })();
+
   const contractDom = new JSDOM('<input id="xm"><select id="bkbyxx"><option value="10001">北京大学</option><option value="10610">四川大学</option></select>', { url: 'https://yjszs.lzu.edu.cn/lzuyjsytms/info' });
   const contractProfile = emptyProfile();
   contractProfile.education.university = '四川大学';
@@ -608,6 +712,7 @@ if (failedCount > 0) {
 
 // 弹窗选择自动点选（异步）
 void (async () => {
+  await nuaaCrawlTestPromise;
   await runPickerHandoffTests();
   for (const failure of getPickerHandoffFailures()) check(false, '[picker-handoff] ' + failure);
 

@@ -10,6 +10,13 @@ export interface ImportResult {
   summary: string[];
 }
 
+export interface ImportOptions {
+  /** 允许读取 DOMParser 解析出的离屏控件；调用前必须先完成页面白名单和结构契约校验。 */
+  includeDetachedControls?: boolean;
+  /** 排除页面保存的历史值或仅用于流程控制的字段。 */
+  excludeSelectors?: string[];
+}
+
 /** 合成/推导字段不入档案 */
 const SKIP_FIELDS = /^(compose\.|#)/;
 
@@ -95,25 +102,44 @@ function importFamilyTables(doc: Document, p: Profile, summary: string[]): void 
   }
 }
 
-/** 外语水平表格 → 四六级成绩与取得时间（按行内名称匹配四级/六级，不依赖行顺序） */
-function importCetTables(doc: Document, p: Profile, summary: string[]): void {
+/**
+ * 功能：提取外语考试表，并同步四六级兼容字段。
+ * 原理：按“考试类别 + 成绩 + 日期”生成稳定记录；四、六级同时回写旧字段，兼容已有填充规则。
+ */
+function importLanguageExamTables(doc: Document, p: Profile, summary: string[]): void {
   for (const table of Array.from(doc.querySelectorAll<HTMLTableElement>('table'))) {
     const allRows = Array.from(table.rows);
     if (allRows.length < 2) continue;
     const first = rowTexts(allRows[0]);
-    const isCet = first.some((h) => /名称|类别/.test(h)) && first.some((h) => h.includes('成绩')) && first.some((h) => /外语|计算机/.test(h));
-    if (!isCet) continue;
-    const nameIdx = first.findIndex((h) => /名称|类别/.test(h));
+    const nameIdx = first.findIndex((h) => /名称|类别|外语水平|考试项目/.test(h));
     const scoreIdx = first.findIndex((h) => h.includes('成绩') && !/时间|日期/.test(h));
     const dateIdx = first.findIndex((h) => /时间|日期/.test(h));
+    const levelIdx = first.findIndex((h) => /等级|级别/.test(h));
+    const certificateIdx = first.findIndex((h) => /证书号|证书编号/.test(h));
+    if (nameIdx < 0 || scoreIdx < 0 || !first.some((h) => /外语|英语|四级|六级|托福|雅思/.test(h))) continue;
     const toMonth = (v: string): string => {
       const m = /^(\d{4})[-/.](\d{1,2})/.exec(v);
       return m ? `${m[1]}-${m[2].padStart(2, '0')}` : v;
     };
     const data = allRows.slice(1);
+    for (const row of data) {
+      const kind = cellControlValue(row, nameIdx);
+      const score = cellControlValue(row, scoreIdx);
+      const date = cellControlValue(row, dateIdx);
+      if (!kind || (!score && !date)) continue;
+      const exam = {
+        kind,
+        score,
+        date,
+        level: cellControlValue(row, levelIdx),
+        certificateNo: cellControlValue(row, certificateIdx),
+      };
+      const duplicate = p.languageExams.some((item) => normalizeText(item.kind) === normalizeText(kind) && item.score.trim() === score.trim() && item.date.trim() === date.trim());
+      if (!duplicate) p.languageExams.push(exam);
+    }
     const rowHas = (kw: string): HTMLTableRowElement | undefined =>
       data.find((r) => new RegExp(kw, 'i').test(normalizeText(cellControlValue(r, nameIdx))));
-    const row4 = rowHas('四级|cet4|cet-4') || data[0];
+    const row4 = rowHas('四级|cet4|cet-4');
     if (row4) {
       const c4 = cellControlValue(row4, scoreIdx);
       if (c4 && !p.education.cet4) {
@@ -126,7 +152,7 @@ function importCetTables(doc: Document, p: Profile, summary: string[]): void {
         summary.push(`四级取得时间 → ${d4}`);
       }
     }
-    const row6 = rowHas('六级|cet6|cet-6') || data[1];
+    const row6 = rowHas('六级|cet6|cet-6');
     if (row6) {
       const c6 = cellControlValue(row6, scoreIdx);
       if (c6 && !p.education.cet6) {
@@ -139,12 +165,20 @@ function importCetTables(doc: Document, p: Profile, summary: string[]): void {
         summary.push(`六级取得时间 → ${d6}`);
       }
     }
+    if (p.languageExams.length) summary.push(`外语考试 → 提取 ${p.languageExams.length} 条`);
   }
 }
 
 /** 学术成果/获奖/社会实践表格 → research / awards / socialPractice 列表（跨表上下文：标题表设定区块，数据表按列头取值） */
 function importAchievementTables(doc: Document, p: Profile, summary: string[]): void {
-  let mode: 'awards' | 'practice' | 'research' | null = null;
+  // 南航等系统把栏目标题放在表格外；先用只读页面的稳定容器确定区块，再由表头复核。
+  let mode: 'awards' | 'practice' | 'research' | null = doc.querySelector('#xxgzjlForm,#xxgzjl')
+    ? 'practice'
+    : doc.querySelector('#xslwyzzForm,#fblwzz')
+      ? 'research'
+      : doc.querySelector('#jlcfForm,#jlcf')
+        ? 'awards'
+        : null;
   for (const table of Array.from(doc.querySelectorAll<HTMLTableElement>('table'))) {
     const allRows = Array.from(table.rows);
     if (!allRows.length) continue;
@@ -218,7 +252,7 @@ function importAchievementTables(doc: Document, p: Profile, summary: string[]): 
 }
 
 /** 从当前页面提取已填值到档案（仅覆盖空字段；列表去重追加/替换；含同源 iframe；单选/复选组按选中项提取） */
-export function importFromPage(profile: Profile, doc: Document, rules: FieldRule[] = FIELD_RULES): ImportResult {
+export function importFromPage(profile: Profile, doc: Document, rules: FieldRule[] = FIELD_RULES, options: ImportOptions = {}): ImportResult {
   const p = profile;
   const summary: string[] = [];
   const seen = new Set<string>();
@@ -226,6 +260,7 @@ export function importFromPage(profile: Profile, doc: Document, rules: FieldRule
 
   for (const d of importDocs(doc)) {
     d.querySelectorAll<HTMLElement>('input, select, textarea').forEach((el) => {
+      if (options.excludeSelectors?.some((selector) => el.matches(selector))) return;
       const isChoice = el.tagName === 'INPUT' && ['radio', 'checkbox'].includes((el as HTMLInputElement).type);
       if (isChoice) {
         // 单选/复选组：整组只处理一次，取"选中项"的标签（如 男/是）
@@ -233,7 +268,7 @@ export function importFromPage(profile: Profile, doc: Document, rules: FieldRule
         const name = input.name || input.id;
         if (!name || choiceSeen.has(name)) return;
         choiceSeen.add(name);
-        const dd = detectField(el, rules);
+        const dd = detectField(el, rules, { ignoreVisibility: options.includeDetachedControls });
         if (dd.skip === 'captcha' || dd.skip === 'password' || dd.skip === 'other') return;
         if (!dd.rule || SKIP_FIELDS.test(dd.rule.field)) return;
         const cur = getByPath(p, dd.rule.field);
@@ -248,7 +283,7 @@ export function importFromPage(profile: Profile, doc: Document, rules: FieldRule
         summary.push(`${dd.label} → ${value}`);
         return;
       }
-      const dd = detectField(el, rules);
+      const dd = detectField(el, rules, { ignoreVisibility: options.includeDetachedControls });
       if (dd.skip === 'captcha' || dd.skip === 'password' || dd.skip === 'other') return;
       if (!dd.rule) return;
       if (SKIP_FIELDS.test(dd.rule.field)) return;
@@ -266,7 +301,7 @@ export function importFromPage(profile: Profile, doc: Document, rules: FieldRule
   }
 
   importFamilyTables(doc, p, summary);
-  importCetTables(doc, p, summary);
+  importLanguageExamTables(doc, p, summary);
   importAchievementTables(doc, p, summary);
   return { summary };
 }

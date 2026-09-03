@@ -1,6 +1,6 @@
 {
   "name": "tuimian-autofill",
-  "version": "2.0.3",
+  "version": "2.0.5",
   "private": true,
   "description": "预推免报名系统辅助填写浏览器扩展（Edge/Chrome，Manifest V3）",
   "scripts": {

@@ -1,7 +1,7 @@
 // 插件爬取与登录后会话爬取：只保存结构化快照，不长期保存原始 HTML。
 
-import { matchAdapterPackage, matchAdapterPage, fingerprintDocument, isCrawlPathBlocked, SCHOOL_ADAPTER_PACKAGES } from './adapter-packages';
-import { SchoolAdapterPackage } from './adapters';
+import { crawlUrlPathCandidates, matchAdapterPackage, matchAdapterPage, fingerprintDocument, isCrawlPathBlocked, matchesCrawlPathPatterns, SCHOOL_ADAPTER_PACKAGES } from './adapter-packages';
+import { SchoolAdapterPackage, declarativeMatchUrl } from './adapters';
 import { importFromPage } from './importer';
 import { FIELD_RULES, FieldRule } from './matcher';
 import { AtomicTableId, PendingClassification, Profile, ProfileCodebookEntry, ProfileRowState, emptyProfile, getByPath, isProfileFieldLocked, normalizeProfile, setByPath, writeProfileValue } from './profile';
@@ -14,6 +14,8 @@ const SCALAR_PATHS = [
 ] as const;
 
 const ATOMIC_TABLES: AtomicTableId[] = ['academicPapers', 'academicPatents', 'academicProjects', 'academicCompetitions', 'honorsScholarships', 'internships', 'socialService', 'studentWorkExperiences'];
+export type CrawlCollectionId = AtomicTableId | 'languageExams' | 'familyMembers';
+const CRAWL_COLLECTIONS: CrawlCollectionId[] = [...ATOMIC_TABLES, 'languageExams', 'familyMembers'];
 
 export interface CrawlSnapshot {
   id: string;
@@ -26,7 +28,7 @@ export interface CrawlSnapshot {
   capturedAt: string;
   values: Record<string, string>;
   codebook: Record<string, ProfileCodebookEntry>;
-  tables: Partial<Record<AtomicTableId, any[]>>;
+  tables: Partial<Record<CrawlCollectionId, any[]>>;
   pendingClassifications?: PendingClassification[];
   warnings: string[];
 }
@@ -82,7 +84,7 @@ export interface CrawlMergeItem {
 
 export interface CrawlMergePreview {
   items: CrawlMergeItem[];
-  newRows: Partial<Record<AtomicTableId, any[]>>;
+  newRows: Partial<Record<CrawlCollectionId, any[]>>;
   duplicateRows: number;
   lockedRows: number;
   pendingClassifications: PendingClassification[];
@@ -94,8 +96,12 @@ function hash(input: string): string {
   return (h >>> 0).toString(36);
 }
 
-function rowIdentity(table: AtomicTableId, row: Record<string, unknown>): string {
-  const values = table.startsWith('academic')
+function rowIdentity(table: CrawlCollectionId, row: Record<string, unknown>): string {
+  const values = table === 'familyMembers'
+    ? [row.name, row.relation, row.org, row.phone]
+    : table === 'languageExams'
+      ? [row.kind, row.score, row.date, row.level, row.certificateNo]
+      : table.startsWith('academic')
     ? [row.kind, row.title || row.name, row.start || row.time, row.end, row.source || row.issuer]
     : table === 'honorsScholarships'
       ? [row.kind, row.name, row.time, row.issuer || row.place]
@@ -116,30 +122,60 @@ function captureCodes(doc: Document, values: Record<string, string>, rules: Fiel
   return out;
 }
 
-export function captureCurrentPage(doc: Document, url: string, rules: FieldRule[] = FIELD_RULES, packages: SchoolAdapterPackage[] = SCHOOL_ADAPTER_PACKAGES): CrawlSnapshot {
+export interface CapturePageOptions {
+  /** DOMParser 解析出的页面没有布局尺寸，但已通过适配包结构校验，可读取其中的禁用控件。 */
+  includeDetachedControls?: boolean;
+  /** 动态 URL 可能含账号标识；会话快照只保留站点、栏目和脱敏占位。 */
+  redactUrl?: boolean;
+}
+
+export function captureCurrentPage(doc: Document, url: string, rules: FieldRule[] = FIELD_RULES, packages: SchoolAdapterPackage[] = SCHOOL_ADAPTER_PACKAGES, options: CapturePageOptions = {}): CrawlSnapshot {
   const adapter = matchAdapterPackage(url, packages);
   if (!adapter) throw new Error('当前页面没有声明式适配包，已停止采集');
   if (isCrawlPathBlocked(adapter, url)) throw new Error('当前页面命中登录、注册、上传、打印、结果或提交门禁，已停止采集');
   const pageMatch = matchAdapterPage(adapter, doc, url);
   if (!pageMatch.allowed || !pageMatch.page) throw new Error(pageMatch.reason);
   const temp = emptyProfile();
-  const imported = importFromPage(temp, doc, rules);
+  // 空档案中的便捷默认值不能被误认为是页面采集结果；只有页面真实出现的值才进入快照。
+  temp.basic.idType = '';
+  temp.basic.country = '';
+  temp.basic.militaryStatus = '';
+  temp.education.foreignLang = '';
+  const imported = importFromPage(temp, doc, rules, {
+    includeDetachedControls: options.includeDetachedControls,
+    excludeSelectors: pageMatch.page.extractIgnoreSelectors,
+  });
+  // 页面提取器先写入兼容列表；按旧版来源归一化，才能进入 V2 原子表并保留待分类提示。
+  temp.version = 1;
   const normalized = normalizeProfile(temp);
   const values: Record<string, string> = {};
   for (const path of SCALAR_PATHS) {
     const value = String(getByPath(normalized, path) || '').trim();
     if (value) values[path] = value;
   }
-  const tables: Partial<Record<AtomicTableId, any[]>> = {};
-  for (const id of ATOMIC_TABLES) if (normalized[id].length) tables[id] = normalized[id].map((row: any) => ({ ...row, state: { ...(row.state || {}), source: 'crawl', sourceAdapterId: adapter.id, sourcePageId: pageMatch.page!.id, locked: false, confidence: 'inferred', updatedAt: new Date().toISOString() } }));
+  const tables: Partial<Record<CrawlCollectionId, any[]>> = {};
+  for (const id of CRAWL_COLLECTIONS) {
+    const rows = normalized[id] as any[];
+    if (!rows.length) continue;
+    tables[id] = rows.map((row: any) => ({
+      ...row,
+      state: {
+        ...(row.state || {}),
+        id: row.state?.id || `crawl_${hash(`${adapter.id}|${pageMatch.page!.id}|${id}|${rowIdentity(id, row)}`)}`,
+        source: 'crawl', sourceAdapterId: adapter.id, sourcePageId: pageMatch.page!.id,
+        locked: false, confidence: 'inferred', updatedAt: new Date().toISOString(),
+      },
+    }));
+  }
   const now = new Date().toISOString();
+  const storedUrl = options.redactUrl ? `${new URL(url).origin}/[dynamic-page]#${pageMatch.page.id}` : url;
   return {
     id: `snapshot_${hash(`${adapter.id}|${pageMatch.page.id}|${url}|${now}`)}`,
     adapterId: adapter.id,
     schoolName: adapter.schoolName,
     pageId: pageMatch.page.id,
     pageName: pageMatch.page.name,
-    url,
+    url: storedUrl,
     fingerprint: pageMatch.fingerprint || fingerprintDocument(doc),
     capturedAt: now,
     values,
@@ -183,7 +219,7 @@ export async function clearCrawlSession(): Promise<void> {
 
 export function previewCrawlMerge(profile: Profile, session: CrawlSession): CrawlMergePreview {
   const items: CrawlMergeItem[] = [];
-  const newRows: Partial<Record<AtomicTableId, any[]>> = {};
+  const newRows: Partial<Record<CrawlCollectionId, any[]>> = {};
   let duplicateRows = 0;
   let lockedRows = 0;
   const pendingClassifications: PendingClassification[] = [];
@@ -194,7 +230,7 @@ export function previewCrawlMerge(profile: Profile, session: CrawlSession): Craw
       const kind: CrawlMergeItem['kind'] = locked && currentValue.trim() !== incomingValue.trim() ? 'locked' : !currentValue.trim() ? 'new' : currentValue.trim() === incomingValue.trim() ? 'same' : 'conflict';
       items.push({ kind, path, currentValue, incomingValue, snapshotId: snapshot.id });
     }
-    for (const table of ATOMIC_TABLES) {
+    for (const table of CRAWL_COLLECTIONS) {
       const incoming = snapshot.tables[table] || [];
       if (!incoming.length) continue;
       const existing = profile[table] as any[];
@@ -229,7 +265,7 @@ export function commitCrawlMerge(profile: Profile, session: CrawlSession, option
       if (options.lockImported && profile.fieldStates[item.path]) profile.fieldStates[item.path].locked = true;
     }
   }
-  for (const table of ATOMIC_TABLES) {
+  for (const table of CRAWL_COLLECTIONS) {
     const rows = preview.newRows[table] || [];
     if (!rows.length || profile.blockLocks[table]) continue;
     const target = profile[table] as any[];
@@ -254,11 +290,59 @@ export interface SessionCrawlResult {
   failures: Array<{ path: string; reason: string }>;
 }
 
+/**
+ * 功能：汇总会话爬取失败项，并补出未进入快照但底层未显式报告的栏目。
+ * 安全原则：任何预期栏目缺失都视为会话不完整，调用方不得合并部分结果。
+ */
+export function crawlCompletionFailures(adapter: SchoolAdapterPackage, result: SessionCrawlResult): Array<{ path: string; reason: string }> {
+  const failures = result.failures.map((item) => ({ ...item }));
+  const reported = new Set(failures.map((item) => item.path));
+  for (const pageId of adapter.crawl.pageOrder) {
+    if (!result.session.snapshots[pageId] && !reported.has(pageId)) failures.push({ path: pageId, reason: '该栏目未生成有效快照' });
+  }
+  return failures;
+}
+
 export interface SessionCrawlOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   /** 请求之间的最小间隔，避免对报名系统造成压力。 */
   minIntervalMs?: number;
+  /** 动态链接发现只读取当前登录页中的同源 a[href]，不点击任何链接。 */
+  currentDocument?: Document;
+}
+
+export interface DiscoveredReadOnlyTarget {
+  pageId: string;
+  url: string;
+}
+
+function normalizedLinkText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * 功能：按适配包声明的精确栏目文字发现动态只读页面。
+ * 安全边界：仅接受当前 HTTPS 站点内、仍命中同一适配包 URL 规则的链接；不执行点击和表单提交。
+ */
+export function discoverDeclaredReadOnlyPages(adapter: SchoolAdapterPackage, doc: Document, currentUrl: string): DiscoveredReadOnlyTarget[] {
+  const current = new URL(currentUrl);
+  if (current.protocol !== 'https:') return [];
+  const anchors = Array.from(doc.querySelectorAll<HTMLAnchorElement>('a[href]'));
+  const found: DiscoveredReadOnlyTarget[] = [];
+  for (const spec of adapter.crawl.discoveredPages || []) {
+    const labels = new Set(spec.linkTexts.map(normalizedLinkText));
+    const anchor = anchors.find((candidate) => labels.has(normalizedLinkText(candidate.textContent || '')) && (() => {
+      try {
+        const url = new URL(candidate.getAttribute('href') || '', current.href);
+        return url.protocol === 'https:' && url.origin === current.origin && declarativeMatchUrl(adapter.match, url.href) && matchesCrawlPathPatterns(spec.pathPatterns, url.href) && !isCrawlPathBlocked(adapter, url.href);
+      } catch { return false; }
+    })());
+    if (!anchor) continue;
+    const url = new URL(anchor.getAttribute('href') || '', current.href);
+    found.push({ pageId: spec.pageId, url: url.href });
+  }
+  return found;
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -273,20 +357,35 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
  * 使用当前登录会话读取适配包声明的同源只读页面。禁止任意 URL、保存、删除和提交接口。
  */
 export async function crawlDeclaredReadOnlyPages(adapter: SchoolAdapterPackage, currentUrl: string, fetcher: typeof fetch = fetch, options: SessionCrawlOptions = {}): Promise<SessionCrawlResult> {
-  if (adapter.crawl.mode !== 'session' || !adapter.crawl.readOnlyPaths?.length) throw new Error('该适配包没有声明会话爬取页面');
+  if (adapter.crawl.mode !== 'session' || (!adapter.crawl.readOnlyPaths?.length && !adapter.crawl.discoveredPages?.length)) throw new Error('该适配包没有声明会话爬取页面');
   const origin = new URL(currentUrl).origin;
   let session = createCrawlSession(adapter);
   const failures: Array<{ path: string; reason: string }> = [];
   let fetched = 0;
   const timeoutMs = Math.max(1000, Math.min(options.timeoutMs || 12000, 60000));
   const intervalMs = Math.max(0, Math.min(options.minIntervalMs ?? 350, 5000));
-  for (let pathIndex = 0; pathIndex < adapter.crawl.readOnlyPaths.length; pathIndex++) {
-    const path = adapter.crawl.readOnlyPaths[pathIndex];
+  const targets: DiscoveredReadOnlyTarget[] = (adapter.crawl.readOnlyPaths || []).map((path) => ({ pageId: '', url: new URL(path, origin).href }));
+  if (adapter.crawl.discoveredPages?.length) {
+    if (!options.currentDocument) throw new Error('当前页面不可用于发现动态只读栏目，请先打开个人信息页面');
+    const discovered = discoverDeclaredReadOnlyPages(adapter, options.currentDocument, currentUrl);
+    targets.push(...discovered);
+    for (const spec of adapter.crawl.discoveredPages) {
+      if (!discovered.some((target) => target.pageId === spec.pageId)) failures.push({ path: spec.pageId, reason: '当前页未发现白名单栏目链接' });
+    }
+  }
+  for (let pathIndex = 0; pathIndex < targets.length; pathIndex++) {
+    const target = targets[pathIndex];
+    const failurePath = target.pageId || new URL(target.url).pathname;
     if (options.signal?.aborted) throw new Error('用户已取消爬取');
-    if (/logout|delete|remove|submit|save|commit|finish/i.test(path)) { failures.push({ path, reason: '路径命中写操作禁用词' }); continue; }
     try {
-      const url = new URL(path, origin);
-      if (url.origin !== origin) throw new Error('跨源地址被拒绝');
+      const url = new URL(target.url, origin);
+      if (url.protocol !== 'https:' || url.origin !== origin) throw new Error('非 HTTPS 或跨源地址被拒绝');
+      if (!declarativeMatchUrl(adapter.match, url.href)) throw new Error('地址未命中当前适配包');
+      if (crawlUrlPathCandidates(url.href).some((path) => /logout|delete|remove|submit|save|commit|finish/i.test(path)) || isCrawlPathBlocked(adapter, url.href)) throw new Error('路径命中写操作禁用词');
+      if (target.pageId) {
+        const spec = adapter.crawl.discoveredPages?.find((item) => item.pageId === target.pageId);
+        if (!spec || !matchesCrawlPathPatterns(spec.pathPatterns, url.href)) throw new Error('地址未命中栏目专属只读路径');
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       const abort = () => controller.abort();
@@ -299,16 +398,19 @@ export async function crawlDeclaredReadOnlyPages(adapter: SchoolAdapterPackage, 
         options.signal?.removeEventListener('abort', abort);
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const responseUrl = response.url || url.href;
+      if (new URL(responseUrl).origin !== origin) throw new Error('响应跳转到站外，已拒绝');
       const html = await response.text();
       const doc = new DOMParser().parseFromString(html, 'text/html');
-      const snapshot = captureCurrentPage(doc, url.href, FIELD_RULES, [adapter]);
+      const snapshot = captureCurrentPage(doc, responseUrl, FIELD_RULES, [adapter], { includeDetachedControls: true, redactUrl: !!target.pageId });
+      if (target.pageId && snapshot.pageId !== target.pageId) throw new Error(`栏目结构错配：期望 ${target.pageId}，实际 ${snapshot.pageId}`);
       session = addSnapshot(session, snapshot, adapter);
       fetched++;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      failures.push({ path, reason: /abort/i.test(reason) ? '请求超时或已取消' : reason });
+      failures.push({ path: failurePath, reason: /abort/i.test(reason) ? '请求超时或已取消' : reason });
     }
-    if (pathIndex < adapter.crawl.readOnlyPaths.length - 1 && intervalMs) await delay(intervalMs, options.signal);
+    if (pathIndex < targets.length - 1 && intervalMs) await delay(intervalMs, options.signal);
   }
   await saveCrawlSession(session);
   return { session, fetched, failures };

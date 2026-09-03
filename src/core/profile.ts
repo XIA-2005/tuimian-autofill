@@ -157,6 +157,8 @@ export interface FamilyMember {
   politicalStatus: string;
   jobTitle?: string;
   address?: string;
+  /** 可选行级状态；旧档案没有该字段时保持完全兼容。 */
+  state?: ProfileRowState;
 }
 
 export interface SelfStatement {
