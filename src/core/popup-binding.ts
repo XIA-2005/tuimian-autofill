@@ -23,6 +23,11 @@ export interface PopupPickContext {
   triggerSelectors?: string[];
   frameNames?: string[];
   frameSrcPatterns?: string[];
+  /**
+   * 断点续填（修复）：从 sessionStorage.tui-fill-snapshot 恢复的上次 value。
+   * 用于人工/自动点选时参考，比如"用户上次想填北京大学"——刷新页面后识别器用它做模糊匹配提示。
+   */
+  priorValue?: string;
 }
 
 export interface CodeNameBinding {

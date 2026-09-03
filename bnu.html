@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>北京师范大学研究生招生网</title>
+        <meta content="text/html; charset=UTF-8" http-equiv="Content-Type" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+        <meta name="author" content="Beijing Normal University" /> 
+        <meta name="description" content="北京师范大学是教育部直属重点大学，是一所以教师教育、教育科学和文理基础学科为主要特色的著名学府。学校的前身是1902年创立的京师大学堂师范馆，1908年改称京师优级师范学堂，独立设校。1912年改名为北京高等师范学校。1923年更名为北京师范大学，成为中国历史上第一所师范大学。1931年、1952年北平女子师范大学、辅仁大学先后并入北京师范大学。" />
+        <script>
+            var _hmt = _hmt || [];
+            (function() {
+                var hm = document.createElement("script");
+                hm.src = "https://hm.baidu.com/hm.js?e85d7e3fab5d4d96143892e9384d8146";
+                var s = document.getElementsByTagName("script")[0]; 
+                s.parentNode.insertBefore(hm, s);
+            })();
+        </script>
+        <script src="/content/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+        <script src="/content/ajax/libs/jquery-validate/1.19.1/jquery.validate.min.js"></script>
+        <script src="/content/ajax/libs/linq.js/2.2.0.2/jquery.linq.min.js"></script>
+        <script src="/content/ajax/libs/knockout/3.5.0/knockout-min.js"></script>
+        <script src="/scripts/dengdu/dengdu.js"></script>
+        <script src="/scripts/dengdu/dengdu.bootstrap.js"></script>
+        <link href="/content/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+        <link href="/content/ajax/libs/twitter-bootstrap/3.4.1/css/bootstrap.min.css" rel="stylesheet">
+        <link href="/scripts/miniui/themes/icons.css" rel="stylesheet" />
+        <link href="/scripts/miniui/themes/default/miniui.css" rel="stylesheet" />
+        <link href="/scripts/miniui/themes/metro-white/skin.css?v=20201109" rel="stylesheet" />
+        <link href="/scripts/areas/core/atom.css?v=20201109" rel="stylesheet" />
+        <link href="/scripts/areas/core/area.css?v=20201109" rel="stylesheet" />
+        <link href="/scripts/areas/core/xlarge-mode.css?v=20201109" rel="stylesheet" />
+        
+        <link href="/content/script/flexslider.min.css" rel="stylesheet">
+        <!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+        <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+        <!--[if lt IE 9]><script src="/content/script/html5shiv.min.js"></script><script src="/content/script/respond.min.js"></script><![endif]-->
+        <style type="text/css">
+            body {
+                font-family: "微软雅黑";
+            }
+            #header{
+                padding-top:20px;
+                padding-bottom:15px;
+                background-color:#004EA2;
+            }
+            #footer{
+                text-align:center;
+                background-color:#004EA2;
+                color:white;
+                height:60px;
+                line-height:60px;
+                margin-top: 20px;
+            }
+            #nav{
+                margin-bottom:0px;                
+            }
+            #nav a{
+                font-size:16px;
+            }
+            #content{
+                margin-top:20px;
+            }
+            .sidebar{
+                background-color: #f3f9fc;
+                padding:20px 0px 20px 0px;
+            }
+            .sidebar span {
+                width:100%;
+                display:block;
+                text-align: center;
+                margin-top:5px;
+            }
+            .sidebar .morelinks{                
+                color: #BF2501;
+                font-size: 16px;                
+            }
+
+            .flexslider {
+                border:0;
+                margin-bottom:0px; 
+            }
+            .flex-control-nav {
+                display:none;
+            }
+            .article-list {
+                margin-top:10px;
+            }
+            .article-list .boxtitle {
+                border-bottom: 1px solid #c9c9c9;
+                padding-bottom: 10px;
+                margin-bottom:10px;
+            }
+            .article-list .boxtitle .title{
+                font-size: 20px;
+                color: #141414;
+                font-weight: bold;
+            }
+            .article-list .boxtitle .more{
+                position: absolute;
+                right:20px;
+                color:#a9a9a9;
+            }
+            .article-list .boxlist{
+                margin-left:10px;
+            }
+            .article-list .boxlist ul{
+                list-style:none;
+                margin:0;
+                padding:0;
+            }
+            .article-list .boxlist ul li{
+                margin-top:10px;
+            }
+            .article-list .boxcontent{
+                margin-top:20px;
+            }
+            .article-list .boxpager{
+                border-top: 1px solid #c9c9c9;
+                margin-top:10px;
+                padding-top:10px;
+                color:#999;
+            }
+            .my-breadcrumb {
+                margin-top:10px;
+                color:#999;
+            }
+            .my-breadcrumb a {
+                color:#999;
+            }
+            td {
+                padding: 5px 2px 5px 2px;
+            }
+            td p {
+                /* margin: 5px 2px 5px 2px; */
+                margin: 0px;
+            }
+            .container {
+                max-width: 1200px;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="header">
+            <div class="container">
+                <div class="row">
+                    <div class="col-md-9">
+                        <a href="/" style="font-size:2em; color:white;"><img src="/content/style/yz-logo.png" alt="北京师范大学" /></a>
+                    </div>
+                    <div class="col-md-3">
+                        <form name="dataForm" action="/search" method="post" style="margin-top:5px;">
+                            <div class="input-group">                                
+                                <input type="text" name="pattern" class="form-control" placeholder="搜索关键字">
+                                <span class="input-group-btn">
+                                    <button class="btn btn-default" type="submit"><span class="glyphicon glyphicon-search"></span></button>
+                                </span>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <nav id="nav" class="navbar navbar-default" role="navigation">
+            <div class="container">
+                <!-- Brand and toggle get grouped for better mobile display -->
+                <div class="navbar-header">
+                    <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+                        <span class="sr-only">Toggle navigation</span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                    </button>
+                    <a class="navbar-brand" href="/">首页</a>
+                </div>
+                <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+                    <ul class="nav navbar-nav">
+                        <li class="dropdown">
+                            <a href="/list/master" class="dropdown-toggle" data-hover="dropdown">硕士生招生 <span class="caret"></span></a>
+                            <ul class="dropdown-menu" role="menu">
+                                <li><a href="/list/master_board">最新消息</a></li>
+                                <li><a href="/list/master_brochure">招生简章</a></li>
+                                <li><a href="/list/master_info">历年数据</a></li>
+                            </ul>
+                        </li>
+                        <li class="dropdown">
+                            <a href="/list/doctor" class="dropdown-toggle" data-hover="dropdown">博士生招生 <span class="caret"></span></a>
+                            <ul class="dropdown-menu" role="menu">
+                                <li><a href="/list/doctor_board">最新消息</a></li>
+                                <li><a href="/list/doctor_brochure">招生简章</a></li>
+                                <li><a href="/list/doctor_info">历年数据</a></li>
+                            </ul>
+                        </li>
+                        <li><a href="/list/gat">港澳台招生</a></li>
+                        <li><a href="https://admission-is.bnu.edu.cn/" target="_blank">留学生招生</a></li>
+                        <li><a href="/list/open">信息公开</a></li>
+                        <li><a href="/list/faq">常见问题</a></li>
+                        <li><a href="/list/contact">联系我们</a></li> 
+                    </ul>
+                </div>
+            </div>
+        </nav>
+        <div class="navbar navbar-bg hidden-md hidden-lg">
+            <div class="container">
+                <div class="row">
+                    <ul class="nav">
+                        <li class="col-sm-4 col-xs-6"><a href="/list/master">硕士生招生</a></li>
+                        <li class="col-sm-4 col-xs-6"><a href="/list/doctor">博士生招生</a></li>
+                        <li class="col-sm-4 col-xs-6"><a href="/list/gat">港澳台招生</a></li>
+                        <li class="col-sm-4 col-xs-6"><a href="/list/foreign">留学生招生</a></li>
+                        <li class="col-sm-4 col-xs-6"><a href="/list/open">信息公开</a></li>
+                        <li class="col-sm-4 col-xs-6"><a href="/list/faq">常见问题</a></li>
+                        <li class="col-sm-4 col-xs-6"><a href="/list/contact">联系我们</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <div class="container">
+            <div class="flexslider">
+                <ul class="slides">
+                    <li>
+                        <div style="position:relative;">
+                            <a href="https://yz.bnu.edu.cn/content/zyml/2026/ssyx.html">
+                                <img height="450" src="http://www.bnu.edu.cn/images/content/2018-03/20180302164331842440.jpg" alt="2026年硕士研究生招生专业目录" />
+                            </a>
+                            <div style="position:absolute; z-index:2; left:0; bottom:0px; line-height:40px; height:40px;width:100%;">
+                                <div style="background-color: rgb(45,48,87); height:40px; opacity:0.8; overflow:hidden; padding:0px 10px;text-align:center;">
+                                    <a style="color:white; font-size:18px; font-family: KaiTi;" target="_blank" href="https://yz.bnu.edu.cn/content/zyml/2026/ssyx.html"><strong>2026年硕士研究生招生专业目录</strong></a>
+                                </div>
+                            </div>
+                        </div>                        
+                    </li>
+                    <li>
+                        <div style="position:relative;">
+                            <a href="https://yz.bnu.edu.cn/detail/69502804-e245-4e47-a618-de4cd668e56c">
+                                <img height="450" src="http://yz.bnu.edu.cn/core/ucontent/cmfile?path=image/20180329/20170401082842231436.jpg" alt="2026年博士研究生招生专业目录" />
+                            </a>
+                            <div style="position:absolute; z-index:2; left:0; bottom:0px; line-height:40px; height:40px;width:100%;">
+                                <div style="background-color: rgb(45,48,87); height:40px; opacity:0.8; overflow:hidden; padding:0px 10px;text-align:center;">
+                                    <a style="color:white; font-size:18px; font-family: KaiTi;" target="_blank" href="https://yz.bnu.edu.cn/detail/69502804-e245-4e47-a618-de4cd668e56c"><strong>2026年博士研究生招生专业目录</strong></a>
+                                </div>
+                            </div>
+                        </div>                        
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="content" class="container">
+            <div class="row">
+                <div class="col-md-5 col-sm-5 article-list">
+    <div class="boxtitle">
+        <span class="title">硕士招生公告</span>
+        <a class="more" href="/list/master">更多</a>
+    </div>
+    <div class="boxlist">
+        <ul style="min-height: 200px;">
+            <li><a href="/detail/be0e6268-0bfd-4a34-aa31-e72207bf2577" target="_blank">北京师范大学2027年推荐免试硕士／博士研究生招生录取工作办法</a></li>
+            <li><a href="/detail/32ce33d3-8dee-4f0e-968a-34cea52da475" target="_blank">2026年研究生新生入学须知及行李标签</a></li>
+            <li><a href="/detail/7c284e1f-7162-4350-91c5-359174696f79" target="_blank">2026年优秀大学生暑期夏令营活动（持续更新中）</a></li>
+            <li><a href="/detail/e9c5e138-88c2-4da9-9233-ef469afb89c7" target="_blank">关于录取通知书、组织关系和户口的通知</a></li>
+            <li><a href="/detail/6efab3b7-f509-4268-9f66-a713f2eceb77" target="_blank">2026年硕士研究生统考拟录取查询</a></li>
+            <li><a href="/detail/cae23f06-d15f-43a0-b30e-e619daff39ce" target="_blank">北京师范大学2026年硕士研究生调剂方案</a></li>
+            <li><a href="/detail/68a4e1dc-03af-476d-9e37-b5df45adf154" target="_blank">北京师范大学2026年硕士研究生招生调剂工作办法</a></li>
+            <li><a href="/detail/3d47a153-7dcc-4723-b878-79259d5d958b" target="_blank">北京师范大学2026年硕士研究生招生复试方案汇总</a></li>
+            <li><a href="/detail/62b39e61-b825-43c1-8ca7-56d8ea438a71" target="_blank">北京师范大学2026年硕士研究生招生复试分数线</a></li>
+            <li><a href="/detail/7967b2a3-9b73-4514-9c3c-d809c04171d6" target="_blank">北京师范大学硕士研究生招生复试录取办法</a></li>
+            <li><a href="/detail/4d8c545c-ed55-4ca2-8cb9-56fb80b0e820" target="_blank">北京师范大学2026年硕士研究生招生学校复试基本分数线</a></li>
+            <li><a href="/detail/e3a1010b-0287-408d-b481-16ffd1db6758" target="_blank">北京师范大学关于2026年全国硕士研究生招生考试初试成绩查询及复核的通知</a></li>
+            <li><a href="/detail/34eba4dd-3aae-464e-9f42-35419e13eb47" target="_blank">北京师范大学2026年公费师范毕业生在职攻读教育硕士复试与录取工作通知</a></li>
+            <li><a href="/detail/4c4a2c85-c1ff-4081-a405-0eff8e532ee8" target="_blank">2026年全国硕士研究生招生考试（初试）北京师范大学考点考生须知</a></li>
+            <li><a href="/detail/e72264ba-994b-4490-9e6f-7d5c3dcc74b4" target="_blank">2026年全国硕士研究生招生考试北京师范大学报考点网上确认指南</a></li>
+        </ul>
+    </div>
+</div>
+<div class="col-md-5 col-sm-5 article-list">
+    <div class="boxtitle">
+        <span class="title">博士招生公告</span>
+        <a class="more" href="/list/doctor">更多</a>
+    </div>
+    <div class="boxlist">
+        <ul style="min-height: 200px;">
+            <li><a href="/detail/87df988c-dbad-409e-a22b-8eb6e7e7ef66" target="_blank">北京师范大学2027年推荐免试硕士／博士研究生招生录取工作办法</a></li>
+            <li><a href="/detail/6f630d82-a36c-431f-8be6-0139b7d81923" target="_blank">2026年研究生新生入学须知及行李标签</a></li>
+            <li><a href="/detail/9526ba32-37e5-4358-a1fe-2a0c7fb9f624" target="_blank">关于定向信息确认、录取通知书、组织关系和户口的通知</a></li>
+            <li><a href="/detail/0c2f3940-dbff-4e88-b56d-034ca2ccf7b1" target="_blank">关于延长思政课博士培养计划报名时间的通知</a></li>
+            <li><a href="/detail/15508888-5714-457f-99e4-11432c16f723" target="_blank">2026年高校思想政治工作骨干在职攻读博士学位专项计划招生说明</a></li>
+            <li><a href="/detail/4a99d378-ccb3-4e1b-87e4-7ec21f0d66d9" target="_blank">2026年思政课博士培养计划招生说明</a></li>
+            <li><a href="/detail/c04be7ef-ce2c-40a2-b798-ccecc658c7b0" target="_blank">2026年高校思想政治理论课教师在职攻读马克思主义理论博士学位研究生专项计划招生说明</a></li>
+            <li><a href="/detail/69c8ed46-bd18-4463-bc3d-16ac817efd0a" target="_blank">2026年“援疆博士师资”“对口支援西部高校”“对口支援部省合建高校”专项计划博士研究生招生说明</a></li>
+            <li><a href="/detail/cdce4e9e-8997-4380-9d0c-da2f1319528b" target="_blank">2026年博士研究生第二次报名通知</a></li>
+            <li><a href="/detail/3bf82a30-31a5-41c0-a94c-749e0a4c97c0" target="_blank">2026年接收硕博连读情况表</a></li>
+            <li><a href="/detail/c5bee18b-442e-4dfa-8fb4-fb8debea7321" target="_blank">2026年博士研究生网上报名（已结束）</a></li>
+            <li><a href="/detail/15699607-7300-4ea9-9f79-b1a0519c96b2" target="_blank">2026年接收本科直博生情况表</a></li>
+            <li><a href="/detail/f8768233-9d98-4af1-92b1-e1bbc5a2d25b" target="_blank">2026年博士研究生招生简章</a></li>
+            <li><a href="/detail/69502804-e245-4e47-a618-de4cd668e56c" target="_blank">2026年博士研究生招生专业目录</a></li>
+            <li><a href="/detail/b07ec28a-dd07-47b8-a390-c87786c43d81" target="_blank">2026年博士研究生（本科直博）招生专业目录</a></li>
+        </ul>
+    </div>
+</div>
+                <div class="col-md-2 col-sm-12">
+                    <div class="sidebar" style="min-height: 300px;">
+                        <div class="col-md-12 col-sm-4 nopadding"> 
+                            <span class="morelinks">常用链接</span>
+                            <span><a href="http://www.bnu.edu.cn" target="_blank">学校主页</a></span>
+                            <span><a href="http://jwb.bnu.edu.cn/" target="_blank">教务部</a></span>
+                            <span><a href="http://www.bnu.edu.cn/kxyj/" target="_blank">科学研究</a></span>
+                            <span><a href="https://yz.bnu.edu.cn/content/dsfc/index_dsfc.html" target="_blank">导师风采</a></span>
+                            <span><a href="http://www.bnu.edu.cn/xbyx/" target="_blank">学部院系</a></span>
+                            <span><a href="http://www.bnu.edu.cn/zzjg/" target="_blank">组织机构</a></span>
+
+                            <div style="text-align:center; margin-top: 20px;">
+                                <img src="/content/style/wx_jsyz.jpg" style="width: 100%;">
+                                微信公众号
+                            </div>
+                        </div>
+                        <div style="clear:both"></div>
+                    </div>	
+                </div>
+            </div>
+        </div>
+        <div id="footer">
+            &copy; 版权所有 北京师范大学　地址：北京市新街口外大街19号　邮编：100875
+        </div>
+        <div class="text-center small" style="display:none;">
+
+        </div>
+        <!-- jQuery (necessary for Bootstrap's JavaScript plugins) -->
+        <script src="/content/script/jquery.min.js"></script>
+        <!-- Include all compiled plugins (below), or include individual files as needed -->
+        <script src="/content/script/bootstrap-hover-dropdown.min.js"></script>
+        <script src="/content/script/jquery.flexslider-min.js"></script>
+        <script src="/content/ajax/libs/twitter-bootstrap/3.4.1/js/bootstrap.min.js"></script>
+        <script type="text/javascript" src="/scripts/miniui/miniui.js"></script>    
+        <script id="seajsid" type="text/javascript" src="/scripts/seajs/sea.js"></script>
+        <script type="text/javascript" src="/scripts/seajs/seajs-css.js"></script>
+        <script type="text/javascript" src="/scripts/areas/core/config.js?v=41"></script>
+        <script type="text/javascript" src="/scripts/areas/core/core.miniui.js?v=41"></script>
+        <script>
+            // Can also be used with $(document).ready()
+            $(document).ready(function(){
+                $('.flexslider').flexslider({
+                    animation: "slide",
+                    slideshowSpeed: 10000
+                    //controlsContainer: ".flex-container"
+                });
+
+            });
+        </script>
+    </body>
+</html>

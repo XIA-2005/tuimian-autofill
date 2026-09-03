@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>验证码 OCR 设置 - 预推免填表助手</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #1e293b; max-width: 680px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 20px; margin-bottom: 20px; }
+.card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+h2 { font-size: 16px; margin-bottom: 12px; }
+p, li { font-size: 14px; line-height: 1.7; color: #475569; }
+ul { padding-left: 20px; margin-bottom: 8px; }
+.switch-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e2e8f0; }
+.switch-row:last-child { border-bottom: none; }
+.switch-label { font-size: 14px; font-weight: 500; }
+.switch-desc { font-size: 12px; color: #64748b; margin-top: 2px; }
+.toggle { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle .slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 24px; cursor: pointer; transition: .2s; }
+.toggle .slider::before { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .2s; }
+.toggle input:checked + .slider { background: #3b82f6; }
+.toggle input:checked + .slider::before { transform: translateX(20px); }
+select { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; color: #1e293b; margin-top: 6px; }
+input[type="range"] { width: 100%; margin-top: 6px; }
+input[type="text"] { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; margin-top: 6px; }
+.btn { padding: 8px 16px; border-radius: 6px; font-size: 14px; border: none; cursor: pointer; transition: opacity .2s; }
+.btn:hover { opacity: .85; }
+.btn-blue { background: #3b82f6; color: white; }
+.btn-red { background: #ef4444; color: white; }
+.btn-gray { background: #e2e8f0; color: #475569; }
+.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+.stat-box { background: #f8fafc; border-radius: 6px; padding: 12px; text-align: center; }
+.stat-num { font-size: 24px; font-weight: 700; color: #1e293b; }
+.stat-label { font-size: 12px; color: #64748b; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+th, td { padding: 8px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+th { color: #64748b; font-weight: 500; }
+.badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-A { background: #dbeafe; color: #1d4ed8; }
+.badge-B { background: #fef9c3; color: #854d0e; }
+.badge-used { background: #dcfce7; color: #15803d; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+.status-online { background: #22c55e; }
+.status-offline { background: #ef4444; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>🔐 验证码 OCR 设置</h1>
+
+<!-- 总开关 -->
+<div class="card">
+  <h2>总开关</h2>
+  <div class="switch-row">
+    <div>
+      <div class="switch-label">启用本地 OCR 识别</div>
+      <div class="switch-desc">关闭后验证码辅助完全停用，不影响其他功能</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="captchaEnabled">
+      <span class="slider"></span>
+    </label>
+  </div>
+</div>
+
+<!-- 路线选择 -->
+<div class="card" id="routeCard">
+  <h2>识别路线</h2>
+  <div class="switch-row">
+    <div>
+      <div class="switch-label">路线 A：tesseract.js（WASM）</div>
+      <div class="switch-desc">纯浏览器实现，首次加载约 5-10 秒（下载 WASM），无需安装额外软件</div>
+    </div>
+    <label class="toggle">
+      <input type="radio" name="route" value="A" id="routeA">
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="switch-row">
+    <div>
+      <div class="switch-label">路线 B：Python 桥接服务</div>
+      <div class="switch-desc">需启动 baoyan-native.exe（或 Python 桥接服务），本地 PaddleOCR，准确率更高</div>
+    </div>
+    <label class="toggle">
+      <input type="radio" name="route" value="B" id="routeB">
+      <span class="slider"></span>
+    </label>
+  </div>
+  <!-- 路线 B 配置 -->
+  <div id="routeBConfig" class="hidden" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
+    <label style="font-size:13px;color:#475569;">桥接服务地址</label>
+    <input type="text" id="routeBEndpoint" placeholder="http://localhost:18765" style="margin-bottom: 8px;">
+    <label style="font-size:13px;color:#475569;">桥接 Token（Bearer）</label>
+    <input type="password" id="routeBToken" placeholder="从 baoyan-native.exe bridge.json 的 token 字段读取" autocomplete="off" style="margin-bottom: 8px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <button class="btn btn-gray" id="testBridgeBtn">检测连接</button>
+      <span id="bridgeStatus" style="font-size:13px;color:#64748b;"></span>
+    </div>
+    <div style="margin-top: 8px; font-size:12px;color:#94a3b8;">
+      竞品兼容：需运行 <code>baoyan-native.exe --port 18765</code> 或 <code>python -m bridge.native_service_cli</code>
+    </div>
+  </div>
+</div>
+
+<!-- 行为设置 -->
+<div class="card" id="behaviorCard">
+  <h2>识别行为</h2>
+  <div class="switch-row">
+    <div>
+      <div class="switch-label">自动触发识别</div>
+      <div class="switch-desc">检测到验证码后立即开始识别（不弹预览按钮）</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="autoTrigger">
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div style="padding: 10px 0; border-bottom: 1px solid #e2e8f0;">
+    <label style="font-size:14px;font-weight:500;">预览时间（毫秒）</label>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+      <input type="range" id="previewDuration" min="500" max="5000" step="100" value="1500" style="flex:1;">
+      <span id="previewDurationVal" style="font-size:13px;min-width:50px;">1500ms</span>
+    </div>
+  </div>
+  <div style="padding: 10px 0;">
+    <label style="font-size:14px;font-weight:500;">最低置信度阈值</label>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+      <input type="range" id="confidenceThreshold" min="0" max="90" step="5" value="50" style="flex:1;">
+      <span id="confidenceVal" style="font-size:13px;min-width:40px;">50%</span>
+    </div>
+    <div style="font-size:12px;color:#94a3b8;margin-top:4px;">低于此置信度的识别结果不会自动填充，仅提示</div>
+  </div>
+</div>
+
+<!-- 统计 -->
+<div class="card" id="statsCard">
+  <h2>识别历史与统计</h2>
+  <div class="stats-grid">
+    <div class="stat-box">
+      <div class="stat-num" id="statTotal">-</div>
+      <div class="stat-label">总识别次数</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" id="statUsed">-</div>
+      <div class="stat-label">用户采纳</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" id="statAvgConf">-</div>
+      <div class="stat-label">平均置信度</div>
+    </div>
+  </div>
+  <table id="historyTable">
+    <thead>
+      <tr>
+        <th>时间</th>
+        <th>结果</th>
+        <th>置信度</th>
+        <th>路线</th>
+        <th>采纳</th>
+      </tr>
+    </thead>
+    <tbody id="historyBody"></tbody>
+  </table>
+  <div id="historyEmpty" style="text-align:center;color:#94a3b8;font-size:13px;padding:20px 0;">暂无识别记录</div>
+  <div style="margin-top:12px;display:flex;gap:8px;">
+    <button class="btn btn-gray" id="refreshHistoryBtn">刷新</button>
+    <button class="btn btn-red" id="clearHistoryBtn">清除历史</button>
+  </div>
+</div>
+
+<!-- 保存提示 -->
+<div id="saveMsg" style="position:fixed;bottom:20px;right:20px;background:#1e293b;color:white;padding:10px 16px;border-radius:6px;font-size:13px;display:none;transition:opacity .3s;">设置已保存</div>
+
+<script src="captcha-settings.js"></script>
+</body>
+</html>

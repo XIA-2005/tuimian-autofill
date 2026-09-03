@@ -1,0 +1,302 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <title>登录_中国研究生招生信息网</title>
+        <meta content="考研,研究生 招生,研究生 网上报名 网上调剂,专业学位,招生简章" name="keywords" />
+        <meta content="中国研究生招生信息网是隶属于教育部的以考研为主题的官方网站，是教育部指定的研究生入学考试网上报名及调剂网站，主要提供研究生网上报名及调剂、专业目录查询、在线咨询、院校信息、报考指南和考试辅导等多方面的服务和信息指导。" name="description" />
+        <link rel="shortcut icon" href="https://t2.chei.com.cn/yz/favicon.ico" type="image/x-icon"/>
+        <link href="https://t3.chei.com.cn/passport/assets/css/qt-1.0.1.css" rel="stylesheet" />
+        <style>
+            .login-logo h1 {
+                font-size: 0;
+                height: 24px;
+                width: 295px;
+                background-image: url("https://t3.chei.com.cn/passport/assets/images/yz/logo.png");
+                background-image: -webkit-image-set(url("https://t3.chei.com.cn/passport/assets/images/yz/logo.png") 1x,url("https://t4.chei.com.cn/passport/assets/images/yz/logo-2x.png") 2x);
+                background-repeat: no-repeat;
+                background-position: center center;
+            }
+            .login-left {
+                background: #F5F8FF url("https://t1.chei.com.cn/passport/assets/images/yz/bg.png") center center no-repeat;
+            }
+            .btn_login {
+                background-color: #2d8cf0;
+                border-color: #2d8cf0;
+            }
+            .btn_login:hover {
+                background-color: #59a7f5;
+                border-color: #59a7f5;
+            }
+            .btn_login:active {
+                background-color: #2e8ae6;
+                border-color: #2e8ae6;
+            }
+            .input_text:focus {
+                border-color: #2d8cf0;
+            }
+            @media screen and (max-width: 1000px) {
+                .login-logo h1 {
+                    width: 100%;
+                    height: 1.28rem;
+                    background-image: url("https://t4.chei.com.cn/passport/assets/images/yz/wap-logo.png");
+                    background-position: center;
+                    background-size: contain;
+                }
+            }
+        </style>
+        <script src="https://t1.chei.com.cn/common/jquery/2.1.1/jquery.min.js"></script>
+        <script src="https://t1.chei.com.cn/common/plugins/jquerymigrate/jquerymigrate-1.2.1.min.js"></script>
+        <script src="https://t1.chei.com.cn/common/wap/js/wap.min.js"></script>
+        <script src="https://t1.chei.com.cn/common/wap/js/flexible.js"></script>
+        <script src="https://t2.chei.com.cn/passport/js/captchaChange-1.0.1.js"></script>
+        <script src="https://t1.chei.com.cn/passport/js/common_rosters.js"></script>
+        <script>
+            $(function(){
+                $("#username").attr("placeholder", "手机号/邮箱");
+                $("#password").attr("placeholder", "密码");
+            })
+            /**表单验证**/
+            function formSubmit(){
+                var $username =$('#username')||'';
+                if($username.length!=0){
+                    var username = $.trim($username.val());
+                    if(username==''){
+                        alert('用户名不能为空！');
+                        $username.focus();
+                        return false;
+                    }
+                }   
+                var $password = $('#password')||'';
+                if($password.length!=0){
+                    var password = $.trim($('#password').val()||'');
+                    if(password==''){
+                        alert('密码不能为空！');
+                        $password.focus();
+                        return false;   
+                    }       
+                }
+                var $pcheckcode = $('#pcheckcode')||'';
+                if($pcheckcode.length!=0){
+                    var pcheckcode = $.trim($('#pcheckcode').val()||'');
+                    if(pcheckcode==''){
+                        alert('短信验证码不能为空！');
+                        $pcheckcode.focus();
+                        return false;   
+                    }       
+                }
+            }
+        </script>
+        
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-100524-4"></script>
+<script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'UA-100524-4', {'sample_rate': 5});
+</script>
+    </head>
+
+
+
+
+
+
+<body id="cas">
+
+<style>
+    .errors { word-wrap: break-word; }
+</style>
+
+<div class="login-layout">
+    <div class="login-left"></div>
+    <div class="login-right">
+        <div class="login-logo">
+            <h1><a href="https://yz.chsi.com.cn/" target="_blank" class="logo-link">中国研究生招生信息网</a></h1>
+            <div class="login-other">
+                <a href="https://yz.chsi.com.cn/" target="_blank">首页</a>
+                <span class="cutline"></span>
+                <a href="https://yz.chsi.com.cn/help/" target="_blank">帮助中心</a>
+                <span class="cutline"></span>
+                <a href="https://www.chsi.com.cn/about/contact.shtml" target="_blank">联系我们</a>
+            </div>
+        </div>
+        <div class="login-content">
+            <div class="login-form">
+                <div class="ncss-stu-title">
+                    <h2>登录</h2>
+                    <h3>请使用 <a href='/account/help/index.jsp?keywords=学信网账号可以做什么' target="_blank" rel="noopener noreferrer">学信网账号</a> 进行登录</h3>
+                </div>
+                
+                
+                    
+                    
+                        <div class="cr_top">
+                            <form id="fm1" action="/passport/login;jsessionid=CAA76C99420D0C75EDFA6ABCF811E320?entrytype=yzgr&amp;service=https%3A%2F%2Fyz.chsi.com.cn%2Fj_spring_cas_security_check%3Bjsessionid%3DF1E635E866F85F15377940FB1CFE533F" method="post" onsubmit="return formSubmit();" autocomplete="off">
+                                <!-- 用户名 -->
+                                <div class="ct_input">
+                                    
+                                    
+                                        
+                                        
+                                            
+                                            
+                                                <span class='ct_img_yhm'>&nbsp;</span>
+                                                <input id="username" name="username" class="input_text" tabindex="1" accesskey="n" type="text" value="" size="25"/>
+                                            
+                                        
+                                    
+                                </div>
+                                <!-- 用户名 end -->
+                                <!-- 密码 -->
+                                <div class="ct_input">
+                                    <span class='ct_img_mm'>&nbsp;</span>
+                                    
+                                    <input id="password" name="password" class="input_text" tabindex="2" accesskey="p" type="password" value="" size="25"/>
+                                </div>
+                                <!-- 密码 end -->
+                                
+                                
+                                    
+                                    
+                                    
+                                    
+                                    
+                                
+                                
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+                                        
+                                    
+                                
+                                <div class="errors" style="display: none; background: #fed;" id="username-check-tip"></div>
+                                <div class="ct_input sub-box">
+                                    <input type="hidden" name="lt" value="LT-81581-QWHEcZvEuM0Tk14NeW7qxWKFsiug9q-cas" />
+                                    <input type="hidden" name="execution" value="6a732869-512e-4153-92a6-55d116e212ad_ZXlKaGJHY2lPaUpJVXpVeE1pSjkuVWpCT2VGVmFMMWRGYlc1SldXWXpaR1o0ZDBoTmRYZHJiMkpFVGpCRGVUaHBWR2c0VXpFMldHRnVhMlp6Y3pjeU9GSlBPWEpoZEhwT2VFWjVUbEkyVUVOcGMwMHJOVTlPT1hWeVlrZHVlR2xVVGxrMUwwdDFlWEZyVVhRd05GTkxlaXRJUTNOdGJXVmpUekpyTmk5T2JERjZaakl4TldSQ01HeDNXRk5xT1RGblF6VlZNR2RZZDNOd1l6bElhRzVPTWpRNFlrZFROSGRGUzBoVFQwcG9hVEIxY0dWdVduUXdUMGxJTlhobGJ6bHFRMk5MYkNzMlNuYzJRMEpxUkdkR05WUnVSRFF6UmxWMlUxVTFkQzlYZDFONlEzcDNRbmgyUlZKTk5VcG9kRlpPUm14SE9IRk1SRU5aV0hkaGFVcEpkVlZCVXk5WWFDOXJVM0JyYlU5S1dFOWpOMDFESzJNNVNFTlBWV2xvZVhSUk0wMTFSM3BGVG5FMGJEQkxkV0ZZWWpGck9FVm1lR3BsYTBWMGJHaEhSSEppUWtWM09VUnFjelZRWWtFdlkxTjZaRzV3YTFSMVVYRmpOekpUU0VzM1pVeDBUMjVxTlU1QlZsSlhZM0Z3VWpWRWF6QXhhVWhpVkRWb2JqQm9ZVVJ3ZUM5VVV6bDFTRTFNT1RSeVprUnRZWHBzWmtsc0szaFNlbVp1TXpWSFNFeFFiRGsxUzBSRmNWUjBkQ3R5VDBWeGFETmpTa0pzUXk5U2FWWjViVWN4UlZKcVpqQXdXamd5VFV4VlRFZFllRlZLTmpBM2VsQnBaazFCYmt4SE9GbDRaRUp5T0dKaU5tMDVWa3hCUnpkMFlsb3lRelUyVG05YVdqaE9SelJUU1dkbFFrSTVUVEZqYkRaM01FbDRlbWhOV0VWRU1WSkdZemhoUTJsR01XbzJRWE5WVlRGM1JHbGFOWE13UlU5T1pGZG9OblZGWVdKQk4xTmpjbTkzUm1KV1VWcE1TR0Z4V0ZKUEwyZ3dlbVJQZG5kaGEyVTVNVWw2ZGpaVE56bHpZa1pLUVVOQ1JtNVNibmRwVTJ4YWVTdFhUVXhDVEc1UmRXOU1SSGN3ZEhWMVZVVmlWMjlNVms1VWVsTm9hblpvVWpCWGRqSlNjbTVIYTA5QldVaDFVbWxGTTNZMlNtOUJSWEJVVGs1RU5FRlZWMFJSYUc5c1lTdGxhak01UlU1S1dIbHZjMHczYkRWc1ZGQXhWR0YzTUU1WVQwZEVXQ3RaVjNOSmVqQTRSa1ZNVjNWMkx6VXhhako1UlZKcWRXWmhaVkF4ZWpOeGMyd3JhMUJxVWsxRVFYWnZiRk14Y3pGWkx5dGlUMmt3TnpSUVlXMTBPVzVCZFRGM01raHBTakpLTWpsU09IUm1VVVZvVTNoNGVFOURZa2RDUlZSaGFVcFZhVWx2TTB4UE5uSktTblZzY1ZocFZFRlVVa2R2TjJoMWVuUTRUSHB4ZURWbU5XNVlWMUJvZDBsWlVEaGhaV1JoZDBaNU5GQlFkSE01UzBOallYcDBkR0oxYkV4a1dHVjFNbWQ0TmpCWGJrczNZWGx2YlVaYWMybDRjMlpZWW5STlJXOWhPR1ZrV0hWVFZWcFRaMGh6VVRkeVoxaDVhMkZwYlcxTFpWSkJUaTlSUjFwbU5uRlFORWNyYlhCNlptbHFRMk5yTkZKUmVpczRNbWxJUzNSRlJFRk1ValpLTURKc1FrOU5ZVTlGSzNCbVV6Uk1ZM0ZKU1dGbFNuZFdkVTVaU1c5VlYyeGpRVmRyV1ZGNU5WWjFXVGxqZGxwc00wWnJSR1I0TkZJdldtTlFabVpPUVVsbk1XazRZemRtSzJsR1pVaFVWVE5sUzB4M1QzZzBRMWRUYVVkdmIzVnJaeXN5U3k5YVNqWnhMeloyWmpsUE0xQlpObFphZERWSmNHMVpPVTh4TlhwU1VFZzBkRmhaTDFVeFEyRk1lRUpIUVdsQ05YZDRTbUZrWkRSV1JWaFVlRlptWjNoVk4xQnNPWEJuV1ZST09FdEhla0pvVjJ4NWIwNTFNekJ0ZFdwbFQwcDZaamhWTVdsRUswSk9SV3RDT0dkak56TnlhMnhzVkZCbk4zRkVkVTEwV0daTU5IVlFLMmxoVEZWMVEzaERaVUZ1VVRkVk5FVkhXamhJVFdRclRFYzJhbTE2VGlzeEt5dGxiM1ZSU1V0S2FFaFlUSEJuYWxGWVZqUjBaVFZ1TTFSSk1tZFRNVzFMUzFsM1NDdGFZV2RqV1hNNVVTdDZUVU5SWkVFMWVsaFJVVzlHV1dOamJteHBObWhvVG1wM1NFRkZlRE5rTmxWSU1IVnlNMmMxTTNaeVZVczNjMUpEUXpkR2EyVnhNa2hNWVZsS1JqZExXVXBPZURWWWMwdzBha0Z3WWxobE9VSjFlWGx4ZURWeE9VUTJaSFZtVlVGbVNsSTFRM00xUlhvek5VbFJTRE0yVEc5a1JrOTNRMUIyUzNZdk1IcHlaekpVYzNBek1qRk5jWFoyYm1aNk16RXdhbkUxZVdWaGFFeEtWVlJFZDJwRlN6ZHZVRzFYZVRGelJqRnFXVFp4YjJGb01HbGliRXRKUTB0eE1XVmFZWGxaYzIxTE5YQlNkMWswTjNOcFZVZHJVRTFsYW1VMlJua3ZVa2REWkZRek9FOVNkVUpZWkVoVWEwWTJjMHhpTDJaWVdHcEROa1JtYUhCWFVrSnBXVXhaUkZnNGRrNVpPREV5WW1SNldtRkhUR2RtZGs4eVowWkVUbXhKTTAxTFZVTk1ORkUyU1dKR0swcERlbmc0TnpKRVVXcG9OREZ3TmxsNmFsbG5jRVJtTldjeWJIWklhSEp2WVdwcldGSkVSRTFvWVdORFluUmpUVkpNTmxGUWVXMTNUMnd3YjBocGEwVmlNM0JZV21aRVlWVjVWMGN5Vnk4NFUyaFdaRmxoTDA0M2R6SnhXakpSUnpZeFp5dHlkVmxJWlhWRE1IbGxVbFIzV2t0WmMzQlRZMVJ3Y1UweEwweHlhMjltTUhoeWRVRlFhVlZYWVUxS2VHdzNja2RETDFkclRtOU5NV1pFZW5KQmJsSjRObnBaWjFNNGNrNVliMDl2T1RRclpYSlBTbE5hUm1wUFpWTXdhVUp4Y1VRNWRWaFdaVWxLZDJ4cVpsWkxOMkk0SzBKRWFsTlBaV05yY3pKMVowOVFkMVJVYUV4MU9GSm5ialZpZFZsTlNXRnVWSFJ6ZVRscWREa3ZjbHByVDBSU1dGTmxhMFp0UTFJcmFreE1LMk5TYURBMlIweHJRVEkwTm5acVpYbDRhMUU1UlZCbmFFRjBUblZsTDFsemRXbHJNa0prYWxoSVl6VjRja0UxVFN0YVlWWkJSMnAxYlhwdVprRmtOazlJWTBwemFrRlhjbGhNUTJrdmJHc3ZVa2hKZFVGSVJrOXpaeXQ0UzJsWFNVNTFlQ3R1U0dZelZHRlZla3RoVFhCV0wwTnpTeXRSYlVOS2VGaFNXRGRtUVdGRFVFMUVkVzlUTDFablZGQTNNblZaZDBOdlZHeFhUWEF6ZG1oTlVIWnVhazFJWTJOV2MzQnRhMUZKTmpGaFIxSnFVbUUyZGpkaFpHczRhVkpLWkRaMWJXOVpZeXRrVkU5dEwyNTZkalYwUWpaSFFUSTJjR1F3TUVoUGNsRXZSSEpPVkdkWFpsWTVLM0IyYWxOck5qSTBaMjR4TkZCa1dYUmhNa3gyU0dsNVVHbFZPWEZ5Ums4MVlVWndUa3htYW5nd2EzQnZhR1JOVjFFM1dtMHZaV3hpYVcxRmFrOVhUbk5JT0ZWMk4wd3ZUR0Y0VGtsWVpHWmpkbWgyUlhoM1N5OVlSRUkyTUd0Mk4wMVBja1prUzFVclJsaFdhMUV2U1dWaE56RTNZVEpoYW1KSGNUQlhUMXB3YVVkeE5HaE5XalphUTJONmNGY3pWV3haUkVkT2JFRjFUVUZZZDFKQ1pHVnVUMU5OZUZCamQzTjBRM0JsVnpWa1VVNUNhVGxoTkZkeE5uTkZXblJQWlVkWGN6TnFOM0JCTmxrd2QwUlhkMlJHZFV0d2J6ZGtiWGgwTVRoTlZVWlRibUpHU1VoME1YTTJjR2hNVW5GVE0xVmhaRXRJVms1d1dFTk5RMFJXVDFoT1ZqUTVTWE0yUkRWSlpXRlVZbGxJYjJnME1HdzBhbmhuVjNONk0ydGFkVFEyVmk5WVpHVmFNMkUzYzI5VVlrUkNhak13V1dscWNHNVNNRUpwZVZKemQzWTNSbEZWTUZGRWF5OXVlR05XV0RsdFZ6bHVjMmw2VlZnclNEUjRNR1ZSU0RCTVZXbHhNUzlWY0RkMUwydHhjM2QxWXpWc2VVMVRNelZ0TVhaVWNUbHRTMGQ1V2pBM2F5OWFVbVUzVkVSdVN6bFFjU3RpVW1SS1RUbDNZazlXWlVaeU0xbHhia0Y1VG5aSE1uazFRaXRSYzB0UE4zZHNUV015ZDB0cFpuUTNZa3AzV1hGM1JFcHhOR3RWY0RabVYyeG5XWFppYUhGSWVVbEVXVkJ5TVdGdWNYTjVUMFJQTjIxVU1VNUdWWGR0WnpablprODJkREJQVDBSMFRDOTJTRVF2Y3pWWVluTk9ZME5WTW13emJFUnpaRUpuTDBZMlduRjZSa1F3TlVNMU5FODRUbnBpUjBaeVZVOHhjRlJpUTNKemIyVnZkekZDZDBGMWQwTm9VbXg0ZEUxMldIbzFMMGR3VW1abFZXUkVOalZwYW1oVVlWTk5ZMkZ6U1UxdlFqTkZRVmhXWXpJemFWbE5WbUp1VUdSWk9XbDBTWFZKUXpZNVFreFFPV1pYUzBaVlpVdHJjV0l4U0hkQ0szazNObTFSZVVGcWMxVklOMmhVT0U5aU5uVmxhM2RyYW1sallXTk9jRlVyY21WT1RqVkVNbEU0VEhwTlIwUlRORmh2UldWbFJHMXVOSEpPVUU0cmFHeGlVRmcxVmtJdllXZDZWekpHVTFJek4ycDZMeTgyTDJSdE5FZzBSR2h4ZWpGUWFVVk5kWFIyTkVSV1RERjJhSE54UjFWcU1VSjJZelZJTVUxVFVIVldjbUV4VUZkNGNVUnZXRXRzV0ZsNmEweEZWRVJGU0hGNFEwTnVOR0l2WkRKdk0yUkViemhsTWpKS1pDdE5VbEF6Vm5CR01ETXlkRTVSTmtneVVHUlNVM0V2YWpBdk1uZDVkbkp1V25ndlpHUkNWVVJWV0ZkaFFWbHlWeXRoUmpVd2J6WnpTbGxSWTAxcllUUnRlRkI2YmxodWFURkZXWFpwY2pNNGVHRlFjRzVDWlRabVZFSkViRzlrUjNsNFZtNVZkemQ0Wld0Uk0ybFljMmxDWlZvd1JsVlpTRVpMTUV4b01UVnVkM0JPVUZSRmRUSXJRVTlKVEhoMmRtdExiMlU0V0haaVNrWm9Xa2xUUVN0R1QwSnVSRWhuVEVwc1pITlhTSGhOVG1wUFFVWnpNVFF2ZEhkak4zQlBWRWdyZEdSalp5dGlXakpxUmpreFZTdFlOR1U1Y2tWVlNuaHNRMmwxZGpsRWVVUkdZakF2UkdVMUx6Vkxaa1UyU2xoM1QxbFJWelEyWjBGWlUxUjVjR2hxZG5KclRtMXdWV1oxYkRsSlVGRnNSbUZZVmxweGJVMDJXRGcxZVhKYWIxWlpWVTVuYzJ0eldUTm9WMmRUUzFGNFJUTjNVM2xqV0hsblltSnpaMmMzYlhSeWFXWTBZM0I2YlhKRVRXUXdMM0JaVjB0TFVrWTNVazVWVW5scVZ6VTVWR3B6S3pkQ2JGVldVMHRyTjIxblRqRkJWbmw0ZEhWb2FpdEJiVWd2TVcwM2FYa3JRa3RPTHk5dk5rVkNZWGhrVERCUFdsazFiazFoT0RaTk9VOWlkMjV6T0RsQ1NqRnlhMFl2ZFRoS1JYaDBSVFp1TlN0WmIyTmpkemhxYVdGSlZuTkVNVEp3YVdWaFNXZ3ZkRWd5VDBsMlkzRnRiRmhGWjJSNWEwcE1Ua2R3VldReU1qaG9XVTltZGsxT0swSlFRVE41YjJOUU1qUm1TMWRJV1hwVlNrTTFRelp4V2sxVlRYTkVVbGRqYW5aUVZqQkdORTE2Y0ZJellXMUVNUzgwVjBKbVduSlVMMEpoWVRGcVRWTnhielVyUW1sbmJtMUZZaXMwYzNsalRVcDRUSEUxZHpKWGJFMUdZVEZyVWtOd01uVTFMelpZZDNWSFdURjBRa1EwVURablZtZHpUWHBaZGtsUVUyZG9lVmx6YlRZM1QxWk9VVTByTkdKRlNHZEZWbGxYT1hGb01UZFFVbkF2V0VaTVNDdGFZMDVHYVZsNlJFWmFTa0pYWldaR1JtcEJiSEp0T0dSclJXdEVTazVDVkd4M2VDdElhWFpvZW0wMk5UVnhhRWhVVVU1a1Z6WldNM2sxTlVkSFNrNXdXR3hYSzJ0clVGWTNiREJKVW1OSVp6TXZUbE15UmxoQloydFlSRE5EVjBwUk1WSmFSbEZ4V1dsSFZXbzVjU3QzVUhJM2FpczBlWFl5WjJjMU9IQnZNV3RhV1dSR09URlZLM0prYWpKME1ESmpTMEk1V1dwRlVtUjZRV2hQYm1ZMVdrNXJWV1ZQYUdaVlEweFNlbTlpY1RWTmVGSnhXSEU1YldWVGVGZGtOV1p1U3pKaVRYcGlWRGxrUkRCRlNHMHhOWFpMYUdGSVZWTkNRWFJvSzBaNGFVTTNRMVZtUlhvNFZuTnZSMUF4U1RaMkwwVXlSMjU0YkRFdlNqaExjSFZQYnprMFFtaG5Ra3g2U0VVMlZEQndaa2h0ZEdodGJIcG5ibkJhV1RSWlRIQmxSVlp4VWpjMGN6RnNWMk5YTUdWRWJXOUJLMWxWWTFWTWEzQXhTMHd5WkZGWGFHZzVOVTVLVVhZeU1VdFlUVTFVZERBeFVXUTBTMVJVWmt0SFNHcE5XRVZhUzFFOVBRLnJNQlh6VXloNEtxajcyNEZmcFoycVRQVnRibVpncEdlM19JRzR5c3NVcW5jbGpfWEpKRS15b3BvT1QzcGgtVUhXZVV5ajZWZF90T0NxeGtMTG9mMGFR" />
+                                    <input type="hidden" name="_eventId" value="submit" />
+                                    <input class="btn_login" accesskey="l" tabindex="4" type="submit" value='登录' />
+                                </div>
+                                <div class="account-oprate clearfix">
+                                    <a href="https://account.chsi.com.cn/account/password!retrive" class="find-mm">找回密码</a>
+                                    <a href="https://account.chsi.com.cn/account/preregister.action?from=yz-home" class="regist-btn">注册</a>
+                                </div>
+                                <div class="wx-container">
+                                    <div class="wx-container-title">其他登录方式</div>
+                                    
+                                        
+                                            <div class="wx-container-box wx">
+                                                <a href="https://open.weixin.qq.com/connect/qrconnect?appid=wx48c86c599b9add59&redirect_uri=https%3A%2F%2Faccount.chsi.com.cn%2Fpassport%2Flogin%3Fclient_name%3Dwechat&response_type=code&scope=snsapi_login&state=TfC4QJlPYW#wechat_redirect">
+                                                    <span class="wx-icon"></span>
+                                                </a>
+                                                
+
+<div class="wx-tip-dialog">
+    <p><strong>微信登录仅支持个人用户使用</strong></p>
+    <p>1、已有学信网账号？点击“微信登录”扫码登录；登录并绑定学信网账号，以后可使用微信扫码直接登录至该账号；</p>
+    <p>2、无学信网账号？可先注册学信网账号，然后再使用“微信登录”。</p>
+    <div class="wx-tip-arrow"></div>
+</div>
+<script>
+	//鼠标移入显示微信登录弹框
+    $(".wx-login-box").mouseover(function (){
+        $(".wx-tip-dialog").fadeIn();
+    });
+    $(".wx-login-box").mouseout(function (){
+        $(".wx-tip-dialog").fadeOut();
+    });
+</script>
+                                            </div>
+                                        
+                                        
+                                    
+                                    
+                                        
+                                            <div class="wx-container-box zfb">
+                                                <a href="https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?app_id=2018120362389757&redirect_uri=https%3A%2F%2Faccount.chsi.com.cn%2Fpassport%2Flogin%3Fclient_name%3Dalipay&state=AZyMOoXs6I&scope=auth_user">
+                                                    <span class="zfb-icon"></span>
+                                                </a>
+                                                
+
+<div class="zfb-tip-dialog">
+    <p><strong>支付宝登录仅支持个人用户使用</strong></p>
+    <p>1、已有学信网账号？点击“支付宝登录”扫码登录；登录并绑定学信网账号，以后可使用支付宝扫码直接登录至该账号；</p>
+    <p>2、无学信网账号？可先注册学信网账号，然后再使用“支付宝登录”。</p>
+    <div class="wx-tip-arrow"></div>
+</div>
+<script>
+	//鼠标移入显示微信登录弹框
+    $(".zfb-login-box").mouseover(function (){
+        $(".zfb-tip-dialog").fadeIn();
+    });
+    $(".zfb-login-box").mouseout(function (){
+        $(".zfb-tip-dialog").fadeOut();
+    });
+</script>
+                                            </div>
+                                        
+                                        
+                                    
+                                </div>
+                            <div>
+</div></form>
+                        </div>
+                    
+                
+            </div>
+        </div>
+        <div class="login-footer-other">
+            <a href="https://yz.chsi.com.cn/" target="_blank">首页</a>
+            <a href="https://yz.chsi.com.cn/help/" target="_blank">帮助中心</a>
+            <a href="https://www.chsi.com.cn/about/contact.shtml" target="_blank">联系我们</a>
+        </div>
+        <div class="login-footer">
+            <div class="login-footer-item">
+                
+
+Copyright &copy; 2003-2026&ensp;<a href="https://www.chsi.com.cn/" target="_blank">学信网</a>&ensp;All Rights Reserved
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    $(function () {
+        $("#username").attr("placeholder", '账号');
+        $("#password").attr("placeholder", '密码');
+        $("#tipClose").click(function(){
+            $(".uk_box").hide();
+        })
+    });
+</script>
+</body>
+</html>

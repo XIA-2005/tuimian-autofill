@@ -206,6 +206,24 @@ export const SCHOOL_ADAPTER_PACKAGES: SchoolAdapterPackage[] = [
     { mode: 'session', readOnlyPaths: ['/Open/RecruitTkssTmYbm/ExamineeEditTmYbm.aspx', '/Open/RecruitTkssTmYbm/ExamineeEditTmYbm1.aspx', '/Open/RecruitTkssTmYbm/ExamineeEditTmYbm2.aspx', '/Open/RecruitTkssTmYbm/ExamineeEditTmYbm3.aspx', '/Open/RecruitTkssTmYbm/ExamineeEditTmYbm4.aspx', '/Open/RecruitTkssTmYbm/ExamineeEditTmYbm5.aspx'], pageOrder: ['apply'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' }),
   ),
   pkg('minimal-njust-xly', '南京理工大学', '夏令营', 'minimal', ['202.119.85.163'], ['/Open/ZsTkssXly/*'], [{ ...page('apply', '夏令营报名信息', 'form', ['/Open/ZsTkssXly/*']), fields: minimalSchoolMajorFields }], { mode: 'guided', pageOrder: ['apply'], blockPathPatterns: FORM_SHELL_BLOCKS }),
+  // 北京师范大学推免（xly.bnu.edu.cn/tm）：miniui 框架 + buttonedit picker，登录后 iframe 弹窗
+  pkg(
+    'minimal-bnu-tm', '北京师范大学', '预推免', 'minimal', ['xly.bnu.edu.cn'], ['/tm/*'],
+    [
+      page('login', '登录页', 'shell', ['/tm', '/tm/', '/tm/index']),
+      { ...page('register', '注册', 'shell', ['/tm/account/register', '/tm#join']),
+        forbiddenSelectors: ['input[type="file"]'],
+        validationErrorSelectors: ['label.error', 'span.error'] },
+      { ...page('apply', '预推免报名', 'form', ['/tm/www/tm/*/Examinee*', '/tm/www/tm/*/uform*', '/tm/uform*']),
+        // miniui 框架：buttonedit 弹窗 + select-text 输入框（display=in-block）
+        fields: [
+          { profilePath: 'education.university', labels: ['毕业院校', '本科毕业院校', '毕业学校'], selectors: ['input.mini-buttonedit-input[name*="school" i]', 'input.mini-buttonedit-input[name*="byxx" i]', 'input.mini-buttonedit-input[name*="bydw" i]'], driver: 'school-picker', codeSelectors: ['input.mini-buttonedit-input[name*="schoolcode" i]', 'input.mini-buttonedit-input[name*="dwm" i]'], nameSelectors: ['input.mini-buttonedit-input[name*="school" i]', 'input.mini-buttonedit-input[name*="byxx" i]'], codeNamespace: 'moe.school', picker: { protocol: 'minimal', triggerSelectors: ['.mini-buttonedit-button', 'span.mini-buttonedit-button', 'span.mini-buttonedit-trigger'], frameNames: ['miniui', 'lookup', 'lookupWin'], frameSrcPatterns: ['*lookup*', '*select*', '*school*'], searchInputSelectors: ['input[type="text"]', 'input.mini-buttonedit-input'], queryButtonSelectors: ['a.mini-button', 'input[type="button"]', 'a[onclick*="search" i]'], resultRowSelectors: ['table tr', '.mini-grid-row'], chooseSelectors: ['a.mini-button', 'input[type="button"]', 'a[onclick*="select" i]'] } },
+          { profilePath: 'education.major', labels: ['本科专业', '毕业专业', '所学专业'], selectors: ['input.mini-buttonedit-input[name*="major" i]', 'input.mini-buttonedit-input[name*="zy" i]'], driver: 'major-picker', codeSelectors: ['input.mini-buttonedit-input[name*="majorcode" i]', 'input.mini-buttonedit-input[name*="zydm" i]'], nameSelectors: ['input.mini-buttonedit-input[name*="major" i]', 'input.mini-buttonedit-input[name*="zy" i]'], codeNamespace: 'moe.major', picker: { protocol: 'minimal', triggerSelectors: ['.mini-buttonedit-button', 'span.mini-buttonedit-button'], frameNames: ['miniui', 'lookup'], frameSrcPatterns: ['*lookup*', '*select*', '*major*'], searchInputSelectors: ['input[type="text"]', 'input.mini-buttonedit-input'], queryButtonSelectors: ['a.mini-button', 'input[type="button"]', 'a[onclick*="search" i]'], resultRowSelectors: ['table tr', '.mini-grid-row'], chooseSelectors: ['a.mini-button', 'input[type="button"]', 'a[onclick*="select" i]'] } },
+          ...commonSchoolMajorDateFields().filter((field) => !['education.university', 'education.major'].includes(field.profilePath || '')),
+        ] },
+    ],
+    { mode: 'session', blockPathPatterns: ['/tm/account/register', '/tm/core/login/*', '/tm/core/api/authcode*', ...FORM_SHELL_BLOCKS], pageOrder: ['apply'], readOnlyPaths: ['/tm/core/login/DoLogin/tm_user', '/tm/www/tm/xs/dosignup', '/tm/www/tm/xs/dofindpwd'] }, exp({ sessionCrawl: 'experimental' }),
+  ),
   pkg(
     'hfut-blue-tm', '合肥工业大学', '推免报名', 'blue', ['yzbm.hfut.edu.cn'], ['/sstm/*'],
     [{
@@ -405,6 +423,16 @@ export const SCHOOL_ADAPTER_PACKAGES: SchoolAdapterPackage[] = [
   pkg('jnu-gsapp', '暨南大学', '预推免', 'cover', ['yjsxt.jnu.edu.cn'], ['*/gsapp/*'], [{ ...page('form', '填报页面', 'form', ['*entrance*', '*apply*', '*info*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
   pkg('gzhu-gsapp', '广州大学', '预推免', 'cover', ['yjsyxt.gzhu.edu.cn'], ['*/gsapp/*'], [{ ...page('form', '填报页面', 'form', ['*entrance*', '*apply*', '*info*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
   pkg('whu-gsapp', '武汉大学', '预推免', 'cover', ['yz.whu.edu.cn', 'ehall.whu.edu.cn'], ['*'], [{ ...page('form', '填报页面', 'form', ['*entrance*', '*apply*', '*info*']), fields: commonSchoolMajorDateFields() }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
+  // 东北大学预推免：tpass 登录 + gsapp 推免服务（独立自建，参考真实抓取 yjs.neu.edu.cn）
+  pkg(
+    'gsapp-neu', '东北大学', '预推免', 'cover', ['yjs.neu.edu.cn'], ['*/gsapp/*', '*/yjsemaphome/*'],
+    [
+      page('login', '统一身份认证', 'shell', ['/tpass/*'], ['input[name="un"]', 'input[name="pd"]', 'img[src*="/tpass/code"]']),
+      { ...page('form', '推免报名信息', 'form', ['*entrance*', '*apply*', '*info*']), fields: commonSchoolMajorDateFields() },
+    ],
+    { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: [...FORM_SHELL_BLOCKS, '/tpass/login', '/tpass/code'] }, exp({ sessionCrawl: 'experimental' }),
+  ),
+  // 北京师范大学推免（独立适配 bnu-tm 入口已存在，这里加 NEU-style gsapp 通用兜底）
   pkg('ucas-tms', '中国科学院大学', '推免', 'other', ['zhaosheng.ucas.ac.cn'], ['*/sign_up/*', '*/TMS/*'], [{ ...page('form', '报名信息', 'form', ['*']), fields: commonSchoolMajorDateFields() }], { mode: 'session', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
   pkg('sysu-enroll', '中山大学', '预推免', 'jingzhi', ['enroll.sysu.edu.cn'], ['*/yjszs/plugins/*'], [{ ...page('form', '报名信息', 'form', ['*entrance*']), fields: commonSchoolMajorDateFields('element') }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),
   pkg('nwafu-yjszs', '西北农林科技大学', '预推免', 'jingzhi', ['yjszs.nwafu.edu.cn', 'yjszs.nwsuaf.edu.cn'], ['*/yjszs/plugins/*'], [{ ...page('form', '报名信息', 'form', ['*entrance*']), fields: commonSchoolMajorDateFields('element') }], { mode: 'plugin', pageOrder: ['form'], blockPathPatterns: FORM_SHELL_BLOCKS }, exp({ sessionCrawl: 'experimental' })),

@@ -15,7 +15,7 @@ interface Aggregation {
 const pending = new Map<number, Aggregation>();
 
 function sumStats(frames: Record<number, FillStats>): FillStats {
-  const s: FillStats = { total: 0, filled: 0, skipped: 0, noMatch: 0, profileEmpty: 0, failed: 0, picker: 0 };
+  const s: FillStats = { total: 0, filled: 0, skipped: 0, noMatch: 0, profileEmpty: 0, failed: 0, picker: 0, pickerResumeCount: 0 };
   for (const f of Object.values(frames)) {
     s.total += f.total;
     s.filled += f.filled;
@@ -24,6 +24,7 @@ function sumStats(frames: Record<number, FillStats>): FillStats {
     s.profileEmpty += f.profileEmpty;
     s.failed += f.failed;
     s.picker += f.picker;
+    s.pickerResumeCount += f.pickerResumeCount || 0;
   }
   return s;
 }

@@ -19,5 +19,8 @@
     "jsdom": "latest",
     "playwright": "^1.62.1",
     "typescript": "latest"
+  },
+  "dependencies": {
+    "tesseract.js": "^7.0.0"
   }
 }

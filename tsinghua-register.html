@@ -1,0 +1,433 @@
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>中国（境内）学生</title> 
+		<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	    <link rel="stylesheet" href="/static/login/build/css/bootstrap.css">
+	    <link rel="stylesheet" href="/static/login/fontawesome/css/all.css">
+	    <link rel="stylesheet" href="/static/login/css/style.css">
+	    <link rel="stylesheet" href="/static/login/css/com.css">
+	    <script src="/static/jquery/jquery.min.js"></script>
+		<script src="/static/jquery-plugins/jquery.form.js"></script>
+		<script src="/static/jquery-validation/1.16/jquery.validate.min.js"></script>
+		<script src="/static/jquery-validation/1.16/localization/messages_zh_CN.js"></script>
+		<script src="/static/jquery-validation/1.16/jquery.validate.extend.js?1.0"></script>
+		<script src="/static/login/js/com.js"></script>
+		<script src="/static/login/js/register.js?1.0.0"></script>
+		<script src="/static/layer/3.1/layer.js"></script>
+	    <style type="text/css">
+		.form-control{display:inline;width:65%}.col-xl-6{max-width:60%}.col-9{max-width:50%}.error{color:#dc3545}.nr{margin-left:6%;margin-bottom:1px}
+		.checkbox-size {width: 1rem;height: 1rem;}.not-allowed {cursor: not-allowed;}
+	</style>
+	<script>
+	(function($) {
+		$(document).ready(function() {
+			$('#pwd').keyup(function() {pwCheck(this);});
+			$('a#timeBtn').hide();
+			$('#registerForm').validate({
+				rules: {
+					account: {
+						required: true,
+						email: true,
+						maxlength: 40
+					},
+					pwd: {
+						required: true,
+						minlength: 8,
+						maxlength: 20,
+						pwdEnough: true,
+						pwdWeak: true
+					},
+					pwd2: {
+						required: true,
+						equalTo: "#pwd"
+					},
+					identityType: {
+						required: true,
+					},
+					identityNumber: {
+						required: true,
+						idcard: true
+					},
+					identityNumber2: {
+						required: true,
+						equalTo: "#identityNumber"
+					},
+					name: {
+						required: true,
+						maxlength: 20
+					}
+				},
+				messages: {
+					account: {
+						required: "请输入邮箱",
+						email: "请输入一个正确的邮箱",
+						maxlength: "邮箱长度不能大于40"
+					},
+					pwd: {
+						required: "请输入密码",
+						minlength: "密码长度不能小于8",
+						maxlength: "密码长度不能大于20"
+					},
+					pwd2: {
+						required: "请再次输入密码",
+						equalTo: "两次密码输入不一致"
+					},
+					identityType: {
+						required: "请选择证件类型",
+					},
+					identityNumber: {
+						required: "请输入证件号码",
+						idcard: "请输入正确的证件号码"
+					},
+					identityNumber2: {
+						required: "请再次输入证件号码",
+						equalTo: "两次证件号码输入不一致"
+					},
+					name: {
+						required: "请输入姓名",
+						maxlength: "长度不能大于20"
+					}
+				},
+				errorPlacement: function(error, element) {
+					error.appendTo(element.parent())
+				},
+				errorElement: "small",
+				errorClass: "error",
+				submitHandler: function(form) {
+					$(form).ajaxSubmit({
+						beforeSubmit: function() {
+							if (check()) {
+								return true;
+							}
+			    			return false;
+		    			},
+						success: function(webResult) {
+							switch (webResult.code) {
+							case 200:
+								// 跳转到注册成功页面
+								window.location.href = '/account/ndzs/register/success';
+								break;
+							case 400:
+								$('#tipInfo').html('验证码错误。');
+								break;
+							case 602:
+								$('#tipInfo').html('该邮箱已被注册。');
+								break;
+							case 603:
+								$('#tipInfo').html('该证件号码已存在。');
+								break;
+							case 605:
+								$('#tipInfo').html('请使用接收验证码邮箱进行注册。');
+								break;
+							case 607:
+								$('#tipInfo').html('系统发生异常，请稍后再试。');
+								break;
+							case 615:
+								$('#tipInfo').html('验证码已失效，请重新获取验证码。');
+								break;
+							default:
+							}
+						}
+					})
+				}
+			});
+			$('button#backBtn').click(function() {
+				window.location.href = '/ndLogin'
+			});
+			var countdown = 60;
+
+			function settime(obj) {
+				if (countdown === 0) {
+					obj.hide();
+					$('a#captchaBtn').show();
+					countdown = 60;
+					return
+				} else {
+					obj.removeAttr("href");
+					obj.html("重新发送(" + countdown + "s)");
+					countdown--
+				}
+				setTimeout(function() {
+					settime(obj)
+				}, 1000)
+			}
+			$('a#captchaBtn').click(function() {
+				$('#validateErrorInfo').html('');
+				if (!$('form#registerForm').valid()) {
+					return false;
+				}
+				
+				layer.open({
+					type: 2,
+					title: "请输入图片验证码",
+					area: ['400px','250px'],
+					shadeClose: false,
+					maxmin: false,
+					closeBtn: false,
+					content: '/account/register/imageCaptcha',
+					btn: ['确定','关闭'],
+					btnAlign: 'c',
+					yes: function(index, layero) {
+						// 获取iframe中的页面body
+						var body = layer.getChildFrame('body', index);
+					    var iframeWin = window[layero.find('iframe')[0]['name']]; //得到iframe页的窗口对象，执行iframe页的方法：iframeWin.method();
+					    var imageCaptcha = body.find("#imageCaptcha").val(); // 得到iframe中页面的图片验证码的值
+					    
+					    if (imageCaptcha== '') {
+					    	layer.msg('图片验证码不能为空');
+					    	return false;
+					    }
+					    
+					    $('#imageCaptcha').val(imageCaptcha); // 在当前页面设置从iframe页内获取到的图片验证码
+					    
+					    $('form#registerForm').ajaxSubmit({
+							url: '/account/ndzs/register/captcha',
+							beforeSubmit: function() {
+								if ($('form#registerForm').valid()) {
+									showLoading();
+									return true
+								}
+								return false
+							},
+							success: function(webResult) {
+								removeLoading();
+								switch (webResult.code) {
+								case 200:
+									$('#tipInfo').html('发送成功，请在5分钟内完成注册。');
+									$('a#captchaBtn').hide();
+									$('a#timeBtn').show();
+									var obj = $('a#timeBtn');
+									settime(obj);
+									break;
+								case 400:
+									$('#tipInfo').html('图片验证码错误。');
+									break;
+								case 601:
+									$('#tipInfo').html('获取验证码过于频繁，请稍后再试。');
+									break;
+								case 602:
+									$('#tipInfo').html('该邮箱已被注册。');
+									break;
+								case 603:
+									$('#tipInfo').html('该证件号码已存在。');
+									break;
+								case 604:
+									$('#tipInfo').html('系统发生异常，请稍后再试。');
+									break;
+								default:
+								}
+							}
+						})
+					}
+				});
+				
+			});
+			
+			initBtn();
+			
+			$('#agreeBtn').click(function() {
+				initBtn();
+			});
+			
+			function initBtn() {
+		  		if($('#agreeBtn').is(':checked') == true) {
+		  			$('#submitBtn').removeAttr('disabled').removeClass('not-allowed');
+		  		} else {
+		  			$('#submitBtn').attr('disabled', 'disabled').addClass('not-allowed');
+		  		}
+		  	}
+			
+			function check() {
+				return $('#agreeBtn').is(':checked');
+			}
+			
+			$('#identityType').change(function() {
+				$('#identityNumber').rules('remove');
+				var val = $(this).val();
+				if (val == '') {
+					$('#identityNumberHelp').html('');
+				} else if ($(this).val() == '01') {
+					$('#identityNumberHelp').html('若最后一位为X，请大写');
+					$('#identityNumber').rules('add', {required: true,idcard: true,messages:{required: "请输入证件号码",idcard: "请输入正确的证件号码"}});
+				} else {
+					$('#identityNumberHelp').html('字母请使用大写字母，括号请使用英文括号');
+					$('#identityNumber').rules('add', {required: true,sfzh: true,messages:{required: "请输入证件号码",sfzh: "请输入正确的证件号码"}});
+				}
+			});
+			
+		})
+	})(jQuery);
+	</script>
+	    <style>
+	    	@media (min-width: 1440px){
+			.container {
+			    max-width: 1280px;
+			}
+	    </style>
+	</head>
+	<body>
+    	<!--header-->
+	    <div class="header">
+	        <div class="container">
+	            <div class="row">
+	                <div class="col">
+	                    <div class="logo">
+	                        <img src="/static/login/images/logo.png" alt="">
+	                    </div>
+	                </div>
+	                <div class="col">
+	                    <div class="d-flex justify-content-end align-items-center h-100">
+	                        <a href="/publish/infors" target="_blank" rel="noopener">招生信息平台</a>
+	                        <a href="/publish/infors/cjwt/zhxg" target="_blank" rel="noopener">常见问题</a>
+	                    </div>
+	                </div>
+	            </div>
+	        </div>
+	    </div>
+		<div class="detail-container">
+			<!--主内容-->
+    <div class="container mt-5 mb-5">
+        <div class="row flex-column align-items-center">
+            <div class="col-12" style="flex: none !important;">
+                <h4 class="text-center p-2 mb-3">新用户注册</h4>
+                <hr class="mt-1 mb-1">
+                <div class="alert alert-secondary" role="alert">
+                    重要提示：<br><p class="nr">1、请填写个人真实有效信息，注册成功后，邮箱及证件号码不能修改。</p>
+					<p class="nr">2、请确保邮箱能正常使用，系统将发送验证码到该邮箱。</p>
+					<p class="nr">3、每个邮箱、证件号码只能注册一次且区分大小写，请谨慎填写。</p>
+					<p class="nr">4、请妥善保存注册信息。</p>
+                </div>
+                <hr class="mt-1 mb-1">
+            </div>
+            <div class="col-12 col-sm-11 col-md-10 col-lg-8 col-xl-6 mt-5" style="margin-left: 10%;flex: none !important;">
+                <form id="registerForm" action="/account/ndzs/register/save" method="post">
+                	<input id="imageCaptcha" type="hidden" name="imageCaptcha" >
+                    <div class="form-group row">
+                        <label for="account" class="col-sm-3 col-form-label">邮箱<b class="required">*</b></label>
+                        <div class="col-sm-9">
+                        	<div>
+	                            <input type="email" class="form-control" name="account" id="account" placeholder="请输入邮箱" autocomplete="off">
+                        	</div>
+	                        <small class="form-text text-muted">请使用个人常用电子邮箱，不建议使用126、edu后缀邮箱</small>
+                        </div>
+                    </div>
+                    <div class="form-group row" style="margin-bottom: 0">
+                        <label for="pwd" class="col-sm-3 col-form-label">登录密码<b class="required">*</b></label>
+                        <div class="col-sm-9">
+                            <input type="password" class="form-control" name="pwd" id="pwd" placeholder="长度8~20,包含大小写字母数字特殊符号" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="form-group row" id="mmqd" style="margin-bottom: 0;">
+                    	<div class="col-sm-9 offset-md-3" >   
+                        	<div id="pwd-level">
+			                    <div class="pw-bar"></div>
+								<div class="pw-bar-on"></div>
+								<div class="pw-txt">
+									<span>弱</span>
+									<span>中</span>
+									<span>强</span>
+								</div>
+		                    </div>      
+						</div> 
+                    </div>
+                    <div class="form-group row" style="margin-top: 2%">
+                        <label for="pwd2" class="col-sm-3 col-form-label">确认密码<b class="required">*</b></label>
+                        <div class="col-sm-9">
+                            <input type="password" class="form-control " name="pwd2" id="pwd2" equalTo="#pwd" placeholder="请再次输入密码" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="form-group row">
+                        <label class="col-sm-3 col-form-label">证件类型<b class="required">*</b></label>
+                        <div class="col-sm-9" style="margin-top:1%">
+                        	<select name="identityType" id="identityType" class="form-control required">
+                                <option value="">--请选择--</option>
+                                
+                                	<option value="01">二代居民身份证</option>
+                                
+                                	<option value="02">香港永久性居民身份证</option>
+                                
+                                	<option value="03">澳门永久性居民身份证</option>
+                                
+                                	<option value="04">台湾居民来往大陆通行证/台湾居民居住证</option>
+                                
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group row">
+                        <label for="identityNumber" class="col-sm-3 col-form-label">证件号码<b class="required">*</b></label>
+                        <div class="col-sm-9">
+                        	<div>
+	                            <input type="text" class="form-control" name="identityNumber" id="identityNumber" placeholder="请输入证件号码" autocomplete="off">
+                        	</div>
+	                        <small id="identityNumberHelp" class="form-text text-muted"></small>
+                        </div>
+                    </div>
+                    <div class="form-group row">
+                        <label for="identityNumber2" class="col-sm-3 col-form-label">确认证件号码<b class="required">*</b></label>
+                        <div class="col-sm-9">
+                            <input type="text" class="form-control" name="identityNumber2" id="identityNumber2" equalTo="#identityNumber" placeholder="请再次输入证件号码" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="form-group row">
+                        <label for="name" class="col-sm-3 col-form-label">姓名<b class="required">*</b></label>
+                        <div class="col-sm-9">
+                            <input type="text" class="form-control" name="name" id="name" placeholder="请输入姓名" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="form-group row">
+                        <label for="captcha" class="col-sm-3 col-form-label">邮箱验证码<b class="required">*</b></label>
+                        <div class="col-9">
+                            <div class="input-group">
+                                <input type="text" class="form-control" name="captcha" id="captcha" placeholder="请输入邮箱验证码" autocomplete="off">
+                                <div class="input-group-append">
+                                    <a title="点击获取邮箱验证码" href="javascript:void(0);" id="captchaBtn">点击获取</a>
+                                    <a class="" href="javascript:void(0);" id="timeBtn"></a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group row">
+                        <div class="col-sm-9 offset-md-3">
+                            <small id="tipInfo" class="form-text text-red"></small>
+                        </div>
+                    </div>
+                    <div class="form-group row">
+                        <div class="col-sm-9 offset-sm-3">
+                        	<div class="form-group form-check">
+			                      <input id="agreeBtn" type="checkbox" class="form-check-input checkbox-size agree-class">
+			                      <label class="form-check-label">我已阅读并同意<a href="/account/ndzs/agreement" class="text-danger" target="_blank" rel="noopener">《服务协议》</a>和<a href="/account/ndzs/privacy" class="text-danger" target="_blank" rel="noopener">《隐私政策》</a>。</label>
+			                </div>
+                            <button type="submit" id="submitBtn" class="btn btn-primary mt-2">注册</button>
+                            <button type="button" id="backBtn" class="btn btn-primary mt-2 ml-5">返回登录</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+		</div>
+		<!--footer-->
+    	<div id="footer" class="footer footer-black">
+    <div class="container">
+        <div class="footer-logo">
+            <img src="/static/login/images/logo_white.png" alt="">
+        </div>
+    	<p>地址：北京市海淀区 清华大学研究生招生办公室 邮编：100084 电话：010－62782192（内地招生）/62781380（港澳台及国际招生）<br/>
+    	传真：010-62770325 Email：yjszb@mail.tsinghua.edu.cn（内地招生）/grad@tsinghua.edu.cn（港澳台及国际招生）<br><span>Copyright © 2020 All rights reserved. 清华大学 版权所有</span></p>
+    </div>
+</div>
+	</body>
+	<script type="text/javascript">
+		
+	</script>
+</html>

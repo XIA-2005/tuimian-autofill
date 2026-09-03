@@ -2,9 +2,9 @@
 // 不依赖 mock/fixture：所有 URL 都是真实学校系统入口。
 // 运行前需要 build：`node build.mjs`
 
-import { SCHOOL_ADAPTER_PACKAGES, validateAdapterPackage, matchAdapterPackage } from '../src/core/adapter-packages.ts';
-import { SCHOOLS } from '../src/core/schools.ts';
-import { findRetroHonorSlots } from '../src/core/retro-honor-fill.ts';
+import { SCHOOL_ADAPTER_PACKAGES, validateAdapterPackage, matchAdapterPackage } from '../src/core/adapter-packages';
+import { SCHOOLS } from '../src/core/schools';
+import { findRetroHonorSlots } from '../src/core/retro-honor-fill';
 import { JSDOM } from 'jsdom';
 
 let allPass = true;

@@ -1,0 +1,384 @@
+
+
+
+
+
+
+
+
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <!-- 必须的 meta 标签 -->
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+    <link rel="icon" sizes="any" mask href="/favicon.ico">
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+
+    <title>南方科技大学研究生招生报考服务系统</title>
+    
+  </head>
+  
+  
+    <script src="/resource/libs/pintuer/jquery.js"></script>
+    <script src="/resource/libs/pintuer/pintuer.js"></script>
+    <script src="/resource/libs/respond.min.js"></script>
+     <script src="/resource/libs/crypto.js"></script>
+    <!-- Bootstrap 的 CSS 文件 -->
+   <link rel="stylesheet" href="/login/bootstrap-4.6.2-dist/css/bootstrap.min.css">
+    <!-- iconfont -->
+    <link rel="stylesheet" href="/login/font/cube.min.css">
+    <link rel="stylesheet" href="/login/font/iconfont.css">
+
+    <link rel="stylesheet" href="/login/css/system.css">
+    <link rel="stylesheet" href="/login/css/login.css?v=11">
+    
+    
+	
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+  <body>
+    <header>
+        <div class="wal login-header" style="background: url(/login/images/line.png) right center no-repeat;">
+            <div class="logo">
+                <img src="/login/images/logo-name.png" alt=""> 
+                <h2>研究生报考服务系统</h2>
+            </div>
+            <div class="side">
+                <ul>
+                    <li><a href="/"><span class="EvaIcon eva-monitor-fill"></span>首页</a></li> 
+                </ul>
+            </div>
+        </div>
+    </header>
+    <section id="login_wrap" class="index" style="background: url(/login/images/login_banner.png) center no-repeat;">
+        <div class="wal">
+        
+            
+            <div class="login-title" id="login-title-2">
+                <h1 id="login-title-text">硕士统考服务报考服务系统</h1>
+            </div>
+            
+            <div class="login-title" id="login-title-3">
+                <h1 id="login-title-text">博士研究生报考报考服务系统</h1>
+            </div>
+            
+            <div class="login-title" id="login-title-4">
+                <h1 id="login-title-text">全国优秀大学生交流营报考服务系统</h1>
+            </div>
+            
+            <div class="login-title" id="login-title-5">
+                <h1 id="login-title-text">全国优秀大学生推免生预报名报考服务系统</h1>
+            </div>
+            
+            <ul id="login_list" class="list">
+            	
+            	<li>
+                    <a href="#" onclick="bmxm_click(2)" >
+                        <div class="ico">
+                            <img src="/login/images/roles_2.png" alt="">
+                        </div>
+                        <div class="name">硕士统考服务</div>
+                    </a>
+                </li> 
+				
+            	<li>
+                    <a href="#" onclick="bmxm_click(3)" >
+                        <div class="ico">
+                            <img src="/login/images/roles_3.png" alt="">
+                        </div>
+                        <div class="name">博士研究生报考</div>
+                    </a>
+                </li> 
+				
+            	<li>
+                    <a href="#" onclick="bmxm_click(4)" >
+                        <div class="ico">
+                            <img src="/login/images/roles_4.png" alt="">
+                        </div>
+                        <div class="name">全国优秀大学生交流营</div>
+                    </a>
+                </li> 
+				
+            	<li>
+                    <a href="#" onclick="bmxm_click(5)" >
+                        <div class="ico">
+                            <img src="/login/images/roles_5.png" alt="">
+                        </div>
+                        <div class="name">全国优秀大学生推免生预报名</div>
+                    </a>
+                </li> 
+				   
+            </ul>
+        </div>
+    </section>
+    <section id="login_box" class="login_box"> 
+        <div class="wal">
+            <!-- a id="back" class="btn-back"><span class="EvaIcon eva-undo-fill"></span> 返回</a> -->
+            <div class="welcome">
+                <h2>欢迎登录</h2>
+            </div>
+            
+            <div class="tips" id="tips_2" style="display:none;">
+                <p  >系统登录的用户名为考生编号，初始密码为有效居民身份证号码。<br/>居民身份证为18位数字（或最后一位为X），港澳台身份证、护照按证件号码填写。                                                                                                                                                                                              </p>
+            </div>
+            
+            <div class="tips" id="tips_3" style="display:none;">
+                <p  ><p class="desC" val="6" style="">
+ <b class="text-red">用户名：注册生成的报名号；密码：注册填写的密码。</b><br>
+ 由于系统调整，凡之前通过“快响计划预报名”批次注册报名号的考生，请点击“找回用户名”按钮以获取您所注册账号的最新报名号。 <br>
+ </p>                                                                                            </p>
+            </div>
+            
+            <div class="tips" id="tips_4" style="display:none;">
+                <p  ></p>
+            </div>
+            
+            <div class="tips" id="tips_5" style="display:none;">
+                <p  ><p class="desC" val="6" style="">
+ <b class="text-red">用户名：注册生成的报名号；密码：注册填写的密码。</b><br>
+ 凡有意向申请我校推荐免试研究生的考生必须通过“推免生预报名”系统申请报名。考生须如实、准确填写申请信息和上传材料。如提供虚假、错误信息或弄虚作假，考生承担由此造成的一切后果。 <br>
+ 注册过“全国优秀大学生夏令营”项目的考生，在符合报名条件的前提下，需要重新注册“推免生预报名”项目并用新账号登录。
+ </p>                                                                                                                                                                        </p>
+            </div>
+            
+            <div class="login_form">
+                <form action="/logon" method="post" class="form" id="formId">
+                	<input type="hidden" id="kslb" name="kslb" value="-1">
+                    <div class="form-group">
+                        <div class="input-group">
+                            <div class="input-group-prepend">
+                              <div class="input-group-text">
+                                <span class="EvaIcon eva-person-fill"></span>
+                              </div>
+                            </div>
+                            <input  type="text" name="username" id="username" autocomplete="off" class="form-control login_input" placeholder="输入用户名">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="input-group">
+                            <div class="input-group-prepend">
+                              <div class="input-group-text">
+                                <span class="EvaIcon eva-lock-fill"></span>
+                              </div>
+                            </div>
+                            <input type="password" class="form-control login_input" name="password" id="password" placeholder="输入密码" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="input-group">
+                            <div class="input-group-prepend">
+                              <div class="input-group-text">
+                                <span class="EvaIcon eva-shield-fill"></span>
+                              </div>
+                            </div>
+                            <input class="form-control login_input" type="text" class="input" name="validateCode" id="validateCode" placeholder="输入验证码" autocomplete="off">
+                            <div class="input-group-append">
+                                <span class="input-group-text" id="basic-addon2"><a class="input-code" href="javascript:void(0);">
+                                <img id="imageID" title="点击刷新" width="120" height="32" style="padding-left: 20px;" onclick="getImageCode()" src="/captcha/imageCode" />
+                            </a></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" id="errorInfo" style="display: none;color:red">
+                    	
+                    </div>
+                    <div class="form-group">
+                        <button  class="login_btn" type="button" id="loginIt">登 录</button>
+                        
+                        <div class="text-small" id="login_links" >
+                   		<span id="regId" style="display:none"> 还没有账号？<a href="javascript:void(0);" id="redFree">立即注册</a></span>
+                      	<a href="/stu/account/findPassword" class="float-right" id="fpId">忘记密码</a>
+                      	<span class="float-right">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+                      	<a id="regIdf" style="display:none" href="/stu/account/findPassword/findAccount" class="float-right">找回用户名</a>
+                      	 <span>
+                      	 	<br/>
+                      	 	<span id="bsmsg" style="color: red;display: none;">已报考其他批次的考生请点击“立即注册”更换报考批次后报名。</span>
+                      	 </span>
+                    	</div> 
+                    </div>
+                </form>
+            </div>
+        </div>
+    </section>
+    <footer class="footer-fluid">
+        <div class="wal">
+            <span>© 2024 All Rights Reserved. 南方科技大学版权所有</span>
+            <span>地址：广东省深圳市南山区学苑大道1088号南方科技大学南科大中心4楼</span> 
+            <span>邮箱：gradinfo@sustech.edu.cn</span>
+        </div>
+    </footer>
+ 
+    <script> 
+        $("#back").click(() => {
+            $(".login-title").removeClass("active");
+            $(".login-page-title").removeClass("hidden");
+            $("#login_list li").toggleClass("hidden");
+            $("#login_box").toggleClass("active");
+            $("#login_wrap").toggleClass("mcbody");
+        });
+    </script>
+    <script type="text/javascript">
+    /*使用enter登录  */
+    $(document).keydown(function (event) {
+    	if (event.keyCode == 13) {
+    		$("#loginIt").click();
+    	}
+    });
+    
+    $(function(){
+    	
+    }); 
+    function  bmxm_click(id){ 
+    	$("#kslb").val(id);
+        var index = $(this).index();
+        getImageCode();
+        showHint();
+        $(".login-title").removeClass("active");
+        $("#login-title-"+id).addClass("active");
+        $(".login-page-title").addClass("hidden");
+        $("#login_list li").toggleClass("hidden");
+        $("#login_box").toggleClass("active");
+        $("#login_wrap").toggleClass("mcbody"); 
+        $(".tips").css('display','none');
+        $("#tips_"+id).css('display','');
+        if(id == '3'){
+        	$('#bsmsg').css('display','');
+        }else{
+        	$('#bsmsg').css('display','none');
+        }
+    }
+    function Trim(str){ 
+		if(str!=null&&str!=''){
+	  		return str.replace(/(^\s*)|(\s*$)/g, "");
+		}else{
+			return '';
+		}
+	}
+    
+    
+    function IEVersion() {
+        var userAgent = navigator.userAgent; 
+        var isIE = userAgent.indexOf("compatible") > -1 && userAgent.indexOf("MSIE") > -1; //判断是否IE<11浏览器  
+        var isEdge = userAgent.indexOf("Edge") > -1 && !isIE; //判断是否IE的Edge浏览器  
+        var isIE11 = userAgent.indexOf('Trident') > -1 && userAgent.indexOf("rv:11.0") > -1;
+        if(isIE) {
+            var reIE = new RegExp("MSIE (\\d+\\.\\d+);");
+            reIE.test(userAgent);
+            var fIEVersion = parseFloat(RegExp["$1"]);
+            if(fIEVersion == 7) {
+                return 7;
+            } else if(fIEVersion == 8) {
+                return 8;
+            } else if(fIEVersion == 9) {
+                return 9;
+            } else if(fIEVersion == 10) {
+                return 10;
+            } else {
+                return 6;//IE版本<=7
+            }   
+        } else if(isEdge) {
+            return 'edge';//edge
+        } else if(isIE11) {
+            return 11; //IE11  
+        }else{
+            return -1;//不是ie浏览器
+        }
+    } 
+
+	if(IEVersion()!='-1'){
+		$("#login_list").css('padding-top','120px'); 
+		
+	}
+    function getImageCode() {
+		var imageID = document.getElementById("imageID");
+		imageID.src = "/captcha/imageCode?curDate="
+				+ (new Date()).getTime();
+	}
+     
+    
+    jQuery(function($) { 
+    	//if(kslb=='-1'){
+    	//	document.getElementById('bmxz').style.display="none";
+		//}
+    	showHint();
+		if(Trim($("#errorInfo").html())!=''){
+			$("#errorInfo").css('display','')
+		}
+		//initDes();
+		$("#loginIt").click(function(){
+			if($("#kslb").val()==''){
+				$("#errorInfo").html('请选择报名项目');
+				$("#errorInfo").css('display','');
+				//$("#kslb").focus();
+				return;
+			}
+			if(Trim($("#username").val())==''){
+				$("#errorInfo").html('用户名不能为空');
+				$("#errorInfo").css('display','');
+				$("#username").focus();
+				return;
+			}
+			if(Trim($("#password").val())==''){
+				$("#errorInfo").html('密码不能为空');
+				$("#errorInfo").css('display','');
+				$("#password").focus();
+				return;
+			}
+			var pwdVal = $("#password").val();
+			var publicKey="0725@pwdorgopenp";
+			var encrypts = CryptoJS.AES.encrypt(pwdVal, CryptoJS.enc.Utf8.parse(publicKey), {
+			   mode: CryptoJS.mode.ECB,
+			   padding: CryptoJS.pad.Pkcs7
+			  }).toString();
+			$("#password").val(encrypts);
+			$("#formId").submit();
+		});
+  	});
+  	//类别不同显示的东西不同
+   	function showHint(){ 
+  		var kslb=$("#kslb").val();
+   		if(kslb==3||kslb==4||kslb==5||kslb=='6'){
+   			$("#regId").css('display','');
+   			$("#regIdf").css('display','');
+   		}else {
+   			$("#regId").css('display','none');
+   			$("#regIdf").css('display','none');
+   		}
+   		if(kslb==2){
+   			$("#regIdf").css('display','');
+   		} 
+   	}
+	$("#redFree").on('click',function() {
+		window.location.href='/reg/free/'+$("#kslb").val();
+	});
+    <!--大图背景切换--> 
+        const images = [
+            'url(/login/images/bg-02.png)',
+            'url(/login/images/bg-03.png)',
+            'url(/login/images/bg-04.png)',
+            'url(/login/images/bg-05.png)',
+            'url(/login/images/bg-01.png)',
+        ];
+        let currentIndex = 0;
+        function nextBackground() {
+            currentIndex = (currentIndex + 1) % images.length;
+            document.getElementById('login_wrap').style.backgroundImage = images[currentIndex];
+        }
+        // 每隔3秒更换一次背景
+        setInterval(nextBackground, 5000); 
+    </script>
+  </body>
+</html>
+

@@ -1,0 +1,916 @@
+﻿body {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    width: 100%;
+    height: 100%;
+    font-size: 14px;
+    line-height: 1.428;
+    background-color: white;
+}
+
+#corebody * {
+}
+
+.h1 {
+    font-size: 36px;
+}
+
+.h2 {
+    font-size: 30px;
+}
+
+.h3 {
+    font-size: 24px;
+}
+
+.h4 {
+    font-size: 18px;
+}
+
+.h5 {
+    font-size: 14px;
+}
+
+.h6 {
+    font-size: 12px;
+}
+
+.bg-success {
+    background-color: #28a745 !important;
+}
+
+.bg-info {
+    background-color: #17a2b8 !important;
+}
+
+.bg-warning {
+    background-color: #ffc107 !important;
+}
+
+.bg-danger {
+    background-color: #dc3545 !important;
+}
+
+.dd-el-tag {
+    background-color: #e8f4ff;
+    border-color: #d1e9ff;
+    display: inline-block;
+    height: 32px;
+    padding: 0 10px;
+    line-height: 32px;
+    font-size: 12px;
+    color: #1890ff;
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 2.5px;
+    box-sizing: border-box;
+    white-space: nowrap;
+}
+
+.dd-el-tag--small {
+    height: 24px;
+    padding: 0 8px;
+    line-height: 24px;
+}
+
+.dd-el-tag.dd-el-tag--primary {
+}
+
+.dd-el-tag.dd-el-tag--success {
+    background-color: #e7faf0;
+    border-color: #d0f5e0;
+    color: #13ce66;
+}
+
+.dd-el-tag.dd-el-tag--warning {
+    background-color: #fff8e6;
+    border-color: #fff1cc;
+    color: #ffba00;
+}
+
+.dd-el-tag.dd-el-tag--danger {
+    background-color: #ffeded;
+    border-color: #ffdbdc;
+    color: #ff4d4f;
+}
+
+.dd-el-tips {
+    padding: 5px;
+    font-size: 14px;
+    color: #1890ff;
+    background-color: #e8f4ff;
+    border: 1px solid #1890ff;
+    margin: 0px 5px 5px 5px;
+}
+
+    .dd-el-tips i {
+        font-size: 20px;
+    }
+
+.dd-el-alert {
+    width: 100%;
+    padding: 8px 16px;
+    margin: 0;
+    box-sizing: border-box;
+    border-radius: 2.5px;
+    position: relative;
+    background-color: #fff;
+    overflow: hidden;
+    opacity: 1;
+    display: flex;
+    align-items: center;
+    transition: opacity .2s;
+}
+
+    .dd-el-alert.dd-el-alert--success {
+        color: #ff4d4f;
+        background-color: #ffeded;
+        border: 1px solid #ff4d4f;
+    }
+
+    .dd-el-alert.dd-el-alert--info {
+        color: #1890ff;
+        background-color: #e8f4ff;
+        border: 1px solid #1890ff;
+    }
+
+    .dd-el-alert.dd-el-alert--warning {
+        color: #ffba00;
+        background-color: #fff8e6;
+        border: 1px solid #ffba00;
+    }
+
+    .dd-el-alert.dd-el-alert--danger {
+        color: #ff4d4f;
+        background-color: #ffeded;
+        border: 1px solid #ff4d4f;
+    }
+
+.dd-fc-rate-item {
+    margin-right: 5px;
+    cursor: pointer;
+}
+
+.dd-fc-sort-item {
+    margin: 5px 0px;
+    cursor: pointer;
+}
+
+    .dd-fc-sort-item .idx {
+        border: 1px solid gray;
+        width: 20px;
+        height: 20px;
+        line-height: 20px;
+        display: inline-block;
+        text-align: center;
+        margin-right: 8px;
+        float: left;
+    }
+
+    .dd-fc-sort-item .text {
+        display: inline-block;
+        float: left;
+        width: calc(100% - 30px);
+    }
+
+.dd-fc-baidu-address input {
+    height: 40px;
+    line-height: 40px;
+    width: 100%;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding-left: 15px;
+}
+
+.dd-fc-baidu-address img {
+    margin-top: 10px;
+}
+
+.core-uform-newdbfile .dd-element-body .dd-kindeditor-filedialog-button-preview, .core-cms-foldnew .dd-element-body .dd-kindeditor-filedialog-button-preview {
+    display: none !important;
+}
+
+.dd-fc-iframe {
+    width: 100%;
+}
+
+.dd-gridbutton, .dd-button, .dd-cfmbtn {
+}
+
+body.core-uform-datagrid, body.core-uform-fsmgrid, body.core-uform-treegrid, body.core-uform-gridmove {
+    overflow: hidden;
+}
+
+.dd-datagrid-panel .mini-toolbar .mini-button, .dd-datagrid-panel .mini-toolbar .dd-gridbutton-basic-quicksearch {
+    margin-top: 3px;
+}
+
+.core-uform-fsmgrid .dd-datagrid-header {
+    padding-left: 12px;
+}
+
+.dd-datagrid-panel .dd-datagrid-header, .dd-treegrid-panel .dd-datagrid-header {
+    border-bottom: 1px solid #ebeef5;
+    padding-left: 12px;
+}
+
+body .mini-grid .mini-grid-cell-error {
+    background-color: rgb(242,222,223);
+}
+
+.dd-datagrid-tips-only {
+    border: none;
+}
+
+.dd-datagrid-panel .dd-datagrid-tips-only {
+    margin-bottom: 0px;
+}
+
+.dd-frame-out .dd-datagrid-tips-only {
+    margin-left: 0px;
+    margin-right: 0px;
+    padding-left: 14px;
+    padding-right: 5px;
+}
+
+.dd-fsmgrid-panel .mini-tabs-header {
+    margin-left: 8px;
+}
+
+.dd-fsmgrid-panel .mini-tab-total, .dd-gridtab-panel .mini-tab-total {
+    display: inline-block;
+    min-width: 15px;
+    padding: 3px 7px;
+    font-size: 10px !important;
+    font-weight: 300;
+    line-height: 1;
+    color: #fff;
+    vertical-align: middle;
+    text-align: center;
+    white-space: nowrap;
+    background-color: #888;
+    border-radius: 10px;
+    margin-left: -4px;
+}
+
+.dd-datagrid-header {
+    line-height: 36px;
+    font-size: 18px;
+    padding: 5px 0px;
+}
+
+.dd-datagrid-header-buttons {
+    display: inline-block;
+    float: right;
+    margin-right: 8px;    
+}
+
+    .dd-datagrid-header-buttons .mini-button .mini-button-icon-only {
+        margin-right: 8px;
+    }
+
+.dd-datagrid-header .dd-datagrid-tips {
+    margin: 0 10px;
+    overflow: hidden;
+    max-width: 500px;
+    vertical-align: bottom;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+
+.core-uform-modify .dd-form-footer a[target=_audit]{
+    display: none;
+}
+
+.dd-datagrid-panel, .dd-gridmove-panel {
+    overflow: hidden !important;
+}
+
+    .dd-datagrid-panel .dd-datagrid-quicksearch
+    {
+        padding: 5px 0px;
+    }
+
+    .dd-datagrid-panel .dd-datagrid-status {
+        display: none;
+    }
+
+    .dd-datagrid-panel.rh-xs .mini-grid-cell-inner {
+        padding-top: 0px;
+        padding-bottom: 0px;
+        font-size: 13px;
+        line-height: 20px;
+    }
+
+    .dd-datagrid-panel.rh-s .mini-grid-cell-inner {
+        padding-top: 0px;
+        padding-bottom: 0px;
+        line-height: 25px;
+    }
+
+    .dd-datagrid-panel.rh-m .mini-grid-cell-inner {
+        padding-top: 0px;
+        padding-bottom: 0px;
+        line-height: 30px;
+    }
+
+    .dd-datagrid-panel .dd-datagrid-report-title {
+        text-align: center;
+        font-size: 20px;
+        font-weight: bold;
+    }
+
+    .dd-datagrid-panel .dd-datagrid-report-by {
+        padding: 5px 0px;
+    }
+
+    .dd-datagrid-panel .dd-datagrid-report-footer {
+        padding: 5px 0px;
+    }
+
+    .dd-datagrid-panel.rh-l .mini-grid-cell-inner {
+        padding-top: 0px;
+        padding-bottom: 0px;
+        line-height: 35px;
+    }
+
+    .dd-datagrid-panel .dd-datagrid-body{
+        overflow: hidden;
+        padding-bottom: 1px;
+    }
+
+    .dd-datagrid-panel.rh-xl .mini-grid-cell-inner {
+        padding-top: 0px;
+        padding-bottom: 0px;
+        line-height: 40px;
+    }
+
+    .dd-datagrid-panel .mini-grid-rowEdit td.mini-grid-cellEdit {
+        padding: 0px 5px;
+    }
+
+    .dd-datagrid-panel .mini-grid-cell a {
+        text-decoration: none;
+        color: #0063C8;
+    }
+
+        .dd-datagrid-panel .mini-grid-cell a.dd-gridbutton, .dd-datagrid-panel .mini-grid-cell a.dd-rowbutton {
+            cursor: pointer;
+            margin-right: 10px;
+        }
+
+    .dd-datagrid-panel .progressbar {
+        position: relative;
+        background: #ccc;
+        width: 100%;
+        height: 16px;
+        overflow: hidden;
+    }
+
+        .dd-datagrid-panel .progressbar .progressbar-percent {
+            position: absolute;
+            height: 18px;
+            background: blue;
+            left: 0;
+            top: 0px;
+            overflow: hidden;
+            z-index: 1;
+        }
+
+        .dd-datagrid-panel .progressbar .progressbar-label {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            font-size: 13px;
+            color: White;
+            z-index: 10;
+            text-align: center;
+            height: 16px;
+            line-height: 16px;
+        }
+
+.dd-element-body span.mini-textbox, .dd-element-body span.mini-buttonedit {
+    height: 26px;
+    line-height: 26px;
+}
+
+.dd-element-body span.mini-buttonedit-border, .dd-element-body span.mini-textbox-border {
+    height: 24px;
+    line-height: 24px;
+    border: 1px solid gray;
+}
+
+.dd-element-body input.mini-textbox-input, .dd-element-body input.mini-buttonedit-input {
+    line-height: 24px;
+    height: 24px;
+    vertical-align: central;
+}
+
+.dd-element-body span.mini-textarea span.mini-textbox-border {
+    height: auto;
+}
+
+.dd-element-body textarea {
+    line-height: 1.5em;
+}
+
+.dd-element-body {
+    font-size: 14px;
+}
+
+
+.dd-form {
+    background-color: white;
+    font-size: 14px;
+    margin-right: 10px;
+    padding-bottom: 50px;
+}
+
+    .dd-form.detail .mini-textbox-input {
+    }
+
+    .dd-form .dd-form-header {
+        margin-bottom: 10px;
+        padding: 10px 0 10px 0px;
+        border-bottom: 1px solid #eee;
+        font-family: 'Microsoft YaHei';
+    }
+
+    .dd-form .dd-form-fsm {
+        margin-left: 137px;
+        margin-top: 5px;
+    }
+
+    .dd-form .dd-form-header .dd-form-name {
+        margin-left: 137px;
+        font-size: 1.4em;
+        font-weight: bold;
+        cursor: pointer;
+    }
+
+    .dd-form .dd-form-header .dd-form-desc {
+        display: inline-block;
+        color: #737373;
+        font-size: 14px;
+        line-height: 1.5em;
+        font-weight: 400;
+    }
+
+    .dd-form .dd-element {
+        margin-top: 0.5em;
+        margin-bottom: 0.8em;
+        padding-left: 5px;
+        font-family: 'Microsoft YaHei';
+    }
+
+    .dd-form .dd-form-tabs .mini-tabs-firstSpace {
+        padding-left: 138px;
+    }
+
+    .dd-form .dd-form-fsm-tabs .mini-tabs-firstSpace {
+        padding-left: 138px;
+    }
+
+    .dd-form .dd-element .dd-element-pre, .dd-form .dd-element .dd-element-post {
+        margin-top: 8px;
+        margin-bottom: 8px;
+    }
+
+    .dd-form .dd-element .dd-element-name {
+        font-size: small;
+        text-align: right;
+        width: 120px;
+        float: left;
+        margin-bottom: 0;
+    }
+
+    .dd-form .dd-element .dd-element-body {
+        font-size: 1em;
+        margin-left: 135px;
+    }
+
+    .dd-form .dd-element .dd-element-tips {
+        margin-left: 135px;
+        font-size: small;
+        font-weight: normal;
+        color: #737373;
+        margin-top: 5px;
+    }
+
+    .dd-form .dd-form-footer {
+        position: fixed;
+        background-color: #eee;
+        left: 0px;
+        right: 0px;
+        bottom: 0px;
+        z-index: 1000;
+        line-height: 40px;
+        height: 40px;
+        margin: 0px auto;
+        border: 1px solid #ccc;
+        padding-left: 135px;
+    }
+
+    .dd-form .dd-form-toolbar {
+        display: none;
+    }
+
+.dd-form-horizontal {
+    margin: 0px 10px;
+}
+
+    .dd-form-horizontal .dd-form-fsm {
+        margin-left: 0px;
+    }
+
+    .dd-form-horizontal .dd-form-header .dd-form-name {
+        margin-left: 0px;
+    }
+
+    .dd-form-horizontal .dd-element .dd-element-body {
+        margin-left: 0px;
+    }
+
+    .dd-form-horizontal .dd-element .dd-element-name {
+        float: inherit;
+        text-align: inherit;
+        width: inherit;
+        margin-bottom: 8px;
+    }
+
+    .dd-form-horizontal .dd-element .dd-element-tips {
+        margin-left: 0px;
+    }
+
+    .dd-form-horizontal .dd-form-footer {
+        padding-left: 10px;
+    }
+
+    .dd-form-horizontal .dd-form-tabs .mini-tabs-firstSpace {
+        padding-left: 0px;
+    }
+
+    .dd-form-horizontal .dd-form-fsm-tabs .mini-tabs-firstSpace {
+        padding-left: 0px;
+    }
+
+.dd-element-body .dd-signature_pad canvas {
+    border: 1px solid #dddCCC;
+    display: inline-block;
+}
+
+
+
+@media screen and (min-width: 320px) and (max-width: 700px) {
+    .dd-element-body .dd-signature_pad .dd-signature_pad-qrcode {
+        display: none;
+    }
+}
+
+@media screen and (min-width: 700px) {
+    .dd-element-body .dd-signature_pad .dd-signature_pad-qrcode {
+        display: inline-block;
+        margin-left: 10px;
+    }
+}
+
+.dd-element-body .dd-signature_pad .mini-button {
+    margin-top: 5px;
+    margin-right: 5px;
+}
+
+span.icon-tip {
+    padding-left: 1.5em;
+}
+
+span.dd-element-number {
+    width: 2em;
+    display: inline-block;
+    text-align: center;
+}
+
+.error {
+    border: 1px solid red;
+}
+
+.dd-form div.mini-errorIcon {
+    height: 2em;
+    line-height: 2em;
+}
+
+.mini-list-inner {
+    margin-right: 1em;
+}
+
+.asLabel .mini-textbox-border,
+.asLabel .mini-textbox-input,
+.asLabel .mini-buttonedit-border,
+.asLabel .mini-buttonedit-input,
+.asLabel .mini-textboxlist-border {
+    border: 0;
+    background: none;
+    cursor: default;
+}
+
+.asLabel .mini-buttonedit-button,
+.asLabel .mini-textboxlist-close {
+    display: none;
+}
+
+.asLabel .mini-textboxlist-item {
+    padding-right: 8px;
+}
+
+table.nvd {
+    margin: 0 auto;
+    border: 1px solid gray;
+    border-collapse: collapse;
+    width: 100%;
+}
+
+    table.nvd td {
+        border: 1px solid gray;
+        border-collapse: collapse;
+        padding: 0.3em 0.5em 0.3em 0.5em;
+    }
+
+table.table-bordered {
+    margin: 0 auto;
+    border: 1px solid gray;
+    border-collapse: collapse;
+    width: 100%;
+}
+
+    table.table-bordered td, table.table-bordered th {
+        border: 1px solid gray;
+        border-collapse: collapse;
+        padding: 0.3em 0.5em 0.3em 0.5em;
+    }
+
+div.ProgressBar {
+    width: 100px;
+    padding: 0;
+    border: 1px solid black;
+    margin-right: 1em;
+    height: .75em;
+    margin-left: 1em;
+    display: -moz-inline-stack;
+    display: inline-block;
+    zoom: 1;
+    *display: inline;
+}
+
+    div.ProgressBar div {
+        background-color: Green;
+        font-size: 1pt;
+        height: 100%;
+        float: left;
+    }
+
+span.asyncUploader OBJECT {
+    position: relative;
+    top: 5px;
+    left: 10px;
+}
+
+.core-survey-detail {
+    background-color: #ccc;
+}
+
+.container-survey .dd-form-footer {
+    padding-left: 0px;
+    position: inherit;
+    background-color: white !important;
+    line-height: 40px;
+    height: auto !important;
+    padding-bottom: 10px;
+    padding-top: 5px;
+}
+
+.container-survey, .dd-survey-wrapper {
+    background-color: white;
+    max-width: 920px;
+    margin: 0 auto;
+    min-height: 100%;
+}
+
+.core-uform-griddetail .dd-survey, .core-uform-griddetail .container-survey .dd-form {
+    padding: 0px 10px 10px 10px;
+}
+
+    .dd-survey, .container-survey .dd-form {
+        max-width: 800px;
+        margin: 0 auto;
+        font-family: 'Microsoft YaHei';
+        padding: 30px 10px 30px 10px;
+    }
+
+    .dd-survey .dd-survey-authcode {
+        display: inline-block;
+        margin-left: 2.1em;
+        display: flex;
+        padding: 1em 0em 1em 0em;
+    }
+
+        .dd-survey .dd-survey-authcode img {
+            margin-left: 0.5em;
+            border: 1px solid #ddd;
+        }
+
+        .dd-survey * {
+            font-size: 14px;
+            line-height: 1.5em;
+        }
+
+        .dd-survey .dd-survey-title, .container-survey .dd-form .dd-form-name {
+            line-height: 2em;
+            font-size: 2em;
+            color: #337ab7;
+        }
+
+    .dd-survey .dd-survey-desc {
+        margin-bottom: 10px;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 10px;
+    }
+
+    .dd-survey .dd-survey-buttons {
+        margin-left: 2.1em;
+        line-height: 40px;
+        height: 40px;
+    }
+
+        .dd-survey .dd-survey-buttons .dd-button {
+            display: inline-block;
+            width: 100px;
+        }
+
+    .dd-survey .dd-element {
+        margin-top: 1em;
+        margin-bottom: 2em;
+    }
+
+        .dd-survey .dd-element .dd-element-pre, .dd-survey .dd-element .dd-element-post {
+            margin-top: 8px;
+            margin-bottom: 8px;
+        }
+
+        .dd-survey .dd-element .dd-element-name {
+            font-size: 1.1em;
+            margin-bottom: 1em;
+            font-family: 'Microsoft YaHei';
+        }
+
+        .dd-survey .dd-element .dd-element-body {
+            font-size: 1em;
+            margin-left: 2.3em;
+            color: #666;
+        }
+
+        .dd-survey .dd-element .dd-element-tips {
+            font-family: 'Microsoft YaHei';
+            margin-left: 2.3em;
+            font-size: small;
+            font-weight: normal;
+            color: #737373;
+            margin-top: 8px;
+        }
+
+        .dd-survey .dd-element label {
+            font-size: 1em;
+        }
+
+        .dd-survey .dd-element .dd-element-body table.dd-tablecontrol {
+            width: 100%;
+        }
+
+.dd-survey-qidx-0 .dd-element .dd-element-body {
+    margin-left: 0em;
+}
+.dd-survey-qidx-0 .dd-element .dd-element-tips {
+    margin-left: 0em;
+}
+.dd-survey-qidx-0 .dd-survey-buttons {
+    margin-left: 0em;
+}
+.dd-survey-qidx-0 .dd-survey-authcode {
+    margin-left: 0em;
+}
+
+.dd-tablecontrol .dd-tablecontrol-row-label td {
+    display: block;
+    margin-top: 0.5em;
+    margin-bottom: -1em;
+}
+
+.dd-completion .mini-textbox-border {
+    border: 0;
+    border-bottom: 1px solid gray;
+}
+
+.mini-required .mini-textbox-border, .mini-required .mini-buttonedit-border {
+    background-color: #fffff8;
+}
+
+div.dd-form.modify[updatable=false] .dd-kindeditor-filedialog-button-delete {
+    display: none !important;
+}
+
+span.dd-kindeditor-filedialog {
+    width: 100%;
+}
+
+    span.dd-kindeditor-filedialog .dd-kindeditor-filedialog-text, span.dd-kindeditor-filedialog .dd-kindeditor-filedialog-filename {
+        width: 400px;
+        line-height: 26px;
+        height: 26px;
+        border: 1px solid gray;
+        padding: 0px 6px;
+        margin-right: 5px;
+        border-radius: 4px;
+    }
+
+    span.dd-kindeditor-filedialog .dd-kindeditor-filedialog-button-delete {
+        height: 23px;
+        line-height: 23px;
+        margin-left: 3px;
+        padding: 0px 10px;
+        background-color: #f0f0f0;
+        border: 1px solid gray;
+        border-radius: 4px;
+    }
+
+    span.dd-kindeditor-filedialog .dd-kindeditor-filedialog-button-preview {
+        height: 23px;
+        line-height: 23px;
+        margin-left: 3px;
+        padding: 0px 10px;
+        background-color: #269abc;
+        border: 1px solid gray;
+        border-radius: 4px;
+        color: white;
+    }
+
+td.mini-tab-active {
+    /*background-color: #f5f5f5;*/
+}
+
+.dd-dropdown-menu ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    z-index: 100000;
+    position: absolute;
+    background-color: white;
+    line-height: 24px;
+}
+
+.mini-tabs-firstSpace div {
+    width: 0px;
+}
+
+.mini-tabs-bodys {
+    padding-bottom: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border: 0;
+}
+
+.dd-monacoeditor {
+    border: 1px solid #eee;
+}
+
+@media (max-width: 767px) {
+    .dn-xs {
+        display: none !important;
+    }
+}
+
+@media (min-width: 768px) and (max-width: 991px) {
+    .dn-sm {
+        display: none !important;
+    }
+}
+
+@media (min-width: 992px) and (max-width: 1199px) {
+    .dn-md {
+        display: none !important;
+    }
+}
+
+@media (min-width: 1200px) {
+    .dn-lg {
+        display: none !important;
+    }
+}
+
+.mini-checkboxlist-td, .mini-radiobuttonlist-td, .mini-checkboxlist-item, .mini-radiobuttonlist-item {
+    padding-right: 10px;
+}
+
+.core-test-index table {
+    font-family: Consolas;
+    font-size: small;
+}

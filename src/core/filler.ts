@@ -7,6 +7,10 @@ import { composeListText, Experience, FamilyMember, getByPath, Profile, Applicat
 import { matchAdapter } from './adapters';
 import { fillDateControl } from './date-drivers';
 import { PopupPickContext, resolveCodeNameBinding, verifyCodeNameBinding } from './popup-binding';
+import {
+  getResumablePickers, isPickerExhausted, markPickerDone, markPickerFailed,
+  markPickerStep, resetActivePickerAttempts, startPicker,
+} from './picker-state-machine';
 import { pickSchool } from './school-picker-driver';
 import { pickMajor } from './major-picker-driver';
 import { pickComponentOption } from './component-select-drivers';
@@ -62,6 +66,11 @@ export interface FillStats {
   failed: number;
   /** 弹窗选择框（只读输入框+选择按钮），由自动点选半自动处理 */
   picker: number;
+  /**
+   * 断点续填的 picker 数量：从 sessionStorage 恢复出"未 done 状态"的 picker 字段计数。
+   * >0 时表示扩展已记录这些字段等待下次重试；用户主动点填充时会被清零。
+   */
+  pickerResumeCount: number;
 }
 
 export interface FillResult {
@@ -397,6 +406,13 @@ function fillRetroHonorTablesInFillAll(
 
 export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FIELD_RULES): FillResult {
   clearHighlights(doc);
+  // reset-on-click：用户主动点击"一键填充"时清零 picker 状态机的未完成项 attempt
+  // （与 rowJobsDebug 的 reset-on-click 行为对齐）。sessionStorage 仍保留状态证据，
+  // 但 attempt 归 0、state 回到 'idle'，让用户从干净状态重新开始。
+  resetActivePickerAttempts(doc);
+  // 断点续填计数：read-on-click 后仍可能存在 "state≠done" 的 picker 字段（如 opening 阶段被中断）。
+  // 这里记录的是 reset 之后的"可恢复 picker 字段数"，供 fillSummary 展示。
+  const pickerResumeCount = getResumablePickers(doc).length;
   // 先处理"家庭成员表格"与"外语/计算机水平表格"（列头定义含义的裸表格），其单元格不再参与常规匹配
   const handled = new Set<Element>();
   const preItems: FillItem[] = [];
@@ -418,7 +434,7 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
     detected.push(w);
   }
   const items: FillItem[] = [...preItems];
-  const stats: FillStats = { total: detected.length + preItems.length, filled: preStats.filled, skipped: 0, noMatch: 0, profileEmpty: preStats.profileEmpty, failed: 0, picker: 0 };
+  const stats: FillStats = { total: detected.length + preItems.length, filled: preStats.filled, skipped: 0, noMatch: 0, profileEmpty: preStats.profileEmpty, failed: 0, picker: 0, pickerResumeCount };
 
   for (const d of detected) {
     if (d.skip) {
@@ -520,6 +536,46 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
           return [];
         }
       };
+      const pickerCtx: PopupPickContext = {
+        profilePath: pickerInput.getAttribute('data-tui-picker-profile') || d.rule.field,
+        expectedCode: pickerInput.getAttribute('data-tui-picker-code') || undefined,
+        codeAliases: codeEntry ? Object.values(codeEntry.codes).filter(Boolean) : [],
+        codeSelectors: readSelectorList('data-tui-picker-code-selectors'),
+        nameSelectors: readSelectorList('data-tui-picker-name-selectors'),
+        displaySelectors: readSelectorList('data-tui-picker-display-selectors'),
+        pickerProtocol: (pickerInput.getAttribute('data-tui-picker-protocol') || undefined) as PopupPickContext['pickerProtocol'],
+        cascadeLabels: readSelectorList('data-tui-picker-cascade-labels'),
+        componentDriver: (pickerInput.getAttribute('data-tui-component-driver') || undefined) as PopupPickContext['componentDriver'],
+        triggerSelectors: readSelectorList('data-tui-picker-trigger-selectors'),
+        frameNames: readSelectorList('data-tui-picker-frame-names'),
+        frameSrcPatterns: readSelectorList('data-tui-picker-frame-patterns'),
+      };
+      // 断点续填：登记到 picker 状态机（state='opening', attempt=0, 缓存 value + context）
+      // - 之前已 done：保留 done 状态，避免用户已填好的字段被标记为重试
+      // - 之前已 failed (达到 MAX)：本字段跳过自动点选，转人工（marked 'skipped'，不重复尝试）
+      const fieldId = pickerCtx.profilePath || d.rule.field || pickerInput.id || d.label;
+      if (isPickerExhausted(fieldId, doc)) {
+        stats.skipped++;
+        items.push({
+          label: d.label,
+          field: d.rule.field,
+          status: 'skipped',
+          reason: '弹窗点选连续失败 ≥3 次，已转人工处理（清除 sessionStorage 后可重试）',
+          valuePreview: v,
+          el: d.el,
+          pickerContext: pickerCtx,
+        });
+        markPickerStep(fieldId, 'failed', doc, 'max-attempts-exceeded-in-skip');
+        markEl(d.el, 'missing');
+        continue;
+      }
+      // 断点续填（修复）：读取上次的 value 快照，恢复 pickerCtx 作为参考
+      try {
+        const snap = getSnapshot(doc);
+        const prev = snap?.fields?.find((f) => f.name === fieldId || f.id === fieldId);
+        if (prev?.value) pickerCtx.priorValue = prev.value;
+      } catch { /* 忽略 */ }
+      startPicker(fieldId, pickerCtx, v, doc);
       items.push({
         label: d.label,
         field: d.rule.field,
@@ -527,20 +583,7 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
         reason: '弹窗选择框：将按当前字段精确匹配代码和名称',
         valuePreview: v,
         el: d.el,
-        pickerContext: {
-          profilePath: pickerInput.getAttribute('data-tui-picker-profile') || d.rule.field,
-          expectedCode: pickerInput.getAttribute('data-tui-picker-code') || undefined,
-          codeAliases: codeEntry ? Object.values(codeEntry.codes).filter(Boolean) : [],
-          codeSelectors: readSelectorList('data-tui-picker-code-selectors'),
-          nameSelectors: readSelectorList('data-tui-picker-name-selectors'),
-          displaySelectors: readSelectorList('data-tui-picker-display-selectors'),
-          pickerProtocol: (pickerInput.getAttribute('data-tui-picker-protocol') || undefined) as PopupPickContext['pickerProtocol'],
-          cascadeLabels: readSelectorList('data-tui-picker-cascade-labels'),
-          componentDriver: (pickerInput.getAttribute('data-tui-component-driver') || undefined) as PopupPickContext['componentDriver'],
-          triggerSelectors: readSelectorList('data-tui-picker-trigger-selectors'),
-          frameNames: readSelectorList('data-tui-picker-frame-names'),
-          frameSrcPatterns: readSelectorList('data-tui-picker-frame-patterns'),
-        },
+        pickerContext: pickerCtx,
       });
       markEl(d.el, 'missing');
       continue;
@@ -625,6 +668,31 @@ export function snapshotFillState(doc: Document): void {
     store.setItem('tui-fill-snapshot', JSON.stringify({ at: Date.now(), fields }));
   } catch {
     /* 忽略（隐私模式等无 storage 的环境） */
+  }
+}
+
+/** sessionStorage.tui-fill-snapshot 中存储的快照结构 */
+export interface FillSnapshot {
+  at: number;
+  fields: Array<{ name: string; id: string; value: string }>;
+}
+
+/**
+ * 读取最近一次 snapshotFillState 写入的快照（断点续填核心）。
+ * 用于在 picker 启动时，从 sessionStorage 恢复"用户上次想填的值"作为 priorValue，
+ * 辅助识别器/匹配器在人工弹窗中做更好的模糊匹配提示。
+ */
+export function getSnapshot(doc: Document): FillSnapshot | null {
+  try {
+    const store = (doc.defaultView as Window | null)?.sessionStorage;
+    if (!store) return null;
+    const raw = store.getItem('tui-fill-snapshot');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as FillSnapshot;
+    if (!parsed || !Array.isArray(parsed.fields)) return null;
+    return parsed;
+  } catch {
+    return null;
   }
 }
 

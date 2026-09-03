@@ -361,6 +361,12 @@ document.getElementById('resetBtn')!.addEventListener('click', () => {
   save().then(() => showToast('已清空并保存'));
 });
 
+document.getElementById('captchaBtn')!.addEventListener('click', () => {
+  // 打开验证码 OCR 设置页（新 tab）
+  const url = chrome.runtime.getURL('options/captcha-settings.html');
+  window.open(url, '_blank');
+});
+
 document.getElementById('confirmMigrationBtn')!.addEventListener('click', () => {
   if (state.pendingClassifications.length) {
     showToast('仍有待分类记录，暂不能确认迁移');

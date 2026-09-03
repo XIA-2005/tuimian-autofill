@@ -1,0 +1,281 @@
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html>
+<head>
+	<title>研究生报考服务系统</title>
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+    <link rel="icon" sizes="any" mask href="/favicon.ico">
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+	<link rel="stylesheet" href="/resource/libs/pintuer/pintuer.css?12">
+    <link rel="stylesheet" href="/login/css/login.css">
+    <script src="/resource/libs/pintuer/jquery.js"></script>
+    <script src="/resource/libs/pintuer/pintuer.js"></script>
+    <script src="/resource/libs/respond.min.js"></script>
+     <script src="/resource/libs/crypto.js"></script>
+</head>
+<body>
+	
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    <div class="header">
+        <div class="container">
+            <div class="logo">
+                <img src="/resource/images/logo-name.png" alt="">
+                <h1>研究生报考服务系统</h1>
+            </div>
+        </div>
+    </div>
+    <div class="banner-box">
+        <div class="banner banner-background" data-pointer="0" data-interval="10">
+            <div class="carousel">
+                <div class="item">
+                    <div class="slider-content" style="background: url(/resource/images/login-banner-01.jpg) center no-repeat;"></div>
+                </div>
+                
+            </div>
+        </div>
+        <div class="container">
+            <div class="login-box">
+                <div class="login-title">欢迎报考合肥工业大学</div>
+                <form action="/logon" method="post" class="form" id="formId">
+                    <div class="form-group">
+                        <div class="field field-icon">
+                            <select name="kslb" id="kslb" class="input" onclick="showHint()" onchange="showHint()" style="display:block; ">
+                                <option value="-1" selected>-请选择招生项目-</option>
+                                
+	                               <option value="2" >硕士研究生招生</option>
+								
+	                               <option value="3" >博士研究生报考</option>
+								
+	                               <option value="5" selected>全国优秀大学生推免生预报名</option>
+								  
+                            </select>
+                            <span class="input-name">招生项目</span>
+                        </div>
+                    </div>
+                    <div  id="bmxz">
+	                    <div class="login-remarks">
+		                    
+			                    <p class="desC" val="2">用户名：准考证上的考生编号（15位编号）<br>初始密码：网报时填写的证件号码，居民身份证为18位（最后一位为如为X应大写），港澳台身份证、护照按证件号码填写。</b>                                                                       </p>
+							
+			                    <p class="desC" val="3"><b class="text-red">用户名：注册生成的报名号；密码：注册填写的密码。</b><br>考生须严格按照报考条件及相关政策要求选择填报志愿，如实、准确提交报考信息和各项材料。如提供虚假、错误信息或弄虚作假，考生承担由此造成的一切后果。                                                                                                </p>
+							
+			                    <p class="desC" val="5"><p class="desC" val="6" style="">
+ <b class="text-red">用户名：注册生成的报名号；密码：注册填写的密码。</b><br>
+ 凡有意向申请我校推荐免试研究生的考生必须通过“推免生预报名”系统申请报名。考生须如实、准确填写申请信息和上传材料。如提供虚假、错误信息或弄虚作假，考生承担由此造成的一切后果。 <br>
+ 注册过“全国优秀大学生夏令营”项目的考生，在符合报名条件的前提下，需要重新注册“推免生预报名”项目并用新账号登录。
+ </p>                                                                                                                                                                        </p>
+							 
+	               		</div>
+	               		 <div>
+	               		 &nbsp;
+	               		 </div>
+                	</div>
+                    <div class="form-group">
+                        <div class="field field-icon">
+                            <input type="text" class="input" name="username" id="username" placeholder="输入用户名" autocomplete="off"/>
+                            <span class="input-name">用户名</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="field field-icon">
+                            <input type="password" class="input" name="password" id="password" placeholder="输入密码" autocomplete="off"/>
+                            <span class="input-name">密码</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="field field-icon">
+                            <input type="text" class="input" name="validateCode" id="validateCode" placeholder="输入验证码" autocomplete="off"/>
+                            <span class="input-name">验证码</span>
+                            <a class="input-code" href="javascript:void(0);">
+                                <img id="imageID" title="点击刷新" width="120" height="32" style="padding-left: 20px;" onclick="getImageCode()" src="/captcha/imageCode" />
+                            </a>
+                        </div>
+                    </div>
+                    <div class="form-group" id="errorInfo" style="display: none;">
+                    	
+                    </div>
+                    <div class="form-group">
+                        <button class="button bg-sub" type="button" id="loginIt">登录</button>
+                    </div>
+                    <div class="text-small" id="loginDiv" >
+                   		<span id="regId" style="display:none;"> 还没有账号？<a href="javascript:void(0);" id="redFree" style=" font-weight: bold;">免费注册</a></span>
+                      	<a href="/stu/account/findPassword" class="float-right" id="fpId" style=" font-weight: bold;">忘记密码</a>
+                      	<span class="float-right">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+                      	<a id="regIdf" style="display:none; font-weight: bold;" href="/stu/account/findPassword/findAccount" class="float-right" id="fpId">找回用户名</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <!--报考信息-->
+    <section class="container">
+        <div class="title-main">
+            <span class="Icon Icon-info"></span>通知公告
+        </div>
+        <div class="line-big">
+            
+        </div>
+    </section>
+    
+
+<div class="footer">
+    <span>合肥工业大学研究生院</span>
+    <span></span>
+    <span></span>
+    <span></span>
+    <span></span>
+</div>
+    <script type="text/javascript">
+    /*使用enter登录  */
+    $(document).keydown(function (event) {
+    	if (event.keyCode == 13) {
+    		$("#loginIt").click();
+    	}
+    });
+    
+    $(function(){
+    });
+    
+    function Trim(str){ 
+		if(str!=null&&str!=''){
+	  		return str.replace(/(^\s*)|(\s*$)/g, "");
+		}else{
+			return '';
+		}
+	}
+    
+    
+    function IEVersion() {
+        var userAgent = navigator.userAgent; 
+        var isIE = userAgent.indexOf("compatible") > -1 && userAgent.indexOf("MSIE") > -1; //判断是否IE<11浏览器  
+        var isEdge = userAgent.indexOf("Edge") > -1 && !isIE; //判断是否IE的Edge浏览器  
+        var isIE11 = userAgent.indexOf('Trident') > -1 && userAgent.indexOf("rv:11.0") > -1;
+        if(isIE) {
+            var reIE = new RegExp("MSIE (\\d+\\.\\d+);");
+            reIE.test(userAgent);
+            var fIEVersion = parseFloat(RegExp["$1"]);
+            if(fIEVersion == 7) {
+                return 7;
+            } else if(fIEVersion == 8) {
+                return 8;
+            } else if(fIEVersion == 9) {
+                return 9;
+            } else if(fIEVersion == 10) {
+                return 10;
+            } else {
+                return 6;//IE版本<=7
+            }   
+        } else if(isEdge) {
+            return 'edge';//edge
+        } else if(isIE11) {
+            return 11; //IE11  
+        }else{
+            return -1;//不是ie浏览器
+        }
+    }
+	if(IEVersion()!='-1'){
+		$("#kslb").css('padding-left','70px');
+	}
+    
+    function getImageCode() {
+		var imageID = document.getElementById("imageID");
+		imageID.src = "/captcha/imageCode?curDate="
+				+ (new Date()).getTime();
+	}
+    
+    
+    function initDes(){
+    	$(".desC").each(function(){          //弹出每一个li的文本
+   	      	if($(this).attr('val')==$('#kslb').val()){
+   	    	  	$(this).css('display','');
+   	      	}else{
+   	    	  	$(this).css('display','none');
+   	      	}
+    	});
+    }
+
+    
+    jQuery(function($) {
+    	var kslb=$('#kslb').val();
+    	if(kslb=='-1'){
+    		document.getElementById('bmxz').style.display="none";
+		}
+    	showHint();
+		if(Trim($("#errorInfo").html())!=''){
+			$("#errorInfo").css('display','')
+		}
+		initDes();
+		$("#loginIt").click(function(){
+			if($("#kslb").val()=='-1'){
+				$("#errorInfo").html('请选择报名项目');
+				$("#errorInfo").css('display','');
+				$("#kslb").focus();
+				return;
+			}
+			if(Trim($("#username").val())==''){
+				$("#errorInfo").html('用户名不能为空');
+				$("#errorInfo").css('display','');
+				$("#username").focus();
+				return;
+			}
+			if(Trim($("#password").val())==''){
+				$("#errorInfo").html('密码不能为空');
+				$("#errorInfo").css('display','');
+				$("#password").focus();
+				return;
+			}
+			var pwdVal = $("#password").val();
+			var publicKey="0725@pwdorgopenp";
+			var encrypts = CryptoJS.AES.encrypt(pwdVal, CryptoJS.enc.Utf8.parse(publicKey), {
+			   mode: CryptoJS.mode.ECB,
+			   padding: CryptoJS.pad.Pkcs7
+			  }).toString();
+			$("#password").val(encrypts);
+			$("#formId").submit();
+		});
+  	});
+  	//类别不同显示的东西不同
+   	function showHint(){
+   		var kslb=$('#kslb').val();
+   		if(kslb=='1'||kslb=='3'||kslb=='2'||kslb=='4'||kslb=='6' || kslb=='5'|| kslb=='8' || kslb=='9'){
+   			document.getElementById('bmxz').style.display="inline";
+   		}
+   		else{
+   			document.getElementById('bmxz').style.display="none";
+   		}
+   		if(kslb==3||kslb==4||kslb==5||kslb=='6'){
+   			$("#regId").css('display','');
+   			$("#regIdf").css('display','');
+   		}else {
+   			$("#regId").css('display','none');
+   			$("#regIdf").css('display','none');
+   		}
+   		if(kslb==2){
+   			$("#regIdf").css('display','');
+   		}
+   		initDes();
+   	}
+	$("#redFree").on('click',function() {
+		window.location.href='/reg/free/'+$("#kslb").val();
+	});
+    </script>
+</body>
+		
+</html>

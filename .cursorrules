@@ -1,0 +1,39 @@
+# .cursorrules — 预推免填表助手 AI 协作铁律
+
+## 铁律（每条必须遵守）
+
+### 铁律 1：双会话隔离
+- [TDD-PHASE: red] 与 [TDD-PHASE: green] 必须在**不同 AI 会话**中完成
+- 红阶段：写测试 + 运行证明 FAIL
+- 绿阶段：写实现 + 运行证明 PASS
+- 不准在红阶段写任何实现代码
+
+### 铁律 2：红必须红
+- 红阶段写完测试后，必须运行测试
+- 测试一开始就是绿的 = 作弊，整轮打回
+- 不准在写测试时同时写 stub 实现让测试通过
+
+### 铁律 3：业务规则优先
+- 断言用业务不变量（正则/范围/关系），不用示例值
+- ✅ `expect(idCard).toMatch(/^\d{17}[\dXx]$/)`
+- ❌ `expect(name).toBe("张三")`
+
+### 铁律 4：三类覆盖
+- 每个功能模块必须覆盖：正常路径 / 异常路径 / 边界值
+- 单 case 测试必须打回补充
+
+### 铁律 5：提示词 6 段式
+- 每次 AI 写代码必须基于 6 段式提示词
+- 段：阶段标记 / 项目上下文 / 业务规则 / 边界清单 / 禁止条款 / 交付物
+- 模板位置：`prompts/` 目录
+
+## 适用项目
+
+- `d:\deepseek-work\tuimian-autofill\`（浏览器扩展 TypeScript）
+- `d:\deepseek-work\tuimian-autofill\bridge\`（Go 二进制）
+
+## 例外
+
+- 修复 `FIXME:` / `TODO:` 注释不需要走 TDD
+- 文档 / README 修改不需要走 TDD
+- 配置变更（tsconfig.json / package.json）不需要走 TDD

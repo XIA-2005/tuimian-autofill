@@ -21,6 +21,8 @@ import { decideRowJobRound, nextRowJobIndex, ROW_JOB_FAIL_CAP } from '../core/ro
 import { detectFakeSave, snapshotTableEvidence, TableEvidence } from '../core/save-guard';
 import { applyFillTelemetryCounts, createFillTelemetryState, FillTelemetryEventInput, FillTelemetryStage, FillTelemetryState, reduceFillTelemetry, restoreFillTelemetryState } from '../core/fill-telemetry';
 import { initPanel, PanelHandlers, renderPanelTelemetry, setPanelBusy, setPanelStatus, showPanel, showToast } from './panel';
+import { startCaptchaAssistant } from './captcha-orchestrator';
+import { markPickerDone, markPickerFailed } from '../core/picker-state-machine';
 
 // ===================== 醒目填充横幅 + 进度条 =====================
 let fillBanner: HTMLElement | null = null;
@@ -562,6 +564,43 @@ function scheduleCascadeRetries(items: FillItem[]): void {
   setTimeout(() => void attemptPickers(items), 80);
 }
 
+/**
+ * 断点续填核心：当 picker 弹窗已打开、用户手动选择时，
+ * 周期扫描 controlEmpty，字段有值后自动 markPickerDone（无需等下一次 fillAll 重跑）。
+ * 最多等 120s，轮询间隔 1.5s。
+ */
+async function waitForPickerManualDone(
+  item: FillItem,
+  el: HTMLElement,
+): Promise<void> {
+  const MAX_WAIT = 120_000;   // 2 分钟超时
+  const INTERVAL = 1_500;     // 1.5s 轮询
+  const fieldId = item.field || '';
+
+  const start = Date.now();
+  while (Date.now() - start < MAX_WAIT) {
+    await sleep(INTERVAL);
+    // 页面可能已导航，el 已不在 DOM
+    if (!(el as Element).isConnected) break;
+    // picker 弹窗可能已关闭，字段值已被用户填入
+    if (!controlEmpty(el)) {
+      // 用户手动完成选择，标记为 done
+      try {
+        markPickerDone(fieldId, el.ownerDocument || document);
+        if (isTop) emitTelemetry({
+          stage: 'picking',
+          level: 'success',
+          action: '人工确认后自动标记完成（断点续填）',
+          targetLabel: item.label,
+          field: item.field,
+        });
+      } catch { /* 忽略 */ }
+      break;
+    }
+    // 仍为空：用户可能还在弹窗里，继续等待
+  }
+}
+
 /** 弹窗选择框自动点选一次（已填的不动，无法匹配的留给人工） */
 async function attemptPickers(items: FillItem[]): Promise<void> {
   // 全局互斥：多个延时补填轮次不得同时运行不同字段的弹窗任务。
@@ -701,6 +740,10 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
       markEl(el, 'filled');
       if (isTop) emitTelemetry({ stage: 'picking', level: 'success', action: '弹窗选中并确认完成', targetLabel: it.label, field: it.field, current: pickIdx, total: pickTotal });
       fails[failKey] = 0;
+      // 断点续填：标记 picker 为 done，sessionStorage 中该 field 移出可恢复列表
+      try {
+        markPickerDone(it.field || '', document);
+      } catch { /* 忽略 */ }
       try {
         const r2 = JSON.parse(sessionStorage.getItem('tui-pick-rounds') || '{}');
         r2[failKey] = 0;
@@ -715,6 +758,10 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
         markEl(el, 'filled');
         if (isTop) emitTelemetry({ stage: 'picking', level: 'success', action: '弹窗回填并回读通过', targetLabel: it.label, field: it.field, current: pickIdx, total: pickTotal });
         fails[failKey] = 0;
+        // 断点续填：标记 picker 为 done
+        try {
+          markPickerDone(it.field || '', document);
+        } catch { /* 忽略 */ }
         try {
           const r2 = JSON.parse(sessionStorage.getItem('tui-pick-rounds') || '{}');
           r2[failKey] = 0;
@@ -738,6 +785,9 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
         });
         fails[failKey] = 0;
         deadFields.add(it.field);
+        // 断点续填（修复）：picker 弹窗打开后，周期扫描 controlEmpty，
+        // 用户手动选完后字段有值 → markPickerDone（不再死等下一轮 fillAll 重跑）
+        void waitForPickerManualDone(it, el as HTMLElement).catch(() => {/* 扫描超时/出错不阻塞 */});
         // 当前弹窗仍占用页面：必须停止整条队列，禁止专业任务把关键字写进院校弹窗。
         try {
           sessionStorage.setItem('tui-pick-fails', JSON.stringify(fails));
@@ -750,6 +800,10 @@ async function attemptPickersInner(items: FillItem[]): Promise<string | null> {
         fails[failKey] = 0;
       } else {
         fails[failKey] = (fails[failKey] || 0) + 1;
+        // 断点续填：标记 picker 失败（累加 attempt，超过 MAX 转 failed）
+        try {
+          markPickerFailed(it.field || '', 'pickInPage-returned-non-picked', document);
+        } catch { /* 忽略 */ }
         if (isTop) emitTelemetry({
           stage: 'picking',
           level: 'error',
@@ -1608,3 +1662,9 @@ chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any)
       return false;
   }
 });
+
+// 验证码 OCR 辅助：可选功能，启动时检查用户设置；默认关闭时无任何副作用
+if (typeof window !== 'undefined' && isTop) {
+  // 异步启动，不阻塞主流程
+  void startCaptchaAssistant().catch((e) => console.warn('[tui-captcha] 启动失败：', e));
+}
