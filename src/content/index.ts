@@ -1855,10 +1855,6 @@ chrome.runtime.onMessage.addListener((msg: any, _sender: any, sendResponse: any)
         .catch(() => sendResponse({ ok: false }));
       return true;
     }
-    case 'SHOW_PANEL':
-      if (isTop) showPanel();
-      sendResponse({ ok: isTop });
-      return false;
     case 'REPORT':
       try {
         void chrome.runtime.sendMessage({ type: 'REPORT_RESULT', report: buildReport() });

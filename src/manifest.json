@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "预推免填表助手",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "author": "tuimian-autofill",
   "minimum_chrome_version": "111",
   "description": "辅助填写高校预推免/夏令营报名系统：本地档案、一键填充、漏填高亮、验证码 OCR（可选）。数据不出本机。",

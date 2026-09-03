@@ -19,7 +19,7 @@ document.getElementById('fillBtn')!.addEventListener('click', async () => {
   try {
     const resp = await chrome.runtime.sendMessage({ type: 'FILL_REQUEST', tabId: tab.id });
     if (!resp || !resp.ok) {
-      setStatus(resp?.reason === '用户取消了投影预览' || resp?.reason === 'cancelled' ? '已取消填充' : '此页面无法填充：浏览器内置页面（edge:// 等）不支持，或页面尚未加载完成。', resp?.reason === '用户取消了投影预览' ? 'info' : 'err');
+      setStatus(resp?.reason === '用户取消了投影预览' || resp?.reason === 'cancelled' ? '已取消填充' : '当前页面暂时无法填充，请确认已进入报名页面并刷新后重试。', resp?.reason === '用户取消了投影预览' ? 'info' : 'err');
       return;
     }
     const s = resp.stats;
@@ -29,18 +29,6 @@ document.getElementById('fillBtn')!.addEventListener('click', async () => {
     );
   } catch {
     setStatus('扩展后台未就绪：请刷新页面后重试', 'err');
-  }
-});
-
-document.getElementById('panelBtn')!.addEventListener('click', async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || tab.id == null) return;
-  try {
-    const r = await chrome.tabs.sendMessage(tab.id, { type: 'SHOW_PANEL' }, { frameId: 0 });
-    if (r && r.ok) setStatus('已显示悬浮面板，请在页面右侧操作', 'ok');
-    else setStatus('此页面无法显示面板', 'err');
-  } catch {
-    setStatus('此页面无法显示面板（如：浏览器内置页面）', 'err');
   }
 });
 
