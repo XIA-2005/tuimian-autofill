@@ -5,6 +5,8 @@ dist/
 release/
 site/
 site-deploy-*.tar.gz
+scrape/
+scrape-probe.cjs
 .env
 .env.*
 *.log
