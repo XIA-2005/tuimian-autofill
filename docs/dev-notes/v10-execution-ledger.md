@@ -1,6 +1,6 @@
 # v10 执行账本：正确率与可填写范围收敛
 
-- 任务书：`docs/analysis/任务书-v10-正确率与范围收敛-2026-09-11.md` **当前冻结 v10.2 sha256=`1a0b63887f9964a8f7a2d22a898be1e363101824160c7d40ec2d19e8bd93242f`**（v10.1=a5f1f78c… 被 v10.2 取代，演进见任务书版本日志）
+- 任务书：`docs/analysis/任务书-v10-正确率与范围收敛-2026-09-11.md` **当前冻结 v10.3 sha256=`facd23a62c0abab312e80e03f1804414dccff04ac5c73791cf5f2c79615d0d4a`**（v10.1=a5f1f78c… → v10.2=1a0b6388… → v10.3，演进见任务书版本日志）
 - 冻结基线 HEAD：`9a0f40a`；审查依据：`docs/analysis/v10-review-2026-09-11/预审意见-任务书-v10.md`（通过 4 / 修订 16 / 否决 1，全部处置见任务书版本日志与 §1.4 勘误）
 - 引用一律用稳定 ID（R/S/F/A/B/C/D/INV/P/RD/VB），禁章节号。
 
@@ -59,5 +59,16 @@
 - **[N-1]** F03 卡尾"范围变更记录"入册；[N-3] yml 过时注释改正；[N-4/N-5] 角色表补 QWEN/GPT 第三方审计员；[N-7] `docs/analysis/v10-review-*/**` 进 REVIEW 声明模式。
 - 全门禁复跑：`npm run test:offline` exit 0（HARD 58/0）；`test:e2e` Edge 路径 0、`PW_BUNDLED` 0；`test:regression:e2e` 链 0。`check` exit 1（3 DRIFT+1 MISSING 未签名=待审正确态，RD-7 不得先签）。
 - 下一卡：F01（待审查者复跑过审、update F03/F04 解冻后开工）。
+
+## L-R4 · 第四轮 B-3（tree 存量改动可见性 + blob 锚定重构，2026-09-11）
+
+- 交付：`tools/v10-hashes.cjs` v10.3（四模式+blob 锚定）、baseline/tree 重建（135/88，ABSENT 1=临时 runner）、touch-list `F03 += .github/workflows/offline-gates.yml`、任务书 v10.3、账本本条。
+- **[执行者偏差备案 ①，交审查者否决]** hash 源=磁盘 → **`git show 9a0f40a:<path>` blob（EOL 归一）**。证据：a) `.gitignore` 树内三态不等（blob 966f/旧磁盘快照 32F8/checkout 后 72AD），raw-hash 下 `git checkout` 的 CRLF 渲染翻转必假报（§1.3 第 2 步"还原后归 1"在该方案下不可实现）；b) 本会话重跑磁盘式 tree 时**实测把 yml 的未审改动洗白为 external**（STEP1 存量漂移 0≠1）——磁盘快照式基线可被重建洗白，blob 锚定不可。回退方案（`git diff ref HEAD`）局部于 check 树循环，可即时切换。
+- **[偏差备案 ②]** `externalDrift` 定义收窄为"**建树时 git status 未提交**"（并行会话产物→`EXTERNAL-MOD` 信息行不计 exit；已提交改动→TREE-DRIFT/DECLARED-MOD 走声明签名归零）。否则本轮 yml 会被误归 external（与审查者预检"只报 1 项"矛盾消除的正解）。政策：tree 仅冻结时建一次，重建须记账本（工具已打警告）。
+- §1.3 四步实测：STEP1 `TREE-DRIFT yml｜存量漂移1｜exit1`✓；STEP2 追加 `.gitignore`→`TREE-DRIFT .gitignore｜存量漂移2｜exit1`，`git checkout` 还原→**归 1、diff 空**✓；STEP3 touch-list 声明→`DECLARED-MOD 1｜存量漂移 0`✓；`--strict` exit1 演示✓（新声明文件未签名时加严拦截）。STEP4 update F03/F04 签名**未执行**——RD-7 待审查者复跑第 4 步并出具过审。
+- 签名前 check 输出全文（§2-2 新规首跑）：`受控一致 131 | 漂移 3 | 缺失 1 | 新文件已声明 24 | 未声明 0 | 存量已声明改动 1 | 存量漂移 0 | 外部改动 3（基线+签名 135 ∪ 树 88）`，exit 1=RD-7 待审态。
+- 门禁：`node --check`=0；`npm run test:offline`=0。
+- **[§7 事实登记] Edge 临时 Profile UI 审计（消解"装日常 profile"授权问题）**：GPT 用 Playwright+真实 Edge+mkdtemp 临时 profile 完成 `edge://extensions` UI 级验证；DeepSeek 复跑 exit 0、临时目录零残留、日常 profile 未触碰。**如实标注两项缺口：`enabled`/`dailyProfileTouched` 为常量断言（非实测页面状态）、截图未经审查者核验——不得表述为"已复核"。**
+- 下一卡：交审查者复跑→过审→`update F03/F04` 签名→F01（oracle 草案先行）。
 
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->

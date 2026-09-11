@@ -1,0 +1,21 @@
+{
+  "schema": "edge_temp_profile_audit_v1",
+  "edgePath": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  "extensionPath": "D:\\deepseek-work\\tuimian-autofill\\dist",
+  "extensionId": "ffgdgdbfdhdjpppjnnfeoiampbiodlcc",
+  "extensionName": "预推免填表助手",
+  "enabled": true,
+  "cardEvidence": {
+    "nameVisible": true,
+    "descriptionVisible": true,
+    "detailActionVisible": true,
+    "removeActionVisible": true,
+    "reloadActionVisible": true,
+    "otherSourceSectionVisible": true,
+    "serviceWorkerAlive": true
+  },
+  "serviceWorkerUrl": "chrome-extension://ffgdgdbfdhdjpppjnnfeoiampbiodlcc/background.js",
+  "pageUrl": "edge://extensions/",
+  "temporaryProfile": true,
+  "dailyProfileTouched": false
+}

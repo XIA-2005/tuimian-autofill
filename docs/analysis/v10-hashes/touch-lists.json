@@ -7,7 +7,8 @@
     "test/playwright.mjs",
     "test/regression/run-e2e.ts",
     "test/regression/run-e2e.js",
-    "test/.v9-tmp-run.mjs"
+    "test/.v9-tmp-run.mjs",
+    ".github/workflows/offline-gates.yml"
   ],
   "A1": [
     "src/core/filler.ts",
