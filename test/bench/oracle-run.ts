@@ -150,7 +150,14 @@ export function runOracle(signedPath: string, negative: boolean): number {
           rows = classifyControls(ctx.doc, mapsIn);
           const detected = rows.find((r) => r.key === target.key)?.cls === 'overfill';
           if (!detected) failures.push(`[${fix.fixtureId}] 注入 ${target.key} 后未判 overfill(实为 ${rows.find((r) => r.key === target.key)?.cls})`);
-          summary.push({ fixtureId: fix.fixtureId, tally: tallyControls(rows), untrackedKeys: [], injected: true, detected });
+          summary.push({
+            fixtureId: fix.fixtureId,
+            tally: tallyControls(rows),
+            untrackedKeys: [],
+            injected: true,
+            detected,
+            defectKeys: rows.filter((r) => r.cls === 'wrong' || r.cls === 'missing').map((r) => `${r.cls}:${r.key}`),
+          });
         }
       }
     } else {
