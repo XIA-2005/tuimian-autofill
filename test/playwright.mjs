@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 
-const extensionPath = resolve('dist');
+// PW_EXTDIR：负向自检开关——指向空目录以证明"绿灯=扩展真的加载了"，默认生产 dist。
+const extensionPath = resolve(process.env.PW_EXTDIR || 'dist');
 const fixture = readFileSync(resolve('test/fixture-form.html'));
 const profile = {
   version: 2,
@@ -50,7 +51,8 @@ const address = server.address();
 if (!address || typeof address === 'string') throw new Error('本地夹具服务器启动失败');
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'tuimian-e2e-'));
-const edgeCandidates = [
+// PW_BUNDLED=1：跳过 Edge 候选、强制走内置 chromium 分支（本地复现 CI 路径做因果对照）。
+const edgeCandidates = process.env.PW_BUNDLED === '1' ? [] : [
   process.env.PLAYWRIGHT_EXECUTABLE_PATH,
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -68,7 +70,13 @@ try {
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`],
   });
   let worker = context.serviceWorkers()[0];
-  if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 30000 });
+  if (!worker) {
+    try {
+      worker = await context.waitForEvent('serviceworker', { timeout: 30000 });
+    } catch {
+      throw new Error('具名断言：MV3 serviceworker 30s 未上线——扩展未真正加载（PW_EXTDIR 空/manifest 缺失，或浏览器无扩展支持，如 headless-shell）');
+    }
+  }
   const extensionId = new URL(worker.url()).host;
 
   const optionsPage = await context.newPage();

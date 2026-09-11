@@ -28,6 +28,13 @@
   ],
   "F04": [
     "tools/v10-hashes.cjs",
-    "docs/analysis/v10-hashes/touch-lists.json"
+    "docs/analysis/v10-hashes/**"
+  ],
+  "F00": [
+    "docs/analysis/竞品差距与改进方案-2026-09-11.md",
+    "docs/analysis/任务书-v10-正确率与范围收敛-2026-09-11.md"
+  ],
+  "REVIEW": [
+    "docs/analysis/v10-review-*/**"
   ]
 }

@@ -1,6 +1,6 @@
 # v10 执行账本：正确率与可填写范围收敛
 
-- 任务书：`docs/analysis/任务书-v10-正确率与范围收敛-2026-09-11.md` **v10.1 冻结版 sha256=`a5f1f78c5f370155f348e31c8c57231ddc6a85a9af0e5e7286f56cb1fadc9f72`**（2026-09-11）
+- 任务书：`docs/analysis/任务书-v10-正确率与范围收敛-2026-09-11.md` **当前冻结 v10.2 sha256=`1a0b63887f9964a8f7a2d22a898be1e363101824160c7d40ec2d19e8bd93242f`**（v10.1=a5f1f78c… 被 v10.2 取代，演进见任务书版本日志）
 - 冻结基线 HEAD：`9a0f40a`；审查依据：`docs/analysis/v10-review-2026-09-11/预审意见-任务书-v10.md`（通过 4 / 修订 16 / 否决 1，全部处置见任务书版本日志与 §1.4 勘误）
 - 引用一律用稳定 ID（R/S/F/A/B/C/D/INV/P/RD/VB），禁章节号。
 
@@ -47,5 +47,17 @@
 
 - 产出 `docs/dev-notes/v10-影响面-F05.md`：计数断言 6 处（含 `run.ts:294/296/492`、`regression/run.ts:375`）、角色词标尺 3 组（A5/A6 必须保持 `jxlxr/qtdh→紧急槽` 绿）、A7 关键修正——**区划码表已含台港澳，只缺 REGION_TREE**；蓝三联硬编码 `'61'/'61|10698|…'` fixture 列为 A7 必复跑项。
 - 下一卡：F01（bench 设施）。
+
+## L-R2 · 第二轮解冻整改（B-1/B-2/N-1..N-7，2026-09-11）
+
+任务书升级 **v10.2 冻结**，sha256=`1a0b63887f9964a8f7a2d22a898be1e363101824160c7d40ec2d19e8bd93242f`（取代 v10.1 a5f1f78c…）。
+
+- **[N-2 更正]** 上一轮区间实为 **5 个提交**（30cb7f5/5958a4f/f49c93a/23b7e5f/a886a3f），先前"4 个"记述有误，已按实修正。
+- **[N-6 定稿]** 覆盖双口径以两套独立探针复现：库存 **73 包/72 含 form/70 域名(去 `*`)/65 校名(去 3 平台壳)**；严格 form-fill **69/64**；唯一差项 `nuaa-ssxly`（全 crawl-only）；族分布 blue20/other27/minimal4/jingzhi15/cover7。"54 包/~50 校"与"108/102"两个旧口径作废。已写入任务书 §4 与 F00 文档。
+- **[B-1]** F04 工具扩为四模式：`tree` 快照受管存量（树 88 文件，externalDrift 3 如实记录）+ `check` 增 `DECLARED-NEW/UNSIGNED-NEW`（声明即允许、未声明即拒）。**过程中修复真漏洞**：git `core.quotePath` 默认八进制转义使中文文件名整体逃逸新文件可见性（加 `-c core.quotePath=false` 后树 59→88、DECLARED-NEW 7→15）。负向自检：新增未声明 `src/core/__probe.ts` → `UNSIGNED-NEW`+CHECK_EXIT=1；删除 → 未声明归 0。
+- **[B-2]** 具名失败+测试开关（`PW_BUNDLED`/`PW_EXTDIR`）补进 playwright.mjs 与 run-e2e.ts。因果对照：①`PW_BUNDLED=1 npm run test:e2e`（内置完整版 Chromium）exit 0——证明绿灯不依赖本机 Edge；②临时去 `channel:'chromium'`、**保留 30s** → exit 1 且 `Error: 具名断言：MV3 serviceworker 30s 未上线`——证明 channel 是真因、30s 非掩盖；③`PW_EXTDIR=空目录` → playwright.mjs 与 run-e2e.js 均具名 exit 1——绿灯=扩展真加载。三项实验后 channel 已还原（grep 计数=1 复核）。
+- **[N-1]** F03 卡尾"范围变更记录"入册；[N-3] yml 过时注释改正；[N-4/N-5] 角色表补 QWEN/GPT 第三方审计员；[N-7] `docs/analysis/v10-review-*/**` 进 REVIEW 声明模式。
+- 全门禁复跑：`npm run test:offline` exit 0（HARD 58/0）；`test:e2e` Edge 路径 0、`PW_BUNDLED` 0；`test:regression:e2e` 链 0。`check` exit 1（3 DRIFT+1 MISSING 未签名=待审正确态，RD-7 不得先签）。
+- 下一卡：F01（待审查者复跑过审、update F03/F04 解冻后开工）。
 
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->

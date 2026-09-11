@@ -11,7 +11,8 @@ import { chromium } from 'playwright';
 import { e2eFormHtml, e2eProfile } from './samples';
 
 async function main(): Promise<void> {
-  const extensionPath = resolve('dist');
+  // PW_EXTDIR：负向自检开关——指向空目录证明"绿灯=扩展真的加载了"；PW_BUNDLED=1 强制内置 chromium（本地复现 CI 路径）。
+  const extensionPath = resolve(process.env.PW_EXTDIR || 'dist');
   // 监听脚本置于表单之后 + 事件委托:按钮点击一律由 document 捕获层统计,不再依赖"生成前绑定"。
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>回归夹具</title></head><body>
 ${e2eFormHtml}
@@ -105,7 +106,7 @@ ${e2eFormHtml}
   const base = `http://127.0.0.1:${addr.port}`;
 
   const userDataDir = mkdtempSync(join(tmpdir(), 'tuimian-reg-e2e-'));
-  const edgeCandidates = [
+  const edgeCandidates = process.env.PW_BUNDLED === '1' ? [] : [
     process.env.PLAYWRIGHT_EXECUTABLE_PATH,
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -161,7 +162,13 @@ ${e2eFormHtml}
     });
 
     let worker = context.serviceWorkers()[0];
-    if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 30000 });
+    if (!worker) {
+      try {
+        worker = await context.waitForEvent('serviceworker', { timeout: 30000 });
+      } catch {
+        throw new Error('具名断言：MV3 serviceworker 30s 未上线——扩展未真正加载（PW_EXTDIR 空/manifest 缺失，或浏览器无扩展支持，如 headless-shell）');
+      }
+    }
     const extensionId = new URL(worker.url()).host;
 
     // 用生产档案页面通道写入 profile(与既有 E2E 相同,避免绕过真实存储)。
