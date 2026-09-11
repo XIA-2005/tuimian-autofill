@@ -81,4 +81,14 @@
 - 剩余限制（结构性，如实记）：`card-signatures.json` 自身是 DECLARED-NEW——签名文件无法自锚，由后续每张卡的 update 自然追加签名（下一卡签名时其 prev 哈希入账本）；F00 交付物（任务书/竞品差距文档）仍未签名，按审查者预案 `update F00` 待其对该两文件的显式过审。
 - 下一卡：**F01**——oracle 七键草案（首批 3 校试签，过 `probe-oracle-validate.cjs`）+ bench 设施并行（P1/P4 只读台账/P5 独立判等/P9 脱敏/--negative-overfill/并入 test:offline）。
 
+## L-F01a · oracle 草案（三校试签批）交付（2026-09-11）
+
+- 交付：`test/gen-oracle-draft.cjs`（单源生成器）、`test/bench/fixtures/{blue-form,retro-form}.html`（合成夹具）、`docs/analysis/v10-review-2026-09-11/oracle-draft-F01.json`（**七键协议**，22+26+22=70 条）、`oracle-sampling-F01.md`（194 行：三校控件全集逐条枚举+分层规则+占比）。
+- 一致性保证（机械而非手抄）：expectedLiteral 全部经生成器内 `applyRule`（与判据同语义的独立实现）现场求值，规则不成立即抛错；controlInventory 与抽样文档由**同一次 DOM 解析**反推（radio/checkbox 按 name 折叠，hidden/submit/button/image 不计）；items↔DOM 断言 `assertLocators` 逐条验证定位真实存在。
+- 实测：`node test/gen-oracle-draft.cjs`=0；审查者校验器 `probe-oracle-validate.cjs oracle-draft-F01.json` → **仅 1 项 FAIL=A6 fixtures 3<15**（D1 试签批的既定形态；A1-A5/A7/B1-B2 机械项全过），exit 1。
+- 全集反推数（文档=JSON 同源）：generic 116(req18/opt96/ref2)、blue 30(18/8/4)、retro 26(15/7/4)；C2 拒填桶跨夹具覆盖 S1(blue+retro)/S3(retro)/S4(blue+retro)，generic 另有 captcha+超长文本边缘拒填。
+- 哈希状态：`check` = `受控一致 140|漂移 1|缺失 0|未声明 0|存量漂移 0`——**唯一 DRIFT=touch-lists.json**（F04 签名后又登记 F01 范围）。处置：**不自动重签**，连同试签批交审查者判定（其过审后 `update F04 docs/analysis/v10-hashes/touch-lists.json` 重签）。
+- 剩余限制：①两合成夹具 liveVerified=false（D 阶段真实页核验；provenance 已写明取自合同字段族）；②generic 夹具 items/total≈19%（既有夹具控件多而语义杂，扩 15 校批次将拉高映射密度）；③bench 实现未动工——按 D1 等草案试签结果，防整体返工。
+- 下一动作：审查者判卷（D2 逐条拒签权）→ 过则扩至 ≥15 校 + bench 设施（P1/P4 只读台账/P5 独立判等/P9 脱敏/--negative-overfill/并入 test:offline）。
+
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->

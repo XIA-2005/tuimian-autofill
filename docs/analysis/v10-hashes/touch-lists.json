@@ -37,5 +37,13 @@
   ],
   "REVIEW": [
     "docs/analysis/v10-review-*/**"
+  ],
+  "F01": [
+    "test/gen-oracle-draft.cjs",
+    "test/bench/fixtures/**",
+    "docs/analysis/v10-review-2026-09-11/oracle-draft-F01.json",
+    "docs/analysis/v10-review-2026-09-11/oracle-sampling-F01.md",
+    "test/bench/**",
+    "package.json"
   ]
 }
