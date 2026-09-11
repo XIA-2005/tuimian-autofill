@@ -43,6 +43,7 @@
     "test/bench/fixtures/**",
     "docs/analysis/v10-review-2026-09-11/oracle-draft-F01.json",
     "docs/analysis/v10-review-2026-09-11/oracle-sampling-F01.md",
+    "docs/analysis/v10-review-2026-09-11/oracle-F01.signed.json",
     "test/bench/**",
     "package.json"
   ]

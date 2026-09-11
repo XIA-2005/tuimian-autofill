@@ -109,4 +109,76 @@
 - 审查者判卷采纳项：其 STEP4 签名回算探针（PASS 10/FAIL 0 @2f8bdad）与"L-R6 披露无隐藏改动"确认在案；判据 v1.1 E1-E3 对扩批适用声明收悉；strict 延迟修+§5.1"待修"标记保留在案。
 - 下一动作：审查者三项复跑（定位子回查/一致性核对/校验器）→ 出签 `oracle-F01.signed.json` + 我方可执行 `update F01`（含 touch-lists 漂移一并重签）→ 扩 15 校（需用户提供真实目标校清单，F-1/E3 必需）+ bench 骨架推进中。
 
+## L-F01c · T1 签批落地批（strict 修 + F01/F00 批签 + 终态归零，2026-09-12）
+
+- **前置（签名核实，先跑后信）**：`oracle-F01.signed.json` 在盘，verdict=PASS、batch=D1-trial-sign-3、reviewer=DeepSeek（P6）；**draft sha256 本方复算 = `874f2f2512cfae914954c408155a4bc5a8f8bb312b7becfdfe46388e5bc7f21e`**，与其 `draft.sha256` 判定行一致；fixtureHashes 3 校（wisedu-generic-existing / blue-form-trial / retro-form-trial）；invalidatesOn=草案变更即失效条款在文。
+- **STEP① --strict 一行修（§5.1 残留 2）**：`tools/v10-hashes.cjs:149-151` fail 条件由 `(strict && (declared + declaredMod + externalMod))` 改为 `(strict && (declared + declaredMod))`——externalMod 排除（三文件豁免表永久 external），declared/declaredMod 加严保留。中途态验证：strict exit 1（因 drift 2 + declared 37 未签，加严仍在）；externalMod 排除的**终态因果证明**在 STEP④（归零后 strict 应 exit 0 且 EXTERNAL-MOD 3 仍在输出）。
+- **update F04 前 check 全文（§2-2 第 1 次留痕，2026-09-12）**：
+
+```
+[v10-hashes] check：受控一致 139 | 漂移 2 | 缺失 0 | 新文件已声明 37 | 未声明 0 | 存量已声明改动 0 | 存量漂移 0 | 外部改动 3（基线+签名 141 ∪ 树 88）
+DRIFT tools/v10-hashes.cjs
+DRIFT docs/analysis/v10-hashes/touch-lists.json
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/oracle-F01.signed.json
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/oracle-复核判据-F01-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/probe-oracle-validate.cjs
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/probe-sign-oracle.cjs
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/probe-verify-signatures.cjs
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/复审-F01三校试签批-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/复审-第四轮-B3-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-hashes/card-signatures.json
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/Edge-临时Profile-UI审计-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/GPT-独立补充审计-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/edge-temp-profile-audit.mjs
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/edge-temp-profile-extensions.png
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/edge-temp-profile-result.json
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/oracle-draft-F01.json
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/oracle-sampling-F01.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/probe-adapter-counts-gpt.cjs
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/probe-adapter-counts.cjs
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/probe-b3-precheck.cjs
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/启动提示词-F01-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/启动提示词-第三轮-F01-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/启动提示词-第二轮-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/启动提示词-第四轮-B3-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/复审-Edge临时Profile审计-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/复审-F00F03F04F05-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/复审-GPT补充审计-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/复审-第二轮-2026-09-11.md
+DECLARED-NEW docs/analysis/v10-review-2026-09-11/预审意见-任务书-v10.md
+DECLARED-NEW docs/analysis/任务书-v10-正确率与范围收敛-2026-09-11.md
+DECLARED-NEW docs/analysis/竞品差距与改进方案-2026-09-11.md
+DECLARED-NEW test/bench/classify.ts
+DECLARED-NEW test/bench/fixtures/blue-form.html
+DECLARED-NEW test/bench/fixtures/retro-form.html
+DECLARED-NEW test/bench/main.ts
+DECLARED-NEW test/bench/report.ts
+DECLARED-NEW test/bench/run.mjs
+DECLARED-NEW test/bench/self-test.ts
+DECLARED-NEW test/gen-oracle-draft.cjs
+EXTERNAL-MOD docs/analysis/ds-v9-verify-2026-09-11/independent-probes.cjs
+EXTERNAL-MOD docs/analysis/ds-v9-verify-2026-09-11/independent-probes.json
+EXTERNAL-MOD docs/analysis/ds-v9-复核报告-2026-09-11.md
+[说明] 漂移/缺失/未声明/存量漂移 非零在 RD-7 待审态下属预期（签名后归零），非 CI 事故；EXTERNAL-MOD 为并行会话产物信息行；--strict 额外要求已声明文件全部签名。
+```
+
+（CHECK1_EXIT=1；漂移 2 = ①刚改的 strict 行 [F04 已签文件] + touch-lists.json 已披露漂移。）
+
+- **STEP① update F04（首次，exit 0）**：`tools/v10-hashes.cjs E71A3411→4FBEDC5F | docs/analysis/v10-hashes/touch-lists.json 5E869062→FAC26775`。
+- **[执行偏差备案 ③，当轮自行发现并补正]** 上条 update 只列 2 文件，而 `update` 为**替换式**（`signed[card]=本次清单`）→ L-R5 首签的 `v10-baseline.json`/`v10-tree.json` 被洗出签名层（check2 DECLARED-NEW 37→39 的两项即其实证）。补正：工具头部注释补 strict 豁免版本注记（真实文档增量）后 `update F04` 列全 4 文件 → `tools/v10-hashes.cjs 4FBEDC5F→5EA10FDF | touch-lists.json FAC26775→1E545D62 | v10-baseline.json null→62949D90 | v10-tree.json null→36ECDE5A`，exit 0（baseline/tree 哈希与 L-R5 首签值一致，内容未变，托管恢复）。
+- **STEP② touch-list 增补**：F01 范围追加 `docs/analysis/v10-review-2026-09-11/oracle-F01.signed.json`（此前仅 REVIEW 通配声明、无哈希托管——依审查者指令板）。update 前快照：`受控一致 138 | 漂移 1（touch-lists.json）| 新文件已声明 39 | 未声明 0 | 存量漂移 0`，exit 1（全文结构同 STEP①，差异=+baseline/tree 两项 DECLARED-NEW，见偏差备案 ③）。
+  `update F01` 首签 11 文件 exit 0：`oracle-draft-F01.json null→874F2F25（=审查者签名锚定哈希，复算一致）| oracle-sampling-F01.md null→322811A6 | oracle-F01.signed.json null→B78E65E3 | gen-oracle-draft.cjs null→10226EAA | fixtures/blue-form.html null→472D6060 | fixtures/retro-form.html null→1A8D13BC | bench/{classify,main,report,self-test}+run.mjs 首签`。
+- **STEP③ update F00**：`任务书 null→DF0539E8（=v10.4 冻结 sha 前缀）| 竞品差距文档 null→DF389AF9`，exit 0。
+- **STEP④ 终态 check（全文）**：`受控一致 154 | 漂移 0 | 缺失 0 | 新文件已声明 24 | 未声明 0 | 存量已声明改动 0 | 存量漂移 0 | 外部改动 3`，**EXIT=0**——与审查者期望逐项吻合（DECLARED-NEW 24 全为 v10-review 审查产物 + card-signatures.json 自锚残留；EXTERNAL-MOD 3 信息行）。strict 复验：exit 1，fail 项=declared 24（加严保留的正确行为；externalMod 排除生效的数值证明=24 而非 27）。
+- **[工具签名语义修复，交审查者裁定]** `--oracle` 阶段产物（main.ts 改/oracle-run.ts 新增/package.json 接线）需随批签入时实证"替换式 + 任一无变化整卡 REJECT"组合死角：列全必 REJECT、列部分则洗白其余（偏差备案 ③ 的根因）。修复 `tools/v10-hashes.cjs` update 语义：真变化签入 + 无变化**重申同哈希**（prev==now，签名层不丢文件）+ **整批全无变化才 REJECT**（L-F04 负向自检 NEG2=单文件整批，行为保留）。验证：NEG2 复跑 `update F03 test/run.ts` → REJECT exit 1 ✓；`update F04` 4 文件（工具 `5EA10FDF→8E386795` 真变化 + 3 重申 `==`）exit 0 ✓；`update F01` 14 文件（main.ts `D6CA4188→334359C6`、oracle-run.ts `null→353BEC4D`、package.json `23AAE23B→1D52E195` 真变化 + 11 重申）exit 0 ✓。
+- **终态复核（含 --oracle 批签入后）**：`受控一致 155 | 漂移 0 | 缺失 0 | 新文件已声明 24 | 未声明 0 | 存量已声明改动 0 | 存量漂移 0 | 外部改动 3`，**EXIT=0**。
+- **bench 真实（已签 oracle）路径**（审查者 T1 点名验收项）：新增 `test/bench/oracle-run.ts` + main.ts `--oracle <signed.json> [--negative-overfill]` 分发。锚定：draft sha256 复算 `874f2f25…` 与 signed.json `draft.sha256` 一致 + counts 3/70/8 复核（不符即具名 exit 3，invalidatesOn 条款落地）；oracle 抽象档案路径→Profile schema 对齐表（emergency.*/language.*/apply.targetCollege，未列出即抛错防静默漏源）。
+  - `node test/bench/run.mjs --oracle docs/analysis/v10-review-2026-09-11/oracle-F01.signed.json --negative-overfill` → **exit 1 具名**：`具名断言[NEGATIVE-OVERFILL@oracle]: 真实(已签 oracle)路径下每校注入的期望外写入均被四分类判定 overfill`——三校逐校"注入/检出"配对 true/true（首版注入载体策略有虚报缺陷：blue/retro 无 untracked 载体而判定用合计值——已修为载体回退 refused 控件 + 逐校配对断言，修复过程如实记）。
+  - 真实路径四元组（红相位素材，不断言全绿）：generic `(12,0,3,2) filled=19 untracked=81`、blue `(0,1,3,4) filled=22`、retro `(0,0,3,3) filled=19`。**缺陷键**：missing 集中日期族 `csrq/rxny/byny/txtCsrq/txtRxny/txtByny`；blue `wrong:sqyxmc`（apply.targetCollege="精密仪器系"取值/映射差异）；generic overfill=12 为**抽样噪声疑点**（oracle 22 items 对 116 控件仅 19% 覆盖，期望外非抽样区合法写入计入 overfill）——三项解读交审查者/F02，本卡不动生产代码。
+- **package.json 接线**：`scripts.bench="node test/bench/run.mjs --self-test"`、`scripts.bench:oracle`、`test:offline` 追加 `&& npm run bench`（绕过路径 #6 封堵）；`npm run bench` exit 0。
+- **[check 扫描集边界观察，供审查者裁定]** `docs/dev-notes/` 下 9a0f40a 后新建并提交的文件（本账本、交接文件、影响面文件）不在 baseline∪签名∪tree 任何一层——check 对其改动无信号（tree 为冻结时点快照的既定设计）。本批未修，登记在案。
+- **CI**：本轮 push 后 offline-gates run conclusion 见交付单（2026-09-11 的 rev3 run 34620351651 failure 已定性为 P01 waitForFunction 15s 偶发超时：rev3 不含代码改动、代码等同的 17a216a 两次 run 全绿；未重跑历史 run，遵审查者指令）。
+- 剩余限制：①strict 仍 exit 1（declared=审查产物 24 项加严保留，属"保留加严"指令的预期态）；②真实路径四元组非绿（红相位素材，属 F02 及后续卡的工作面）；③fixtureHashes 口径（≠夹具文件哈希）未解释，原样透传。
+- 下一卡：审查者 T1 复跑 → F02 红相位（`correctness-gaps-2026-09-11.md` 目标行为断言）。
+
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->

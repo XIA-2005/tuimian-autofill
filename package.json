@@ -15,10 +15,12 @@
     "test:drivers:e2e": "node test/driver-cancellation-e2e.mjs",
     "test:dependency:e2e": "node build.mjs && node test/dependency-e2e.mjs",
     "check:adapters": "node build.mjs && node test/check-adapters.js",
+    "bench": "node test/bench/run.mjs --self-test",
+    "bench:oracle": "node test/bench/run.mjs --oracle docs/analysis/v10-review-2026-09-11/oracle-F01.signed.json",
     "test:e2e:real": "node test/bundle-real-e2e.mjs && node test/real-e2e.cjs",
     "typecheck": "tsc --noEmit",
     "package": "npm test && node package.mjs",
-    "test:offline": "npm run typecheck && npm test && npm run check:adapters && npm run test:regression"
+    "test:offline": "npm run typecheck && npm test && npm run check:adapters && npm run test:regression && npm run bench"
   },
   "devDependencies": {
     "@types/chrome": "latest",

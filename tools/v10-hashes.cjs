@@ -11,7 +11,7 @@
 //       信息行、不计 exit——与审查者"tree 改动只报 1 项"预检口径一致（其预检用 committed diff）。
 //   (iii) -c core.quotePath=false 全程使用（B-1 发现的中文名转义逃逸）。
 // 模式：baseline | tree | check [--strict] | update <卡号> <files...>
-//   --strict：额外要求所有已声明/已暴露文件均已签名冻结（未来接 CI 用）。
+//   --strict：额外要求所有已声明/已暴露文件均已签名冻结（未来接 CI 用）；externalMod（§5.1 豁免表三文件）不计入 strict 失败[v10.5 残留 2 修复]。
 // 政策（任务书冻结）：卡交付→审查者独立复跑通过→执行者 update 重签→账本记前后哈希与 check 输出全文
 //   （[N-流程] 签名动作必须把当时的 check 输出贴进账本——本工具未接 CI，守卫强度依赖复跑留痕）。
 'use strict';
@@ -146,7 +146,9 @@ if (mode === 'check') {
   for (const d of treeDrift) console.log('TREE-DRIFT ' + d);
   for (const d of externalMod) console.log('EXTERNAL-MOD ' + d);
   console.log('[说明] 漂移/缺失/未声明/存量漂移 非零在 RD-7 待审态下属预期（签名后归零），非 CI 事故；EXTERNAL-MOD 为并行会话产物信息行；--strict 额外要求已声明文件全部签名。');
-  const fail = drift.length || missing.length || unsigned.length || treeDrift.length || (strict && (declared.length + declaredMod.length + externalMod.length));
+  // [v10.5] §5.1 残留 2 修复：strict 排除 externalMod（三文件豁免表永久 external，未提交前 strict 恒红）；
+  // declared/declaredMod 加严保留（已声明文件仍须签名冻结）。
+  const fail = drift.length || missing.length || unsigned.length || treeDrift.length || (strict && (declared.length + declaredMod.length));
   process.exit(fail ? 1 : 0);
 }
 
@@ -163,6 +165,7 @@ if (mode === 'update') {
   const lastExpected = expectedMap();
   const treeFiles = readJson(TREE, { files: {} }).files;
   const out = [];
+  const changed = [];
   for (const p of files) {
     if (!res.some((r) => r.test(p))) { console.error(`[v10-hashes] REJECT：${p} 不在卡 ${card} 的 touch-list 内`); process.exit(1); }
     const abs = path.join(ROOT, p);
@@ -171,16 +174,22 @@ if (mode === 'update') {
       if (!tracked) { console.error(`[v10-hashes] REJECT：${p} 不存在且从未被跟踪，无从签`); process.exit(1); }
       if (lastExpected[p] === 'DELETED') { console.error(`[v10-hashes] REJECT：${p} 已是删除墓碑`); process.exit(1); }
       out.push({ path: p, sha256: 'DELETED', prev: lastExpected[p] === undefined ? 'TREE' : lastExpected[p] });
+      changed.push(p);
       continue;
     }
     const now = diskSha(p);
-    if (lastExpected[p] === now) { console.error(`[v10-hashes] REJECT：${p} 与上次签名相同，无变化不签`); process.exit(1); }
+    // [v10.5] 签名语义修复：update 为替换式（signed[card]=本次清单），此前"任一文件无变化→整卡 REJECT"与
+    // 替换式组合出死角——批内部分文件再改动时列全必 REJECT、列部分则洗白其余。现改为：真变化签入，
+    // 无变化重申同哈希（prev==now，签名层不丢文件），仅整批全无变化才 REJECT（保留 L-F04 负向自检 NEG2）。
+    if (lastExpected[p] === now) { out.push({ path: p, sha256: now, prev: now }); continue; }
     out.push({ path: p, sha256: now, prev: lastExpected[p] === undefined ? null : lastExpected[p] });
+    changed.push(p);
   }
+  if (!changed.length) { console.error(`[v10-hashes] REJECT：卡 ${card} 本批全部文件与上次签名相同，无变化不签`); process.exit(1); }
   const signed = readJson(SIGNED, {});
   signed[card] = { at: new Date().toISOString(), files: out };
   fs.writeFileSync(SIGNED, JSON.stringify(signed, null, 1));
-  console.log(`[v10-hashes] 已重签卡 ${card}：` + out.map((f) => `${f.path} ${String(f.prev).slice(0, 8)}→${f.sha256.slice(0, 8)}`).join(' | '));
+  console.log(`[v10-hashes] 已重签卡 ${card}：` + out.map((f) => `${f.path} ${String(f.prev).slice(0, 8)}${f.prev === f.sha256 ? '==（重申）' : '→' + f.sha256.slice(0, 8)}`).join(' | '));
   process.exit(0);
 }
 
