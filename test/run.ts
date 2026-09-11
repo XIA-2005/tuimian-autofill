@@ -52,6 +52,7 @@ import { runDependencyExecutorTests } from '../src/core/dependency-executor.test
 import { runV7ReviewTests } from '../src/core/v7-review.test';
 import { runV8ReviewTests } from '../src/core/v8-review.test';
 import { runV9ReviewTests } from '../src/core/v9-review.test';
+import { getV9ProtocolFailures, runV9ProtocolTests } from '../src/core/v9-protocol.test';
 import { getHighlightUIFailures, runHighlightUITests } from '../src/content/highlight-ui.test';
 import { getPickerHandoffFailures, runPickerHandoffTests } from '../src/content/picker-handoff.test';
 import { getPanelFailures, runPanelTests } from '../src/content/panel.test';
@@ -3576,6 +3577,14 @@ void (async () => {
     check(true, '[v9-review] 暂停顺序、预算、续轮最新结果与旧runId脱敏');
   } catch (error) {
     check(false, '[v9-review] ' + String(error));
+  }
+  try {
+    runV9ProtocolTests();
+    const v9ProtocolFailures = getV9ProtocolFailures();
+    for (const failure of v9ProtocolFailures) check(false, '[v9-protocol] ' + failure);
+    check(v9ProtocolFailures.length === 0, '[v9-protocol] 83 项协议时序与载荷完整性断言');
+  } catch (error) {
+    check(false, '[v9-protocol] ' + String(error));
   }
   runPanelTests();
   for (const failure of getPanelFailures()) check(false, '[panel] ' + failure);

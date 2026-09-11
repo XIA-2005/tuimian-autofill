@@ -1,0 +1,4 @@
+# 测试样本与证据文件按字节冻结：check:adapters 的 sha256 以磁盘字节为准，
+# 禁止 Git 行尾转换造成"本地绿/CI 红"漂移（ustb 样本 CRLF 内含，2026-09-11 CI 实证）。
+test/samples/** -text
+test/evidence/** -text
