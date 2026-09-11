@@ -1,0 +1,29 @@
+{
+  "F03": [
+    "test/run.ts",
+    ".gitattributes",
+    "test/samples/**",
+    "test/evidence/**"
+  ],
+  "A1": [
+    "src/core/filler.ts",
+    "src/core/control-drivers.ts",
+    "src/core/event-policy.ts",
+    "test/run.ts",
+    "src/core/event-policy.test.ts"
+  ],
+  "A7": [
+    "src/core/standard-code-catalog.ts",
+    "src/core/moe-school-codes.ts",
+    "src/core/moe-major-codes.ts",
+    "tools/gen-moe-catalogs.mjs",
+    "tools/data-sources.json",
+    "src/core/school-picker-driver.ts",
+    "src/core/major-picker-driver.ts",
+    "test/run.ts"
+  ],
+  "F04": [
+    "tools/v10-hashes.cjs",
+    "docs/analysis/v10-hashes/touch-lists.json"
+  ]
+}
