@@ -1,0 +1,62 @@
+{
+ "F03": {
+  "at": "2026-09-11T14:52:27.022Z",
+  "files": [
+   {
+    "path": "test/run.ts",
+    "sha256": "BFD160EB928717FA37102720A89C9337ACCDC97378AE3F43DDE7942F4226CDE8",
+    "prev": "B7545117D227770304B98750E44B2EC59B18CD7CA076096A8430AAE57E037E16"
+   },
+   {
+    "path": "test/playwright.mjs",
+    "sha256": "84309C4381A327B0A8F88ED8388F1C839631B5391953D6E16CF2D5F530769CCA",
+    "prev": "FAB2E6C8A8FCD9941159C6AA6F9B7710AF476199B703D01372625CF1FD12782A"
+   },
+   {
+    "path": "test/regression/run-e2e.ts",
+    "sha256": "82185A6F51E34CFD6D9CB98655411C8046F1F85A281A53DE8D744B0947750A35",
+    "prev": "C8547DCA0A166C4704D7F6A7E488AEFF094F28FD875A2D57951B8D267DE30EB2"
+   },
+   {
+    "path": ".gitattributes",
+    "sha256": "3F2AE703AC12098666B05CFE80BFE7A6691BE15C02DDD742DE170AD5A436B2CE",
+    "prev": null
+   },
+   {
+    "path": ".github/workflows/offline-gates.yml",
+    "sha256": "D40A59A218A4A12449C158DA0D440E855D5DECC2765950AF038940670A1B11F1",
+    "prev": null
+   },
+   {
+    "path": "test/.v9-tmp-run.mjs",
+    "sha256": "DELETED",
+    "prev": "ABSENT"
+   }
+  ]
+ },
+ "F04": {
+  "at": "2026-09-11T14:52:27.097Z",
+  "files": [
+   {
+    "path": "tools/v10-hashes.cjs",
+    "sha256": "E71A3411D918B6DB27354DD38445ABA3B8CFEA5EAC5562FA89B279F892CD461B",
+    "prev": null
+   },
+   {
+    "path": "docs/analysis/v10-hashes/touch-lists.json",
+    "sha256": "5E8690624D2A537D0680ECA77BBF1BDE52813E0B5075A0CA0C3F4CC884C38CBC",
+    "prev": null
+   },
+   {
+    "path": "docs/analysis/v10-hashes/v10-baseline.json",
+    "sha256": "62949D90946C7B5E6488E8F3E2AB98F693240F49020DA4BCE126C36C1DB7BF82",
+    "prev": null
+   },
+   {
+    "path": "docs/analysis/v10-hashes/v10-tree.json",
+    "sha256": "36ECDE5A1D9EC6A6B6A3681C8507E869B4DEE9B4C59A917096CB5F3BF6E9EE46",
+    "prev": null
+   }
+  ]
+ }
+}

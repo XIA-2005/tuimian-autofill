@@ -1,6 +1,6 @@
 # v10 执行账本：正确率与可填写范围收敛
 
-- 任务书：`docs/analysis/任务书-v10-正确率与范围收敛-2026-09-11.md` **当前冻结 v10.3 sha256=`facd23a62c0abab312e80e03f1804414dccff04ac5c73791cf5f2c79615d0d4a`**（v10.1=a5f1f78c… → v10.2=1a0b6388… → v10.3，演进见任务书版本日志）
+- 任务书：`docs/analysis/任务书-v10-正确率与范围收敛-2026-09-11.md` **当前冻结 v10.3 sha256=`8a619e6afa54781eed24fd359159bf4c466c3ec7e26415a14bcf6dc477b55d6e`**（v10.3 初值 facd23a6… 因"六字段→七键"正名更新为此值；v10.1=a5f1f78c… → v10.2=1a0b6388…，演进见任务书版本日志）
 - 冻结基线 HEAD：`9a0f40a`；审查依据：`docs/analysis/v10-review-2026-09-11/预审意见-任务书-v10.md`（通过 4 / 修订 16 / 否决 1，全部处置见任务书版本日志与 §1.4 勘误）
 - 引用一律用稳定 ID（R/S/F/A/B/C/D/INV/P/RD/VB），禁章节号。
 
@@ -70,5 +70,15 @@
 - 门禁：`node --check`=0；`npm run test:offline`=0。
 - **[§7 事实登记] Edge 临时 Profile UI 审计（消解"装日常 profile"授权问题）**：GPT 用 Playwright+真实 Edge+mkdtemp 临时 profile 完成 `edge://extensions` UI 级验证；DeepSeek 复跑 exit 0、临时目录零残留、日常 profile 未触碰。**如实标注两项缺口：`enabled`/`dailyProfileTouched` 为常量断言（非实测页面状态）、截图未经审查者核验——不得表述为"已复核"。**
 - 下一卡：交审查者复跑→过审→`update F03/F04` 签名→F01（oracle 草案先行）。
+
+## L-R5 · 第四轮正名 + STEP4 签名执行（解冻 F03/F04，2026-09-11）
+
+- **[正名]** oracle 协议"六字段"系审查者计数错 → **七键**（夹具级 `fixturePage` + 条目级 6 键：locator/profileSource/transformRule/basis 对象 + expectedLiteral/precision 字符串）。任务书版本日志与 F01 卡文已改；提示词/记忆由审查者侧改；本账本为执行者侧记录源。判据文件（A1-A7/B1-B2/C1-C4/D1-D4+7 条穷尽拒签理由）与校验器 `probe-oracle-validate.cjs` 已由审查者**预冻结**，F01 草案先过校验器再判卷。
+- **[STEP4 签名执行]**（过审判定=审查者本轮启动指令经用户转达，如实记来源）：
+  - `update F03`：test/run.ts `B7545117→BFD160EB`、playwright.mjs `FAB2E6C8→84309C43`、run-e2e.ts `C8547DCA→82185A6F`、.gitattributes `null→3F2AE703`、offline-gates.yml `null→D40A59A2`、.v9-tmp-run.mjs `ABSENT→DELETED`（墓碑首用）——exit 0。
+  - `update F04`（按审查者扩充加签两锚文件）：v10-hashes.cjs `null→E71A3411`、touch-lists.json `null→5E869062`、v10-baseline.json `null→62949D90`、v10-tree.json `null→36ECDE5A`——exit 0。
+- **签名后 check 输出全文（§2-2 新规首次完整留痕）**：`受控一致 141 | 漂移 0 | 缺失 0 | 新文件已声明 23 | 未声明 0 | 存量已声明改动 0 | 存量漂移 0 | 外部改动 3（基线+签名 141 ∪ 树 88）`，**EXIT=0**，与审查者预言逐项吻合（EXTERNAL-MOD 3 为并行会话信息行）。
+- 剩余限制（结构性，如实记）：`card-signatures.json` 自身是 DECLARED-NEW——签名文件无法自锚，由后续每张卡的 update 自然追加签名（下一卡签名时其 prev 哈希入账本）；F00 交付物（任务书/竞品差距文档）仍未签名，按审查者预案 `update F00` 待其对该两文件的显式过审。
+- 下一卡：**F01**——oracle 七键草案（首批 3 校试签，过 `probe-oracle-validate.cjs`）+ bench 设施并行（P1/P4 只读台账/P5 独立判等/P9 脱敏/--negative-overfill/并入 test:offline）。
 
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->
