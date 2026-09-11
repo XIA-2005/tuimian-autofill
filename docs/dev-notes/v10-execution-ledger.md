@@ -35,9 +35,17 @@
 - 根因链（全部实测）：挂起=临时 runner 未标 `external:['esbuild']`（内联 esbuild 找不到二进制→同步死锁；诊断 runner "import bundle" 后 25s 无输出实证，任务书 §1.4-3）；`build.mjs:70` 已有 external → 正式管线接入不挂。CI 红因=`git ls-files --eol` 实证 `ustb-education/page.html` i/lf w/crlf + expected sha 记录 CRLF 字节 + 本机 `core.autocrlf=true` → ubuntu CI 检出 LF blob（e550…）≠ 期望（43b8…）。
 - 证据：`test/run.ts:55` import + `:3580-3587` 调用块；`.gitattributes`（test/samples 与 test/evidence `-text` 字节冻结）+ `git add --renormalize`（ustb 样本与 pilot-2026-09.json 两个文件，blob 现=磁盘字节）。
 - 命令+退出码：`npm test` → `PASS: [v9-protocol] 83 项协议时序与载荷完整性断言`，NPM_TEST_EXIT=0（84 系"含函数定义行"的旧口径，真实调用 83）；`node build.mjs && node test/check-adapters.js` → 全部通过 CA_EXIT=0；CI 首跑记录见下条 push 后补。
-- 负向自检：待补跑——把 `check(v9ProtocolFailures.length === 0` 改为 `=== 1` → rebuild+run 须"1 项断言失败" exit 1，还原后复绿（执行于审查前）。
-- CI 现状（gh 只读）：offline-gates 已于真实 CI 触发；02:27 run 败于 Node 运行时 undici（该 commit 已修），02:33 run 败于 ustb 样本哈希（本卡修复）。yml 内"尚未在真实 CI 运行"注释已过时——留待 D3 或独立小改，不在 F03 touch 内强改。
-- 剩余限制：本地修复的 CI 验证依赖 push 后首跑。
-- 下一卡：F05。
+- 负向自检（已跑）：`length===0` 反转为 `===1` → `FAIL: [v9-protocol] 83 项协议时序与载荷完整性断言`、"1 项断言失败"、NEG_EXIT=1 ✓；还原复绿 GREEN_EXIT=0 ✓；`git diff --check`=0；`tsc --noEmit`=0。
+- **CI 首跑记录**（run 34563656077，commit 5958a4f）：Unit ✓ jsdom ✓ **check:adapters ✓（ustb 哈希红已消）** Regression ✓ → **Browser E2E ✗**：`waitForEvent('serviceworker') 15s 超时`（`playwright.mjs:68`）。根因=CI 无 Edge 候选时落到 chromium **headless shell**，不加载 MV3 扩展；仓库内 dependency/manual-handoff/deadline 三个 e2e 早已有 `channel:'chromium'` 回退惯例，playwright.mjs 与 run-e2e.ts 是**漏网两处**。
+- **F03 追加修复**（commit `f49c93a`，已推送）：playwright.mjs/run-e2e.ts 补 `channel:'chromium'` 回退+30s 超时（收敛到仓库既有惯例：dependency/manual-handoff/deadline 三 e2e 早已如此写）；本地 `PW_HEADLESS=1 npm run test:e2e`=0、`test:regression:e2e`=0（Edge 路径不回归）。
+- **CI 终验（offline-gates 历史首次全绿）**：run `34564989235` @ f49c93a——Unit ✓ / check:adapters ✓ / Regression ✓ / **Browser E2E ✓**，`gh run watch --exit-status`=0。三级红（undici→样本哈希→headless shell）全部闭环。
+- F03 状态=**交付完成，待审查者独立复跑判定**；过审前不执行 `v10-hashes update F03`（RD-7），`check` 现报已改未签文件的 DRIFT 属预期审计态。
+- 剩余限制：yml `:3` 注释"尚未在真实 CI 运行"已过时（F05 记录，D3 收口）。
+- 下一卡：F05（已完成扫描）→ F01。
+
+## L-F05 · 影响面扫描 —— 完成（只读）
+
+- 产出 `docs/dev-notes/v10-影响面-F05.md`：计数断言 6 处（含 `run.ts:294/296/492`、`regression/run.ts:375`）、角色词标尺 3 组（A5/A6 必须保持 `jxlxr/qtdh→紧急槽` 绿）、A7 关键修正——**区划码表已含台港澳，只缺 REGION_TREE**；蓝三联硬编码 `'61'/'61|10698|…'` fixture 列为 A7 必复跑项。
+- 下一卡：F01（bench 设施）。
 
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->
