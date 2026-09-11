@@ -58,7 +58,7 @@ provenance：blue/retro 为**合成夹具**（字段族与 id 取自本仓库适
 | sqzy | text | 申请专业 |  | optional |  |  |
 | zzmm2 | select | 政治面貌（联动下拉） |  | optional |  |  |
 | yzm | text | 验证码* |  | refusable |  | S-CAPTCHA/explicit-refusal |
-| pwd | password | 登录密码 |  | refusable |  | S-SECURITY/silent-no-write |
+| pwd | password | 登录密码 |  | refusable |  | S-SECURITY/explicit-refusal |
 | hjqk | textarea | 获奖情况 |  | optional |  |  |
 | kyjl | textarea | 科研经历 |  | optional |  |  |
 | shsj | textarea | 社会实践 |  | optional |  |  |

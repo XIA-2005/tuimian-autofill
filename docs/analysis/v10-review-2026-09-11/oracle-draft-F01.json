@@ -2,7 +2,7 @@
  "schema": "oracle_f01_v1",
  "batch": "trial-sign-3-schools",
  "provenanceNote": "blue-form/retro-form 两夹具为合成件：字段族与 nativeId 取自本仓库适配包合同的真实系统形状（liveVerified=false，D 阶段以真实页核验）；wisedu-generic 为既有 jsdom 夹具。controlInventory 由本生成器直接解析三份夹具 DOM 反推（radio/checkbox 按 name 折叠为逻辑控件，hidden/submit/button/image 不计），与抽样规则文档表格同源。",
- "revisions": "rev2：修正审查者 D2 拒签项（hjqk 定位子不存在→已从拒填集移除；F-3 一致性→refusals 改为 inventory 机械推导）；引入 F-2 二分语义 expect/deferredTo 与 E1 解析断言（判据 v1.1 预实现）。",
+ "revisions": "rev3：E4 一 token 修正(generic pwd 由 silent-no-write 改 explicit-refusal——引擎对密码字段已有带理由 skip 决策,非缺口,标 silent 会把低于 P2 的目标冻结进 oracle)；rev2：修正审查者 D2 拒签项（hjqk 定位子不存在→已从拒填集移除；F-3 一致性→refusals 改为 inventory 机械推导）；引入 F-2 二分语义 expect/deferredTo 与 E1 解析断言（判据 v1.1 预实现）。",
  "fixtures": [
   {
    "fixtureId": "wisedu-generic-existing",
@@ -452,9 +452,9 @@
       "kind": "name",
       "value": "pwd"
      },
-     "reason": "登录密码字段零写入硬约束，允许无痕迹",
+     "reason": "密码字段禁读写，运行期须产出带理由的人工提示（引擎既有 skip 决策，与 yzm 同例；E4 修正）",
      "gapId": "S-SECURITY",
-     "expect": "silent-no-write",
+     "expect": "explicit-refusal",
      "covers": [
       "pwd"
      ]
