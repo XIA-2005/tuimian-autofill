@@ -52,6 +52,7 @@ if (mode === 'check') {
   let ok = 0; const drift = []; const missing = [];
   for (const p of Object.keys(expected)) {
     const abs = path.join(ROOT, p);
+    if (expected[p] === 'DELETED') { if (!fs.existsSync(abs)) ok++; else drift.push(p + '(应已删除但存在)'); continue; }
     if (!fs.existsSync(abs)) { missing.push(p); continue; }
     if (sha(abs) === expected[p]) ok++; else drift.push(p);
   }
@@ -80,7 +81,13 @@ if (mode === 'update') {
   for (const p of files) {
     if (!res.some((r) => r.test(p))) { console.error(`[v10-hashes] REJECT：${p} 不在卡 ${card} 的 touch-list 内`); process.exit(1); }
     const abs = path.join(ROOT, p);
-    if (!fs.existsSync(abs)) { console.error(`[v10-hashes] REJECT：${p} 不存在`); process.exit(1); }
+    if (!fs.existsSync(abs)) {
+      // 删除墓碑：仅限基线/签名里存在过的文件（自证的删除如 F03 删临时 runner）。
+      if (lastExpected[p] === undefined) { console.error(`[v10-hashes] REJECT：${p} 不存在且从未被跟踪，无从签`); process.exit(1); }
+      if (lastExpected[p] === 'DELETED') { console.error(`[v10-hashes] REJECT：${p} 已是删除墓碑，无变化不签`); process.exit(1); }
+      out.push({ path: p, sha256: 'DELETED', prev: lastExpected[p] });
+      continue;
+    }
     const now = sha(abs);
     if (lastExpected[p] === now) { console.error(`[v10-hashes] REJECT：${p} 与上次签名相同，无变化不签`); process.exit(1); }
     out.push({ path: p, sha256: now, prev: lastExpected[p] || null });

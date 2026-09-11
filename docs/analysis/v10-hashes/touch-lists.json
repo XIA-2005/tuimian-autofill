@@ -6,7 +6,8 @@
     "test/evidence/**",
     "test/playwright.mjs",
     "test/regression/run-e2e.ts",
-    "test/regression/run-e2e.js"
+    "test/regression/run-e2e.js",
+    "test/.v9-tmp-run.mjs"
   ],
   "A1": [
     "src/core/filler.ts",
