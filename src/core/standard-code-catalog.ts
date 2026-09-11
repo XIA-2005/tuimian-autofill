@@ -24,10 +24,11 @@ const MAJOR_NAME_TO_CODE: Record<string, string> = {
   工商管理: '120201K', 会计学: '120203K', 行政管理: '120402', 临床医学: '100201K', 药学: '100701',
 };
 
+// P10b:不再一律删除括号(校区/方向/培养单位可能是不同招生代码);只有目录里确有完整名称才反查,
+// 查不到就返回空交由页面原生选项/搜索提示,绝不因"去括号后像某校"而给出错误代码。
 function cleanName(value: string): string {
   return String(value || '')
     .replace(/^[\s|｜]*[a-z0-9._-]{4,20}[\s|｜:：-]*/i, '')
-    .replace(/（[^）]*）|\([^)]*\)/g, '')
     .replace(/\s+/g, '')
     .trim();
 }

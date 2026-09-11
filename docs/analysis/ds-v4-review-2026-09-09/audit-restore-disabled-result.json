@@ -1,0 +1,14 @@
+{
+  "mutation": "conditionalRestore always returns notAttempted; business source restored before test",
+  "e2eExit": 0,
+  "expected": "F07 actual restore coverage should fail",
+  "tail": [
+    "PASS: F06 React 受控组件夹具通过(重置字段 failed、对照组 filled)",
+    "PASS: F06 Vue 受控组件夹具通过(重置字段 failed、对照组 filled)",
+    "PASS: F07 恢复语义夹具通过(不可恢复不覆盖、可恢复不残留、零提交)",
+    "PASS: e2e 安全与所有权断言通过(密码/验证码/按钮零副作用)",
+    "PASS: 网络隔离门禁生效(0 次未知请求)",
+    "P01 扩展 E2E 回归全部通过 ✅"
+  ],
+  "baselineRebuildExit": 0
+}

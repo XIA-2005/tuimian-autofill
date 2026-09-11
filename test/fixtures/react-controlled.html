@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>React 受控组件夹具</title>
+</head>
+<body>
+  <div id="root"></div>
+  <!-- 本地 vendor(由测试服务器从 node_modules 提供,非 CDN) -->
+  <script src="/vendor/react.js"></script>
+  <script src="/vendor/react-dom.js"></script>
+  <script>
+    // F06 夹具行为(react 18.3.1 / react-dom 18.3.1,createRoot 并发渲染):
+    // - xm 为受控 input:onChange 更新 state 后,页面在 300ms 主动把 state 重置为空 —— 模拟"框架即时接受后又重置"。
+    // - sjh 为普通受控 input:接受写入并保持 —— 对照组。
+    (function () {
+      var h = React.createElement;
+      function App() {
+        var nameState = React.useState('');
+        var name = nameState[0], setName = nameState[1];
+        var phoneState = React.useState('');
+        var phone = phoneState[0], setPhone = phoneState[1];
+        React.useEffect(function () {
+          if (!name) return undefined;
+          var t = setTimeout(function () { setName(''); }, 300);
+          return function () { clearTimeout(t); };
+        }, [name]);
+        return h('table', null,
+          h('tbody', null,
+            h('tr', null,
+              h('td', null, '姓名*'),
+              h('td', null, h('input', {
+                name: 'xm',
+                value: name,
+                onChange: function (e) { setName(e.target.value); }
+              }))),
+            h('tr', null,
+              h('td', null, '手机号码*'),
+              h('td', null, h('input', {
+                name: 'sjh',
+                value: phone,
+                onChange: function (e) { setPhone(e.target.value); }
+              }))),
+            // 框架拒绝:受控但 onChange 不更新 state(值始终被 React 强制为空),用于验证"框架拒绝接受"路径。
+            h('tr', null,
+              h('td', null, '电子邮箱*'),
+              h('td', null, h('input', {
+                name: 'email',
+                value: '',
+                onChange: function () { /* 故意拒绝:不更新 state */ }
+              })))
+          )
+        );
+      }
+      ReactDOM.createRoot(document.getElementById('root')).render(h(App));
+      window.__reactFixtureReady = true;
+    })();
+  </script>
+</body>
+</html>

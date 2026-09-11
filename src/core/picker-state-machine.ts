@@ -119,10 +119,32 @@ export function savePickerState(snapshot: PickerStateSnapshot, doc?: Document | 
       for (let i = 0; i < cut; i++) delete (snapshot.pickers as any)[entries[i][0]];
     }
     snapshot.at = Date.now();
-    store.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    // P08:落盘只写匿名进度(状态/尝试/时间/错误),不写字段真实值与 pickerContext
+    // (value/context 仅在内存与旧版快照中存在;新格式恢复时从当前档案/合同重新生成)。
+    const serializable: Record<string, unknown> = { at: snapshot.at, pickers: {} as Record<string, unknown> };
+    for (const [fieldId, rec] of Object.entries(snapshot.pickers)) {
+      (serializable.pickers as Record<string, unknown>)[fieldId] = {
+        state: rec.state,
+        attempt: rec.attempt,
+        lastError: rec.lastError,
+        updatedAt: rec.updatedAt,
+      };
+    }
+    store.setItem(STORAGE_KEY, JSON.stringify(serializable));
   } catch {
     // 忽略（隐私模式 / 序列化异常）
   }
+}
+
+/**
+ * 功能:P08 picker 代码冲突判定(纯函数)——代码字段已有非空且与期望代码不同时,
+ * 视为冲突/需人工,不清用户已有非空值、不自动重开弹窗覆盖。
+ */
+export function pickerCodeConflictDecision(currentCode: string, expectedCode: string | undefined): 'conflict' | 'ok' | 'missing' {
+  const cur = String(currentCode || '').trim();
+  if (!expectedCode) return 'missing'; // 无期望代码:交由 picker 正常流程
+  if (!cur) return 'ok'; // 页面代码为空:允许自动弹窗选择
+  return cur === String(expectedCode).trim() ? 'ok' : 'conflict';
 }
 
 /** 功能：标记 picker 进入新状态（state 转移 + attempt 自增只在 failed 时）。 */
@@ -268,4 +290,22 @@ export function isPickerExhausted(fieldId: string, doc?: Document | null): boole
   const rec = loadPickerState(doc).pickers[fieldId];
   if (!rec) return false;
   return rec.state === 'failed' || rec.attempt >= MAX_PICKER_ATTEMPT;
+}
+
+/**
+ * 功能:F08a picker 成对角色守卫——比较前先区分代码框/名称框/显示框角色,不得把名称与代码直接比较。
+ * code 为空但名称/显示已有内容 → 用户手工输入了名称而缺代码:交给用户,不自动清空合法名称也不自动开弹窗覆盖。
+ */
+export function pickerPairVerdict(input: {
+  code: string;
+  expectedCode: string | undefined;
+  nameFilled: boolean;
+  displayFilled: boolean;
+}): 'ok' | 'conflict' | 'missing' {
+  const code = String(input.code || '').trim();
+  const expected = input.expectedCode ? String(input.expectedCode).trim() : '';
+  if (!expected) return 'missing';
+  if (code && code !== expected) return 'conflict';
+  if (!code && (input.nameFilled || input.displayFilled)) return 'conflict';
+  return 'ok';
 }

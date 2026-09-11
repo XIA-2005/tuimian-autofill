@@ -1,0 +1,87 @@
+[
+  {
+    "id": "E01-stale-resume",
+    "accepted": true,
+    "stillPaused": false,
+    "expected": "reject old sequence, stay paused"
+  },
+  {
+    "id": "E02-new-active-frame-while-paused",
+    "pauseTimerActive": true,
+    "hardTimerActive": false,
+    "expected": "automatic frame restores hard deadline"
+  },
+  {
+    "id": "E03-pause-expiry",
+    "missing": [
+      "0::only",
+      "0::only"
+    ],
+    "waiting": 2,
+    "total": 0,
+    "stopDocId": null,
+    "expected": "one region, prior snapshot retained, scoped stop"
+  },
+  {
+    "id": "E04-success-masks-new-failure",
+    "actual": "filled",
+    "expected": "failed"
+  },
+  {
+    "id": "E05-private-run-id",
+    "actual": {
+      "runId": "PRIVATE_RUN_TOKEN",
+      "startedAt": 2,
+      "updatedAt": 2,
+      "stage": "idle",
+      "active": false,
+      "title": "填写状态已恢复",
+      "detail": "填写状态已恢复",
+      "currentLabel": "",
+      "counts": {
+        "total": 0,
+        "completed": 0,
+        "filled": 0,
+        "skipped": 0,
+        "failed": 0,
+        "waiting": 0
+      },
+      "progress": {
+        "current": 0,
+        "total": 0
+      },
+      "events": []
+    }
+  },
+  {
+    "id": "E06-future-time",
+    "actual": {
+      "runId": "r",
+      "startedAt": 100,
+      "updatedAt": 100,
+      "stage": "idle",
+      "active": false,
+      "title": "填写状态已恢复",
+      "detail": "填写状态已恢复",
+      "currentLabel": "",
+      "counts": {
+        "total": 0,
+        "completed": 0,
+        "filled": 0,
+        "skipped": 0,
+        "failed": 0,
+        "waiting": 0
+      },
+      "progress": {
+        "current": 0,
+        "total": 0
+      },
+      "events": []
+    }
+  },
+  {
+    "id": "E07-old-broadcast-failure",
+    "newSealActive": false,
+    "expected": true
+  }
+]

@@ -1,0 +1,54 @@
+{
+  "schema": "adapter_pilot_evidence_v1",
+  "packageId": "(offline-pilot) basic-safety",
+  "pageId": "basic-safety",
+  "createdAt": "2026-09-09T00:00:00+08:00",
+  "offlinePassed": true,
+  "liveVerified": false,
+  "reviewer": null,
+  "boundSamples": [
+    {
+      "id": "basic-safety",
+      "kind": "behavioral-fixture",
+      "note": "jsdom 13 mustWrite + E2E 8 mustWrite + 安全断言(密码/验证码/按钮零副作用)",
+      "owner": "P01 回归"
+    },
+    {
+      "id": "static-nwpu-sanitized",
+      "kind": "static-snapshot",
+      "file": "test/samples/static-nwpu/page.html",
+      "sha256": "4f4215975371e76f9a01b235ddf2acfc970bc8325fb69776105d17dff3f73b62"
+    }
+  ],
+  "controlInventory": {
+    "writeFields": [
+      "xm",
+      "xb",
+      "mz",
+      "sfzh",
+      "zzmm",
+      "sjh",
+      "email",
+      "jxlxr",
+      "jxlxrdh",
+      "byyx",
+      "zy",
+      "pm",
+      "pmrs"
+    ],
+    "preserveFields": [
+      "keepX",
+      "token"
+    ],
+    "forbiddenAreas": [
+      "pwd",
+      "yzm",
+      "btnNext",
+      "btnSubmit",
+      "btnAddRow"
+    ],
+    "tables": []
+  },
+  "notes": "离线试点:执行链验证样品(basic-safety 行为样本),未变更任何生产学校包/页面策略;live 真实验收未授权,pending。",
+  "kind": "generic"
+}

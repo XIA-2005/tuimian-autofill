@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>H04 picker 夹具(主页面)</title>
+<body>
+<form>
+<table>
+  <tr><td>本科院校<input id="schoolShow" name="schoolShow"><a id="hykSelBkBydw" href="javascript:void(0)">选择</a>
+    <input id="txtBkbydwm" type="hidden"><input id="txtBkbydwmc" type="hidden"></td></tr>
+  <tr><td>邮箱<input name="email"></td></tr>
+</table>
+</form>
+<script>
+  window.pickerEvents = [];
+  document.getElementById('hykSelBkBydw').addEventListener('click', function () {
+    window.pickerEvents.push({ kind: 'trigger' });
+    // 1.5s 后才创建选择弹窗:为"picker await 期间换档案"留出真实窗口(弹窗此前不存在)。
+    setTimeout(function () {
+      var frame = document.createElement('iframe');
+      frame.id = 'SelUniversity';
+      frame.name = 'SelUniversity';
+      frame.src = '/picker-dialog';
+      document.body.appendChild(frame);
+      window.pickerEvents.push({ kind: 'frame' });
+    }, 1500);
+  });
+</script>
+</body></html>

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "test-only-async-dependency",
+  "version": "1",
+  "minCoreVersion": "2.0.5",
+  "schoolName": "本地依赖测试",
+  "programName": "合成夹具",
+  "family": "other",
+  "match": { "hosts": ["dependency.test"], "pathPatterns": ["/form*"] },
+  "capabilities": { "registerFill": "directory", "formFill": "experimental", "pluginExtract": "directory", "sessionCrawl": "directory" },
+  "pages": [{
+    "id": "form", "name": "异步依赖表单", "pathPatterns": ["/form*"], "role": "form", "validationErrorSelectors": ["#dependencyError"],
+    "fields": [
+      { "nativeId": "province", "profilePath": "education.province", "driver": "native-select", "dependencyWait": { "timeoutMs": 1200, "settleMs": 60 } },
+      { "nativeId": "school", "profilePath": "education.university", "driver": "native-select", "dependsOn": ["education.province"], "dependencyWait": { "timeoutMs": 1200, "settleMs": 60 } },
+      { "nativeId": "major", "profilePath": "education.major", "driver": "native-select", "dependsOn": ["education.university"], "dependencyWait": { "timeoutMs": 1200, "settleMs": 60 } },
+      { "nativeId": "email", "profilePath": "basic.email", "driver": "text" }
+    ]
+  }],
+  "crawl": { "mode": "guided", "pageOrder": ["form"] },
+  "projectionPolicy": "default", "commitPolicy": "manual-save-only"
+}

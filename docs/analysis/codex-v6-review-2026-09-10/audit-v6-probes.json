@@ -1,0 +1,34 @@
+[
+  {
+    "id": "C01-other-table-same-kind",
+    "expected": null,
+    "actual": "achievements"
+  },
+  {
+    "id": "C02-placeholder-empty-row",
+    "expectedFilled": 0,
+    "actualFilled": 1
+  },
+  {
+    "id": "C03-input-and-edit-button",
+    "expectedFilled": 1,
+    "actualFilled": 0
+  },
+  {
+    "id": "C05-registration-after-completion",
+    "expected": "late frame becomes observable",
+    "newMessages": 0,
+    "lateCount": 0
+  },
+  {
+    "id": "C06-local-telemetry-content",
+    "expectedMarkerAbsent": true,
+    "actualMarkerPresent": true
+  },
+  {
+    "id": "C04-overlapping-write-scope",
+    "expectedRun": "B",
+    "parentRun": null,
+    "childRun": null
+  }
+]

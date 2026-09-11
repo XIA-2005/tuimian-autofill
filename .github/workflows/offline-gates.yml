@@ -1,0 +1,36 @@
+# 离线门禁(PLAN v5 · G09)
+# 依赖安装与浏览器下载阶段需要网络;业务测试阶段全部本地路由并拦截未声明请求。
+# 浏览器回归使用 Playwright 自带的 Chromium(可在 CI 安装),不依赖 Windows Edge 固定路径。
+# 注意:本工作流尚未在真实 CI 运行(如实标注,见 v5 账本)。
+name: offline-gates
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies (network required only in this step)
+        run: npm ci
+      - name: Install Chromium for Playwright (network required only in this step)
+        run: npx playwright install --with-deps chromium
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit / jsdom tests (no network)
+        run: npm test
+      - name: Adapter contract + evidence check (no network)
+        run: npm run check:adapters
+      - name: Regression suite (no network)
+        run: npm run test:regression
+      - name: Browser E2E with real MV3 extension (local fixtures only)
+        env:
+          PW_HEADLESS: '1'
+        run: |
+          npm run test:e2e
+          npm run test:regression:e2e

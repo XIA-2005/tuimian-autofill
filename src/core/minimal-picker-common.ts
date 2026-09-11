@@ -118,7 +118,7 @@ function bindingFor(doc: Document, anchor: Element, spec: MinimalPickerSpec, con
 }
 
 /** 功能：执行简约系统 iframe 查询、行选择和代码名称回读。 */
-export async function runMinimalPicker(doc: Document, anchor: Element, value: string, spec: MinimalPickerSpec, context?: PopupPickContext): Promise<MinimalPickStatus> {
+export async function runMinimalPicker(doc: Document, anchor: Element, value: string, spec: MinimalPickerSpec, context?: PopupPickContext, isCancelled?: () => boolean): Promise<MinimalPickStatus> {
   const effective: MinimalPickerSpec = {
     ...spec,
     triggerSelectors: context?.triggerSelectors?.length ? context.triggerSelectors : spec.triggerSelectors,
@@ -137,6 +137,7 @@ export async function runMinimalPicker(doc: Document, anchor: Element, value: st
     pickerDoc = frameDocument(doc, effective);
   }
   if (!pickerDoc) return trigger ? 'opened' : 'failed';
+  if (isCancelled?.()) return 'not-applicable'; // H04:原轮失效 → 不得再操作弹窗
 
   if (spec.category) {
     const categories = Array.from(pickerDoc.querySelectorAll<HTMLSelectElement>('select')).filter((select) => visible(select) && select.options.length >= 6);
@@ -153,6 +154,7 @@ export async function runMinimalPicker(doc: Document, anchor: Element, value: st
   const codes = [context?.expectedCode || '', ...(context?.codeAliases || [])].filter(Boolean);
   const queries = [...codes, value, value.slice(0, 6), value.slice(0, 4)].filter((item, index, all) => item.length >= 2 && all.indexOf(item) === index);
   for (const query of queries) {
+    if (isCancelled?.()) return 'not-applicable'; // H04:每轮查询前复核原轮
     const input = queryInput(pickerDoc);
     const button = queryButton(pickerDoc);
     if (input) setInput(input, query);
@@ -161,9 +163,11 @@ export async function runMinimalPicker(doc: Document, anchor: Element, value: st
     pickerDoc = frameDocument(doc, effective) || pickerDoc;
     const hit = chooseRow(pickerDoc, value, codes.length ? codes : [query]);
     if (!hit) continue;
+    if (isCancelled?.()) return 'not-applicable'; // H04:点击结果行之前复核原轮
     click(hit.control);
     for (let attempt = 0; attempt < 12; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 250));
+      if (isCancelled?.()) return 'not-applicable'; // H04:等待回填期间原轮失效 → 不宣称成功
       const binding = bindingFor(doc, anchor, effective, context);
       if (binding && verifyCodeNameBinding(binding, value, context)) return 'picked';
     }

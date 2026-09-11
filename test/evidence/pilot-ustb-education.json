@@ -1,0 +1,46 @@
+{
+  "schema": "adapter_pilot_evidence_v1",
+  "packageId": "ustb-blue-xly",
+  "packageVersion": "2026.08.27.1",
+  "pageId": "education",
+  "createdAt": "2026-09-09T19:00:00+08:00",
+  "offlinePassed": true,
+  "liveVerified": false,
+  "reviewer": null,
+  "boundSamples": [
+    {
+      "id": "ustb-education",
+      "kind": "behavioral-fixture",
+      "file": "test/samples/ustb-education/page.html",
+      "sha256": "43b853a6a81fee6c9b2af1e02b972ef7fbb17737c084e27e32962ce636218611",
+      "note": "既有 E2E 的北科大教育页夹具,从该文件加载(样本=实际测试页面)"
+    }
+  ],
+  "controlInventory": {
+    "shouldWrite": [
+      "education.startDate",
+      "education.endDate"
+    ],
+    "mustPreserve": [
+      "education.university",
+      "education.major"
+    ],
+    "forbidden": [
+      "finalSubmit",
+      "next-step"
+    ],
+    "tables": []
+  },
+  "fieldContracts": [
+    "education.endDate",
+    "education.major",
+    "education.startDate",
+    "education.university"
+  ],
+  "testEntries": [
+    "npm run test:e2e → 北科大教育页断言:院校/专业三联 mustPreserve、入学/毕业年月 shouldWrite、零自动下一步/提交、停留当前页",
+    "npm run test:regression:e2e → LZU 合同夹具(G03 清空判失败 / G06 关联错误恢复 / G07a 依赖阻塞)"
+  ],
+  "notes": "离线试点:选定真实内置包 ustb-blue-xly 的 education 页(完整字段契约:院校三联 + 专业三联 + 入学/毕业年月)。页面预置院校/专业正确值 → mustPreserve;入学/毕业年月为空 → shouldWrite。liveVerified=false(无真实高校认证操作)。",
+  "configHash": "c112fb21df349b4794d27f5ba9c49f8373f07008b8fac377618ae606c6642cd9"
+}

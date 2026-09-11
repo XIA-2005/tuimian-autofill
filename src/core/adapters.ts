@@ -82,6 +82,14 @@ export interface AdapterFieldContract {
     categorySelectSelectors?: string[];
   };
   readonly?: boolean;
+  /** F08b:该字段依赖的其它字段 profilePath(如专业依赖院校);执行器按稳定拓扑序填写,父失败只阻塞依赖者。 */
+  dependsOn?: string[];
+  /** 依赖控件的就绪证据；只允许声明式选择器及有界时间，不允许执行页面脚本。 */
+  dependencyWait?: {
+    readySelector?: string;
+    timeoutMs?: number;
+    settleMs?: number;
+  };
 }
 
 export interface AdapterPageContract {

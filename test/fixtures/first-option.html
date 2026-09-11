@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>H01 首项保护夹具</title>
+<body>
+<form>
+<table>
+  <tr><td>性别</td><td><select id="xbFirst" name="xb"><option value="1">男</option><option value="2">女</option></select></td></tr>
+  <tr><td>性别</td><td><select id="xbPlaceholder" name="xb2"><option value="">请选择</option><option value="1">男</option><option value="2">女</option></select></td></tr>
+  <tr><td>邮箱</td><td><input id="email" name="email"></td></tr>
+</table>
+</form>
+<script>
+  window.optEvents = [];
+  document.addEventListener('change', function (event) {
+    if (event.target && event.target.id) window.optEvents.push({ id: event.target.id, value: event.target.value });
+  }, true);
+  // 模拟用户点选首项:只设置 selectedIndex,不写 selected 属性(与真实浏览器一致)。
+  document.getElementById('xbFirst').value = '1';
+</script>
+</body></html>

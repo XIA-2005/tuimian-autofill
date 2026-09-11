@@ -1,0 +1,35 @@
+{
+  "contractConflict": {
+    "before": "PAGE_VALUE",
+    "after": "PROFILE_VALUE",
+    "source": "local intercepted LZU-shaped fixture"
+  },
+  "after1800ms": {
+    "value": "",
+    "telemetry": {
+      "total": 3,
+      "completed": 3,
+      "filled": 3,
+      "skipped": 0,
+      "failed": 0,
+      "waiting": 0,
+      "alreadyCorrect": 0,
+      "conflict": 0
+    }
+  },
+  "after16800ms": {
+    "value": "",
+    "telemetry": {
+      "total": 3,
+      "completed": 3,
+      "filled": 3,
+      "skipped": 0,
+      "failed": 0,
+      "waiting": 0,
+      "alreadyCorrect": 0,
+      "conflict": 0
+    },
+    "marked": "filled"
+  },
+  "externalBlocked": 0
+}

@@ -48,12 +48,14 @@ function aliases(context: PopupPickContext): string[] {
 export type MajorPickStatus = 'picked' | 'opened' | 'failed' | 'not-applicable';
 
 /** 功能：填写本科专业，按目标代码、新旧目录别名、名称和学科门类依次检索。 */
-export async function pickMajor(doc: Document, anchor: Element, value: string, context: PopupPickContext = {}): Promise<MajorPickStatus> {
+export async function pickMajor(doc: Document, anchor: Element, value: string, context: PopupPickContext = {}, isCancelled?: () => boolean): Promise<MajorPickStatus> {
+  if (isCancelled?.() || !anchor.isConnected) return 'failed';
   const inferredCode = context.expectedCode || standardMajorCode(value) || undefined;
   const next = { ...context, expectedCode: inferredCode, profilePath: context.profilePath || 'education.major', codeAliases: aliases({ ...context, expectedCode: inferredCode }) };
-  const blue = await pickBlueFlatIdentity(doc, value, next);
+  const blue = await pickBlueFlatIdentity(doc, value, next, isCancelled);
   if (blue !== 'not-applicable') return blue;
-  const component = await pickComponentOption(anchor, value, next);
+  if (isCancelled?.() || !anchor.isConnected) return 'failed';
+  const component = await pickComponentOption(anchor, value, next, isCancelled);
   if (component.status !== 'not-applicable') return component.status;
-  return runMinimalPicker(doc, anchor, value, { ...MAJOR_SPEC, category: majorCategory(value) }, next);
+  return runMinimalPicker(doc, anchor, value, { ...MAJOR_SPEC, category: majorCategory(value) }, next, isCancelled);
 }

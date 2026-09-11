@@ -1,0 +1,268 @@
+{
+  "contractAt1800ms": {
+    "value": "",
+    "telemetry": {
+      "runId": "fill_mtu0hk9l_ns6zzc",
+      "startedAt": 1788953102553,
+      "updatedAt": 1788953103967,
+      "stage": "succeeded",
+      "active": false,
+      "title": "已填写并回读通过",
+      "detail": "可见值回读一致",
+      "currentLabel": "basic.name",
+      "counts": {
+        "total": 4,
+        "completed": 4,
+        "filled": 3,
+        "skipped": 1,
+        "failed": 0,
+        "waiting": 0,
+        "alreadyCorrect": 0,
+        "conflict": 0
+      },
+      "progress": {
+        "current": 4,
+        "total": 4
+      },
+      "events": [
+        {
+          "stage": "identifying",
+          "level": "info",
+          "action": "正在识别当前页面",
+          "reason": "正在读取适配包与可写字段",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 1,
+          "timestamp": 1788953102553
+        },
+        {
+          "stage": "identifying",
+          "level": "info",
+          "action": "正在扫描页面并填充",
+          "reason": "请稍候…",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 2,
+          "timestamp": 1788953102566
+        },
+        {
+          "stage": "filling",
+          "level": "info",
+          "action": "常规字段填充",
+          "reason": "已填 3 项 / 共 4 项",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 3,
+          "timestamp": 1788953102575
+        },
+        {
+          "stage": "succeeded",
+          "level": "info",
+          "action": "填充完成",
+          "reason": "请核对绿色高亮后保存；若资料未完全填写，请再次点击「一键填充」",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 4,
+          "timestamp": 1788953102664
+        },
+        {
+          "stage": "succeeded",
+          "level": "success",
+          "action": "本轮填写完成",
+          "reason": "成功 0 项，跳过 0 项，失败 0 项，待处理 0 项",
+          "current": 0,
+          "total": 0,
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 5,
+          "timestamp": 1788953102668
+        },
+        {
+          "stage": "succeeded",
+          "level": "warning",
+          "action": "已按安全规则跳过",
+          "targetLabel": "姓名",
+          "field": "basic.name",
+          "reason": "目标已被页面合同认领，不重复写",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 6,
+          "timestamp": 1788953103967
+        },
+        {
+          "stage": "succeeded",
+          "level": "success",
+          "action": "已填写并回读通过",
+          "targetLabel": "手机",
+          "field": "basic.phone",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 7,
+          "timestamp": 1788953103967
+        },
+        {
+          "stage": "succeeded",
+          "level": "success",
+          "action": "已填写并回读通过",
+          "targetLabel": "邮箱",
+          "field": "basic.email",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 8,
+          "timestamp": 1788953103967
+        },
+        {
+          "stage": "succeeded",
+          "level": "success",
+          "action": "已填写并回读通过",
+          "targetLabel": "basic.name",
+          "field": "basic.name",
+          "reason": "可见值回读一致",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 9,
+          "timestamp": 1788953103967
+        }
+      ]
+    },
+    "marked": null
+  },
+  "contractAt16800ms": {
+    "value": "",
+    "telemetry": {
+      "runId": "fill_mtu0hk9l_ns6zzc",
+      "startedAt": 1788953102553,
+      "updatedAt": 1788953103967,
+      "stage": "succeeded",
+      "active": false,
+      "title": "已填写并回读通过",
+      "detail": "可见值回读一致",
+      "currentLabel": "basic.name",
+      "counts": {
+        "total": 4,
+        "completed": 4,
+        "filled": 3,
+        "skipped": 1,
+        "failed": 0,
+        "waiting": 0,
+        "alreadyCorrect": 0,
+        "conflict": 0
+      },
+      "progress": {
+        "current": 4,
+        "total": 4
+      },
+      "events": [
+        {
+          "stage": "identifying",
+          "level": "info",
+          "action": "正在识别当前页面",
+          "reason": "正在读取适配包与可写字段",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 1,
+          "timestamp": 1788953102553
+        },
+        {
+          "stage": "identifying",
+          "level": "info",
+          "action": "正在扫描页面并填充",
+          "reason": "请稍候…",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 2,
+          "timestamp": 1788953102566
+        },
+        {
+          "stage": "filling",
+          "level": "info",
+          "action": "常规字段填充",
+          "reason": "已填 3 项 / 共 4 项",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 3,
+          "timestamp": 1788953102575
+        },
+        {
+          "stage": "succeeded",
+          "level": "info",
+          "action": "填充完成",
+          "reason": "请核对绿色高亮后保存；若资料未完全填写，请再次点击「一键填充」",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 4,
+          "timestamp": 1788953102664
+        },
+        {
+          "stage": "succeeded",
+          "level": "success",
+          "action": "本轮填写完成",
+          "reason": "成功 0 项，跳过 0 项，失败 0 项，待处理 0 项",
+          "current": 0,
+          "total": 0,
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 5,
+          "timestamp": 1788953102668
+        },
+        {
+          "stage": "succeeded",
+          "level": "warning",
+          "action": "已按安全规则跳过",
+          "targetLabel": "姓名",
+          "field": "basic.name",
+          "reason": "目标已被页面合同认领，不重复写",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 6,
+          "timestamp": 1788953103967
+        },
+        {
+          "stage": "succeeded",
+          "level": "success",
+          "action": "已填写并回读通过",
+          "targetLabel": "手机",
+          "field": "basic.phone",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 7,
+          "timestamp": 1788953103967
+        },
+        {
+          "stage": "succeeded",
+          "level": "success",
+          "action": "已填写并回读通过",
+          "targetLabel": "邮箱",
+          "field": "basic.email",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 8,
+          "timestamp": 1788953103967
+        },
+        {
+          "stage": "succeeded",
+          "level": "success",
+          "action": "已填写并回读通过",
+          "targetLabel": "basic.name",
+          "field": "basic.name",
+          "reason": "可见值回读一致",
+          "runId": "fill_mtu0hk9l_ns6zzc",
+          "sequence": 9,
+          "timestamp": 1788953103967
+        }
+      ]
+    },
+    "marked": null
+  },
+  "after1800ms": {
+    "value": "",
+    "telemetry": {
+      "total": 3,
+      "completed": 3,
+      "filled": 2,
+      "skipped": 0,
+      "failed": 1,
+      "waiting": 0,
+      "alreadyCorrect": 0,
+      "conflict": 0
+    }
+  },
+  "after16800ms": {
+    "value": "",
+    "telemetry": {
+      "total": 3,
+      "completed": 3,
+      "filled": 0,
+      "skipped": 0,
+      "failed": 1,
+      "waiting": 0,
+      "alreadyCorrect": 2,
+      "conflict": 0
+    },
+    "marked": "missing"
+  },
+  "externalBlocked": 0
+}

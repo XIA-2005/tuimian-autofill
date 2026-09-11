@@ -1,0 +1,13 @@
+{
+  "invalidPackage": true,
+  "unverifiedLiveClaim": true,
+  "missingSampleFileAndHash": true,
+  "checkerExitCode": 0,
+  "tail": [
+    "PASS: evidence schema 正确",
+    "PASS: evidence liveVerified 为 false 或显式布尔(禁止伪造人工验收)",
+    "PASS: evidence 有绑定样本清单",
+    "PASS: evidence 含控件清单(write/preserve/forbidden/tables)",
+    "check:adapters 全部通过 ✅(无网络请求)"
+  ]
+}

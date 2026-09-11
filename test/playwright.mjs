@@ -166,11 +166,8 @@ try {
           ? '<!doctype html><meta charset="utf-8"><title>外语水平</title><table><tbody><tr><th>外语水平</th><th>成绩</th><th>取得成绩时间（日期格式：2019-11-11）</th><th>备注</th><th>操作</th></tr>' +
             '<tr><td><select id="lbmc0"><option value="">----请选择----</option><option value="4">四级</option><option value="6">六级</option><option value="toefl">托福</option><option value="ielts">雅思</option><option value="other">其它</option></select></td>' +
             '<td><input id="cj0" name="cj"></td><td><input id="sj0" name="sj"></td><td><input id="bz0"></td><td></td></tr></tbody></table><button class="button bg-sub">下一步</button>'
-        : '<!doctype html><meta charset="utf-8"><title>教育信息</title><form>' +
-          '<input id="bydwm" type="hidden" value="10700"><input id="bydw" type="hidden" value="西安理工大学"><input id="bkbydwShow" value="10700 西安理工大学">' +
-          '<input id="byzydm" type="hidden" value="080301"><input id="byzymc" type="hidden" value="测控技术与仪器"><input id="bkbyzyShow" value="080301 测控技术与仪器">' +
-          '<input id="rxny"><input id="byny"><button class="button bg-sub" type="button" onclick="location.href=\'/ksxt/ssxly/summary\'">下一步</button>' +
-          '</form>',
+        // F09:北科大教育页样本从 test/samples/ustb-education/page.html 读取(证据绑定同一文件哈希)。
+        : readFileSync(resolve('test/samples/ustb-education/page.html'), 'utf8'),
     });
   });
   const languagePage = await context.newPage();
@@ -205,9 +202,38 @@ try {
   const wizardPage = await context.newPage();
   await wizardPage.goto('https://yjsy.ustb.edu.cn/ksxt/ssxly/education');
   await wizardPage.waitForSelector('#tui-panel');
+  // F09(ustb-blue-xly/education 试点):shouldWrite=入学/毕业年月;mustPreserve=页面已有正确的院校/专业三联。
+  const eduBefore = await wizardPage.evaluate(() => ({
+    schoolCode: (document.querySelector('#bydwm') || {}).value || '',
+    schoolName: (document.querySelector('#bydw') || {}).value || '',
+    schoolShow: (document.querySelector('#bkbydwShow') || {}).value || '',
+    majorCode: (document.querySelector('#byzydm') || {}).value || '',
+    majorName: (document.querySelector('#byzymc') || {}).value || '',
+    majorShow: (document.querySelector('#bkbyzyShow') || {}).value || '',
+  }));
   await wizardPage.locator('#tui-panel [data-act="fill"]').click({ force: true });
   await wizardPage.waitForFunction(() => ((document.querySelector('#rxny') || {}).value || '').length >= 6, null, { timeout: 15000 });
   await wizardPage.waitForTimeout(1500);
+  const eduAfter = await wizardPage.evaluate(() => ({
+    schoolCode: (document.querySelector('#bydwm') || {}).value || '',
+    schoolName: (document.querySelector('#bydw') || {}).value || '',
+    schoolShow: (document.querySelector('#bkbydwShow') || {}).value || '',
+    majorCode: (document.querySelector('#byzydm') || {}).value || '',
+    majorName: (document.querySelector('#byzymc') || {}).value || '',
+    majorShow: (document.querySelector('#bkbyzyShow') || {}).value || '',
+    startDate: (document.querySelector('#rxny') || {}).value || '',
+    endDate: (document.querySelector('#byny') || {}).value || '',
+  }));
+  assert.deepEqual(
+    { schoolCode: eduAfter.schoolCode, schoolName: eduAfter.schoolName, schoolShow: eduAfter.schoolShow, majorCode: eduAfter.majorCode, majorName: eduAfter.majorName, majorShow: eduAfter.majorShow },
+    eduBefore,
+    'F09(mustPreserve): 页面已有正确的院校/专业三联值不得被重写',
+  );
+  // G08:精确断言真实年月值(不是仅长度),并对"页面已有正确三联值"断言零写事件。
+  assert.equal(eduAfter.startDate, '202209', `G08(shouldWrite): 入学年月应为精确值 ${JSON.stringify(eduAfter)}`);
+  assert.equal(eduAfter.endDate, '202606', 'G08(shouldWrite): 毕业年月应为精确值');
+  const eduEvents = await wizardPage.evaluate(() => window.__eduEvents || null);
+  assert.ok(eduEvents && eduEvents.school === 0 && eduEvents.major === 0, `G08(mustPreserve): 已有正确三联值必须零写事件 ${JSON.stringify(eduEvents)}`);
   assert.equal(await wizardPage.evaluate(() => localStorage.getItem('finalSubmitClicked')), null, '不得自动点击下一步或最终提交');
   assert.equal(wizardPage.url().includes('/ksxt/ssxly/education'), true, '教育信息页填写完成后应停留在当前页');
 

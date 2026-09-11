@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>H04 picker 夹具(弹窗)</title>
+<body>
+<input id="txtWord" type="text">
+<button id="queryBtn" type="button">查询</button>
+<table><tbody>
+<tr><td>10700</td><td>测试大学</td><td><button id="chooseRow" type="button">选择</button></td></tr>
+</tbody></table>
+<script>
+  document.getElementById('chooseRow').addEventListener('click', function () {
+    var p = parent;
+    p.pickerEvents.push({ kind: 'choose' });
+    p.document.getElementById('txtBkbydwm').value = '10700';
+    p.document.getElementById('txtBkbydwmc').value = '测试大学';
+    p.document.getElementById('schoolShow').value = '10700 测试大学';
+    p.document.getElementById('SelUniversity').style.display = 'none';
+  });
+</script>
+</body></html>

@@ -32,6 +32,26 @@ import { handleDialogAfterClick, visibleDialogRoots } from '../src/core/filler';
 import { applyRicherRows, blobLooksLike, encodeBlobRows, parseBlobRows, readStashedTableRows, scoreRows, syncTableBlobs } from '../src/core/hidden-blob';
 import { formatIssue, issueMeta } from '../src/core/error-codes';
 import { getHighlightFailures, runHighlightTests } from '../src/core/highlight.test';
+import { getTaskCompilerFailures, runTaskCompilerTests } from '../src/core/task-compiler.test';
+import { getFillMergeFailures, runFillMergeTests } from '../src/core/fill-merge.test';
+import { getValueSemanticsFailures, runValueSemanticsTests } from '../src/core/value-semantics.test';
+import { getAggregationFailures, runAggregationTests } from '../src/background/aggregation.test';
+import { getTaskExecutorFailures, runTaskExecutorTests } from '../src/core/task-executor.test';
+import { getPickerStateFailures, runPickerStateTests } from '../src/core/picker-state-machine.test';
+import { getContractGuardFailures, runContractGuardTests, runDependencyContractTests } from '../src/core/control-drivers.test';
+import { getEssayGuardFailures, runEssayGuardTests } from '../src/core/filler-essay.test';
+import { getFillSessionFailures, runFillSessionTests } from '../src/core/fill-session.test';
+import { getDependencyFailures, runDependencyTests } from '../src/core/dependency.test';
+import { getV5AuditFailures, runV5AuditTests, runV5AuditAsyncTests } from '../src/core/v5-audit.test';
+import { getV6AuditFailures, runV6AuditTests, runV6AuditAsyncTests } from '../src/core/v6-audit.test';
+import { getV7LifecycleFailures, runV7LifecycleTests } from '../src/core/v7-lifecycle.test';
+import { getV7TelemetryFailures, runV7TelemetryTests } from '../src/core/v7-telemetry.test';
+import { getV8LifecycleFailures, runV8LifecycleTests } from '../src/core/v8-lifecycle.test';
+import { getV8MigrationFailures, runV8MigrationTests } from '../src/core/v8-migration.test';
+import { runDependencyExecutorTests } from '../src/core/dependency-executor.test';
+import { runV7ReviewTests } from '../src/core/v7-review.test';
+import { runV8ReviewTests } from '../src/core/v8-review.test';
+import { runV9ReviewTests } from '../src/core/v9-review.test';
 import { getHighlightUIFailures, runHighlightUITests } from '../src/content/highlight-ui.test';
 import { getPickerHandoffFailures, runPickerHandoffTests } from '../src/content/picker-handoff.test';
 import { getPanelFailures, runPanelTests } from '../src/content/panel.test';
@@ -147,6 +167,54 @@ try {
   }
 } catch (e) {
   check(false, '[highlight] runHighlightTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+}
+
+// ===== 只读候选解析与确定性消歧(P02) =====
+try {
+  runTaskCompilerTests();
+  const tcf = getTaskCompilerFailures();
+  for (const f of tcf) {
+    check(false, '[task-compiler] ' + f);
+  }
+  if (tcf.length === 0) console.log('task-compiler 用例: 全部通过(P02 只读候选解析)');
+} catch (e) {
+  check(false, '[task-compiler] runTaskCompilerTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+}
+
+// ===== 合同/通用结果合并与认领集合(P03) =====
+try {
+  runFillMergeTests();
+  const fmf = getFillMergeFailures();
+  for (const f of fmf) {
+    check(false, '[fill-merge] ' + f);
+  }
+  if (fmf.length === 0) console.log('fill-merge 用例: 全部通过(P03 双写消除合并语义)');
+} catch (e) {
+  check(false, '[fill-merge] runFillMergeTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+}
+
+// ===== 值语义比较(P04) =====
+try {
+  runValueSemanticsTests();
+  const vsf = getValueSemanticsFailures();
+  for (const f of vsf) {
+    check(false, '[value-semantics] ' + f);
+  }
+  if (vsf.length === 0) console.log('value-semantics 用例: 全部通过(P04 值语义)');
+} catch (e) {
+  check(false, '[value-semantics] runValueSemanticsTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+}
+
+// ===== 跨 frame 聚合器(P05) =====
+try {
+  runAggregationTests();
+  const agf = getAggregationFailures();
+  for (const f of agf) {
+    check(false, '[aggregation] ' + f);
+  }
+  if (agf.length === 0) console.log('aggregation 用例: 全部通过(P05 跨 frame 完成协议纯逻辑)');
+} catch (e) {
+  check(false, '[aggregation] runAggregationTests 抛错：' + (e instanceof Error ? e.message : String(e)));
 }
 
 const byName = (n: string) => (w.document.querySelector(`[name="${n}"]`) as HTMLInputElement | undefined)?.value || '';
@@ -425,7 +493,9 @@ check(!JSON.stringify(telemetry).includes('13812345678'), '填写遥测自动脱
 check(safeTelemetryLabel('奖励情况 1：真实奖项名称', 'awards[0]') === '奖励情况 · 第 1 行', '动态表格日志不记录真实内容');
 check(redactTelemetryText('邮箱 zhangsan@example.com') === '邮箱 [已脱敏]', '填写遥测自动脱敏邮箱');
 const storedTelemetry = { ...telemetry, updatedAt: 1_100 };
-check(restoreFillTelemetryState(JSON.stringify(storedTelemetry), 2_000)?.runId === telemetry.runId, '填写遥测可在页面回发后恢复');
+const restoredTelemetry = restoreFillTelemetryState(JSON.stringify(storedTelemetry), 2_000);
+check(restoredTelemetry?.stage === 'filling' && restoredTelemetry.counts.completed === 3 && restoredTelemetry.events[0]?.field === 'basic.phone'
+  && restoredTelemetry.runId.startsWith('restored_'), '填写遥测可在页面回发后恢复，旧标识重编码但状态与计数保持');
 check(restoreFillTelemetryState(JSON.stringify(storedTelemetry), 31 * 60_000) === null, '过期填写遥测不会恢复幽灵忙碌状态');
 
 // ===== V2 档案、锁定、投影、适配包与爬取合并 =====
@@ -635,7 +705,18 @@ check(restoreFillTelemetryState(JSON.stringify(storedTelemetry), 31 * 60_000) ==
   (globalThis as any).chrome = originalChrome;
   })();
 
-  const contractDom = new JSDOM('<input id="xm"><select id="bkbyxx"><option value="10001">北京大学</option><option value="10610">四川大学</option></select>', { url: 'https://yjszs.lzu.edu.cn/lzuyjsytms/info' });
+  // H01:无占位首项是合法值(用户可能点选首项),不得用"首项=空"的 DOM 推断覆盖;占位首项仍照常填写。
+  const noPlaceholderDom = new JSDOM('<input id="xm"><select id="bkbyxx"><option value="10001">北京大学</option><option value="10610">四川大学</option></select>', { url: 'https://yjszs.lzu.edu.cn/lzuyjsytms/info' });
+  const noPlaceholderProfile = emptyProfile();
+  noPlaceholderProfile.education.university = '四川大学';
+  setProfileCode(noPlaceholderProfile, 'education.university', 'moe.school', '10610', '四川大学');
+  const noPlaceholderResults = fillAdapterContract(noPlaceholderProfile, noPlaceholderDom.window.document, noPlaceholderDom.window.location.href, lzuPackage);
+  check(
+    (noPlaceholderDom.window.document.getElementById('bkbyxx') as HTMLSelectElement).value === '10001'
+      && noPlaceholderResults.some((item) => item.profilePath === 'education.university' && item.status !== 'filled'),
+    '控件驱动(H01)：无占位首项是合法值,不得被覆盖(保留页面值并报冲突)',
+  );
+  const contractDom = new JSDOM('<input id="xm"><select id="bkbyxx"><option value="">请选择</option><option value="10001">北京大学</option><option value="10610">四川大学</option></select>', { url: 'https://yjszs.lzu.edu.cn/lzuyjsytms/info' });
   const contractProfile = emptyProfile();
   contractProfile.education.university = '四川大学';
   setProfileCode(contractProfile, 'education.university', 'moe.school', '10610', '四川大学');
@@ -643,7 +724,13 @@ check(restoreFillTelemetryState(JSON.stringify(storedTelemetry), 31 * 60_000) ==
   check((contractDom.window.document.getElementById('bkbyxx') as HTMLSelectElement).value === '10610' && contractResults.some((item) => item.profilePath === 'education.university' && item.status === 'filled'), '控件驱动：学校代码与显示名称成对写入并回读');
   setProfileCode(contractProfile, 'education.university', 'moe.school', '10001', '四川大学');
   const mismatchResults = fillAdapterContract(contractProfile, contractDom.window.document, contractDom.window.location.href, lzuPackage);
-  check(mismatchResults.some((item) => item.profilePath === 'education.university' && item.status === 'failed'), '控件驱动：代码与名称不一致时停止写入');
+  // G02 语义:页面已是正确名称+代码(10610 四川大学)时按同值跳过;档案自身 code/name 不一致
+  // (10001 北京大学 vs 四川大学)不得导致把错误代码写入页面——断言页面值保持且该字段未被写成 filled。
+  check(
+    (contractDom.window.document.getElementById('bkbyxx') as HTMLSelectElement).value === '10610'
+      && mismatchResults.some((item) => item.profilePath === 'education.university' && item.status !== 'filled'),
+    '控件驱动：档案代码与名称不一致时不写入错误代码(保留页面正确值)',
+  );
 
   let executableRejected = false;
   try { validateAdapterPackage({ ...lzuPackage, bad: () => true } as any); } catch { executableRejected = true; }
@@ -2433,17 +2520,26 @@ void (async () => {
   check((w.document.querySelector('[name="ac0n"]') as HTMLInputElement).value === '成果D', '成果插入行填入第二条成果');
 
   // 长字段保守截断 + 填写快照（保存失败清空页面后仍能还原"保存前"的值）
+  // P04:已有非空不同值不再覆盖——本块先把目标字段复位为"空页面"状态,再验证截断/快照语义。
+  for (const resetName of ['xm', 'namepinyin', 'sjh', 'txdz']) {
+    const resetEl = w.document.querySelector(`[name="${resetName}"]`) as HTMLInputElement;
+    if (resetEl) {
+      resetEl.value = '';
+      resetEl.removeAttribute('data-tui');
+      resetEl.classList.remove('tui-filled', 'tui-missing', 'tui-empty');
+    }
+  }
   const pZ = emptyProfile();
   pZ.basic.name = '测试';
   pZ.basic.phone = '13800138000';
   pZ.basic.address = 'X'.repeat(60);
   fillAll(pZ, w.document);
   const addrV = byName('txdz');
-  check(addrV.length === 50, '超长通讯地址保守截断到 50 字符');
+  check(addrV === '', 'P10b: 超长地址不静默截断(保留空并提示人工)');
   const snapRaw = w.sessionStorage.getItem('tui-fill-snapshot');
   const snap = snapRaw ? JSON.parse(snapRaw) : null;
   check(
-    !!snap && Array.isArray(snap.fields) && snap.fields.some((f: any) => f.name === 'txdz' && f.value === addrV),
+    !!snap && Array.isArray(snap.fields) && snap.fields.some((f: any) => f.name === 'sjh' && f.value === '13800138000'),
     '填充快照写入 sessionStorage（保存失败后可还原保存前值）',
   );
   const sumRaw = w.sessionStorage.getItem('tui-fill-summary');
@@ -2451,6 +2547,11 @@ void (async () => {
   check(
     !!sum && Array.isArray(sum.items) && sum.items.some((i: any) => i.field === 'basic.name' && i.status === 'filled') && sum.items.some((i: any) => i.field === 'basic.namePinyin' && i.status === 'profileEmpty'),
     '填充结果摘要写入 sessionStorage（含逐字段状态，供诊断"消失"字段用）',
+  );
+  // I02:摘要不再保存页面/原因原文,长文保护改为用固定问题码表达(仍不静默裁剪)。
+  check(
+    !!sum && Array.isArray(sum.items) && sum.items.some((i: any) => i.field === 'basic.address' && i.status === 'skipped' && i.issue === 'E1206'),
+    'P10b: 超长字段在摘要中标记跳过并带问题码(不静默裁剪)',
   );
 
   // 奖励名称"学校·奖项"前缀拆分（反向提取把单位并进名称的场景）
@@ -3281,6 +3382,201 @@ void (async () => {
   // 测试通过：import 成功 + 上面 5 个 PASS 已证明检测器正确
   check(true, '降级路径：orchestrator 模块可独立导入不抛错');
 
+  // ===== picker 状态落盘脱敏与冲突判定(P08) =====
+  try {
+    runPickerStateTests();
+    const psf = getPickerStateFailures();
+    for (const f of psf) {
+      check(false, '[picker-state] ' + f);
+    }
+    if (psf.length === 0) console.log('picker-state 用例: 全部通过(P08 落盘脱敏/冲突判定)');
+  } catch (e) {
+    check(false, '[picker-state] runPickerStateTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== 长文写前保护(F02) =====
+  try {
+    runEssayGuardTests();
+    const egf = getEssayGuardFailures();
+    for (const f of egf) {
+      check(false, '[essay-guard] ' + f);
+    }
+    if (egf.length === 0) console.log('essay-guard 用例: 全部通过(F02 长文保护)');
+  } catch (e) {
+    check(false, '[essay-guard] runEssayGuardTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== 文档身份/路由脱敏/作用域(F04) =====
+  try {
+    runFillSessionTests();
+    const fsf = getFillSessionFailures();
+    for (const f of fsf) {
+      check(false, '[fill-session] ' + f);
+    }
+    if (fsf.length === 0) console.log('fill-session 用例: 全部通过(F04 文档身份/路由)');
+  } catch (e) {
+    check(false, '[fill-session] runFillSessionTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== 合同生产链负例/标量保护(F01/F02) =====
+  try {
+    runContractGuardTests();
+    runDependencyContractTests();
+    const cgf = getContractGuardFailures();
+    for (const f of cgf) {
+      check(false, '[contract-guard] ' + f);
+    }
+    if (cgf.length === 0) console.log('contract-guard 用例: 全部通过(F01/F02 生产合同链)');
+  } catch (e) {
+    check(false, '[contract-guard] runContractGuardTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== v5 审查反例 V01–V07(G00 基线) =====
+  try {
+    runV5AuditTests();
+    const v5f = getV5AuditFailures();
+    for (const f of v5f) {
+      check(false, '[v5-audit] ' + f);
+    }
+    if (v5f.length === 0) console.log('v5-audit 用例: 全部通过(V01–V07 已关闭)');
+    else console.log(`v5-audit 用例: ${v5f.length} 项未通过(G00 基线,随 G01–G09 转绿)`);
+  } catch (e) {
+    check(false, '[v5-audit] runV5AuditTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== v8 旧诊断迁移与回执边界(PLAN v8 · J02) =====
+  try {
+    runV8MigrationTests();
+    const v8mf = getV8MigrationFailures();
+    for (const f of v8mf) {
+      check(false, '[v8-migration] ' + f);
+    }
+    if (v8mf.length === 0) console.log('v8-migration 用例: 全部通过(旧遥测/回执边界)');
+  } catch (e) {
+    check(false, '[v8-migration] runV8MigrationTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== v8 运行生命周期(PLAN v8 · J00) =====
+  try {
+    runV8LifecycleTests();
+    const v8lf = getV8LifecycleFailures();
+    for (const f of v8lf) {
+      check(false, '[v8-lifecycle] ' + f);
+    }
+    if (v8lf.length === 0) console.log('v8-lifecycle 用例: 全部通过(取消/deadline 停止原轮)');
+  } catch (e) {
+    check(false, '[v8-lifecycle] runV8LifecycleTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== v7 遥测/报告脱敏(PLAN v7 · I02 / 复审 C06) =====
+  try {
+    runV7TelemetryTests();
+    const v7tf = getV7TelemetryFailures();
+    for (const f of v7tf) {
+      check(false, '[v7-telemetry] ' + f);
+    }
+    if (v7tf.length === 0) console.log('v7-telemetry 用例: 全部通过(页面原文不落盘)');
+  } catch (e) {
+    check(false, '[v7-telemetry] runV7TelemetryTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== v7 运行生命周期(PLAN v7 · I00) =====
+  try {
+    runV7LifecycleTests();
+    const v7lf = getV7LifecycleFailures();
+    for (const f of v7lf) {
+      check(false, '[v7-lifecycle] ' + f);
+    }
+    if (v7lf.length === 0) console.log('v7-lifecycle 用例: 全部通过(收口后晚注册回执/去重/有界)');
+  } catch (e) {
+    check(false, '[v7-lifecycle] runV7LifecycleTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== v6 审查反例(PLAN v6 · H00 基线) =====
+  try {
+    runV6AuditTests();
+    const v6f = getV6AuditFailures();
+    for (const f of v6f) {
+      check(false, '[v6-audit] ' + f);
+    }
+    if (v6f.length === 0) console.log('v6-audit 用例: 全部通过(H01–H03 已关闭)');
+    else console.log(`v6-audit 用例: ${v6f.length} 项未通过(H00 基线,随 H01–H03 转绿)`);
+  } catch (e) {
+    check(false, '[v6-audit] runV6AuditTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== 最小 dependsOn 图(F08b) =====
+  try {
+    runDependencyTests();
+    const dpf = getDependencyFailures();
+    for (const f of dpf) {
+      check(false, '[dependency] ' + f);
+    }
+    if (dpf.length === 0) console.log('dependency 用例: 全部通过(F08b 最小依赖图)');
+  } catch (e) {
+    check(false, '[dependency] runDependencyTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== 稳定回读与可归因验证(P06) =====
+  try {
+    await runTaskExecutorTests();
+    const tef = getTaskExecutorFailures();
+    for (const f of tef) {
+      check(false, '[task-executor] ' + f);
+    }
+    if (tef.length === 0) console.log('task-executor 用例: 全部通过(P06 稳定回读/validation 归因/稳定校正)');
+  } catch (e) {
+    check(false, '[task-executor] runTaskExecutorTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  try {
+    await runDependencyExecutorTests();
+    check(true, '[dependency-executor] 坏图、时间预算和取消前零写入');
+  } catch (error) {
+    check(false, '[dependency-executor] ' + String(error));
+  }
+
+  // ===== v5 反例中必须经异步依赖入口的用例(H00 后同步入口不再执行依赖页) =====
+  try {
+    await runV5AuditAsyncTests();
+    const v5af = getV5AuditFailures();
+    for (const f of v5af) {
+      check(false, '[v5-audit-async] ' + f);
+    }
+    if (v5af.length === 0) console.log('v5-audit 异步用例: 全部通过(G07a 父同值放行)');
+  } catch (e) {
+    check(false, '[v5-audit-async] runV5AuditAsyncTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // ===== v6 异步依赖用例(picker 等待不放行子项) =====
+  try {
+    await runV6AuditAsyncTests();
+    const v6af = getV6AuditFailures();
+    for (const f of v6af) {
+      check(false, '[v6-audit-async] ' + f);
+    }
+    if (v6af.length === 0) console.log('v6-audit 异步用例: 全部通过(picker 等待不放行子项)');
+  } catch (e) {
+    check(false, '[v6-audit-async] runV6AuditAsyncTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+  }
+  try {
+    await runV7ReviewTests();
+    check(true, '[v7-review] 保存证据作用域、行内容与异步写入记录隔离');
+  } catch (error) {
+    check(false, '[v7-review] ' + String(error));
+  }
+  try {
+    runV8ReviewTests();
+    check(true, '[v8-review] 短标签、ASCII、对象键与URL脱敏');
+  } catch (error) {
+    check(false, '[v8-review] ' + String(error));
+  }
+  try {
+    await runV9ReviewTests();
+    check(true, '[v9-review] 暂停顺序、预算、续轮最新结果与旧runId脱敏');
+  } catch (error) {
+    check(false, '[v9-review] ' + String(error));
+  }
   runPanelTests();
   for (const failure of getPanelFailures()) check(false, '[panel] ' + failure);
 

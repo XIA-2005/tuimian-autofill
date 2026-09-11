@@ -286,7 +286,8 @@ function fireMouse(el: HTMLElement): void {
  * 因此每一步只操作当前可见的 `.bhtc-datepicker-*` 子面板，并通过
  * `data-action=selectYear/selectMonth` 使用页面自身事件更新内部模型。
  */
-async function operateBhtcMonthPanel(panel: HTMLElement, parts: DateParts): Promise<boolean> {
+async function operateBhtcMonthPanel(panel: HTMLElement, parts: DateParts, isCancelled?: () => boolean): Promise<boolean> {
+  if (isCancelled?.() || !panel.isConnected) return false;
   const targetYear = Number(parts.year);
   const targetMonth = Number(parts.month || 1);
   const section = (selector: string): HTMLElement | null =>
@@ -299,6 +300,7 @@ async function operateBhtcMonthPanel(panel: HTMLElement, parts: DateParts): Prom
     if (!switcher) return false;
     fireMouse(switcher);
     await new Promise((resolve) => setTimeout(resolve, 80));
+    if (isCancelled?.() || !panel.isConnected) return false;
     monthSection = section('.bhtc-datepicker-months');
   }
   if (!monthSection) return false;
@@ -307,6 +309,7 @@ async function operateBhtcMonthPanel(panel: HTMLElement, parts: DateParts): Prom
   if (!yearSwitcher) return false;
   fireMouse(yearSwitcher);
   await new Promise((resolve) => setTimeout(resolve, 80));
+  if (isCancelled?.() || !panel.isConnected) return false;
 
   let yearSection = section('.bhtc-datepicker-years');
   if (!yearSection) return false;
@@ -324,11 +327,13 @@ async function operateBhtcMonthPanel(panel: HTMLElement, parts: DateParts): Prom
     if (!nav || !visible(nav)) break;
     fireMouse(nav);
     await new Promise((resolve) => setTimeout(resolve, 60));
+    if (isCancelled?.() || !panel.isConnected) return false;
     yearSection = section('.bhtc-datepicker-years') || yearSection;
   }
   if (!yearChoice) return false;
   fireMouse(yearChoice);
   await new Promise((resolve) => setTimeout(resolve, 80));
+  if (isCancelled?.() || !panel.isConnected) return false;
 
   monthSection = section('.bhtc-datepicker-months');
   if (!monthSection) return false;
@@ -340,13 +345,16 @@ async function operateBhtcMonthPanel(panel: HTMLElement, parts: DateParts): Prom
   return true;
 }
 
-async function operatePickerPanel(el: HTMLInputElement, parts: DateParts, precision: DatePrecision, contract?: DateDriverContract): Promise<boolean> {
+async function operatePickerPanel(el: HTMLInputElement, parts: DateParts, precision: DatePrecision, contract?: DateDriverContract, isCancelled?: () => boolean): Promise<boolean> {
+  if (isCancelled?.() || !el.isConnected) return false;
   fireMouse(el);
   await new Promise((resolve) => setTimeout(resolve, 180));
+  if (isCancelled?.() || !el.isConnected) return false;
   let panel = pickerPanel(el.ownerDocument, contract);
   if (!panel) return false;
   if (detectDateDriver(el) === 'bhtc' && precision === 'month') {
-    const picked = await operateBhtcMonthPanel(panel, parts);
+    const picked = await operateBhtcMonthPanel(panel, parts, isCancelled);
+    if (isCancelled?.() || !el.isConnected) return false;
     dismissDatePicker(el);
     return picked;
   }
@@ -362,6 +370,7 @@ async function operatePickerPanel(el: HTMLInputElement, parts: DateParts, precis
     if (!button) break;
     fireMouse(button);
     await new Promise((resolve) => setTimeout(resolve, 35));
+    if (isCancelled?.() || !el.isConnected) return false;
     panel = pickerPanel(el.ownerDocument, contract) || panel;
   }
   if (precision === 'year') {
@@ -380,6 +389,7 @@ async function operatePickerPanel(el: HTMLInputElement, parts: DateParts, precis
     if (days[0]) fireMouse(days[0]);
   }
   await new Promise((resolve) => setTimeout(resolve, 120));
+  if (isCancelled?.() || !el.isConnected) return false;
   const ok = Array.from(panel.querySelectorAll<HTMLElement>('button,a,span')).find((item) => visible(item) && /^(确定|确认|完成|OK)$/i.test(item.textContent?.trim() || ''));
   if (ok) fireMouse(ok);
   dismissDatePicker(el);
@@ -390,17 +400,23 @@ async function operatePickerPanel(el: HTMLInputElement, parts: DateParts, precis
  * 功能：执行日期直接写入、真实面板交互和最终完整回读。
  * 只有直接写入未持久化时才操作面板，避免无意义地打开日历。
  */
-export async function fillDateControlAsync(el: HTMLInputElement, raw: string, contract?: DateDriverContract): Promise<DateFillResult> {
+export async function fillDateControlAsync(el: HTMLInputElement, raw: string, contract?: DateDriverContract, isCancelled?: () => boolean): Promise<DateFillResult> {
+  const cancelled = () => !!isCancelled?.() || !el.isConnected;
+  const stopped = (): DateFillResult => ({ ok: false, written: '', driver: 'text', precision: contract?.precision || 'day', reason: '原轮或日期目标已失效，停止日期操作' });
+  if (cancelled()) return stopped();
   const direct = fillDateControl(el, raw, contract);
   const precision = contract?.precision || direct.precision;
   await new Promise((resolve) => setTimeout(resolve, 420));
+  if (cancelled()) return stopped();
   let check = fullReadback(el, direct.written, precision, contract);
   if (!check.ok) {
     const parts = parseDate(raw);
-    if (parts) await operatePickerPanel(el, parts, precision, contract);
+    if (parts) await operatePickerPanel(el, parts, precision, contract, cancelled);
+    if (cancelled()) return stopped();
     // 面板点击可能只更新组件模型，再统一补写可见输入并触发标准事件。
     if (!dateValueMatches(el.value, direct.written, precision, declaredDateFormat(el, contract))) setNativeValue(el, direct.written);
     await new Promise((resolve) => setTimeout(resolve, 260));
+    if (cancelled()) return stopped();
     check = fullReadback(el, direct.written, precision, contract);
   }
   return { ...direct, ok: check.ok, precision, reason: `${direct.driver}：${check.reason}` };

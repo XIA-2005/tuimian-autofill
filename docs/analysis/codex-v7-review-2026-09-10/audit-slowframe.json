@@ -1,0 +1,80 @@
+{
+  "at10500": {
+    "childValue": "",
+    "terminals": [
+      {
+        "at": 1789018440755,
+        "kind": "done",
+        "stats": {
+          "total": 1,
+          "filled": 1,
+          "skipped": 0,
+          "noMatch": 0,
+          "profileEmpty": 0,
+          "failed": 0,
+          "picker": 0,
+          "pickerResumeCount": 0
+        }
+      },
+      {
+        "at": 1789018449948,
+        "kind": "waiting-manual",
+        "stats": {
+          "total": 4,
+          "filled": 2,
+          "skipped": 0,
+          "noMatch": 0,
+          "profileEmpty": 0,
+          "failed": 2,
+          "picker": 0,
+          "pickerResumeCount": 0
+        }
+      }
+    ]
+  },
+  "at17000": {
+    "childValue": "软件工程",
+    "terminals": [
+      {
+        "at": 1789018440755,
+        "kind": "done",
+        "stats": {
+          "total": 1,
+          "filled": 1,
+          "skipped": 0,
+          "noMatch": 0,
+          "profileEmpty": 0,
+          "failed": 0,
+          "picker": 0,
+          "pickerResumeCount": 0
+        }
+      },
+      {
+        "at": 1789018449948,
+        "kind": "waiting-manual",
+        "stats": {
+          "total": 4,
+          "filled": 2,
+          "skipped": 0,
+          "noMatch": 0,
+          "profileEmpty": 0,
+          "failed": 2,
+          "picker": 0,
+          "pickerResumeCount": 0
+        }
+      }
+    ],
+    "counts": {
+      "total": 5,
+      "completed": 5,
+      "filled": 3,
+      "skipped": 0,
+      "failed": 2,
+      "waiting": 0,
+      "alreadyCorrect": 0,
+      "conflict": 0
+    }
+  },
+  "started": 1789018440154,
+  "external": 0
+}

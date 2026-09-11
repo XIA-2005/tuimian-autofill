@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>H04 行任务夹具</title>
+<body>
+<h1>学术成果</h1>
+<table id="achievementTable"><tbody>
+<tr><th>时间</th><th>发表刊物或出版社</th><th>标题</th><th>作者排名</th></tr>
+<tr><td><input></td><td><input></td><td><input></td><td><input></td></tr>
+</tbody></table>
+<button id="addNewRow" type="button">新增一行</button>
+<script>
+  window.rowEvents = [];
+  var table = document.querySelector('#achievementTable tbody');
+  document.querySelector('#addNewRow').addEventListener('click', function () {
+    // 250ms 后才出现新行:为"行任务 await 期间换档案"留出真实窗口。
+    setTimeout(function () {
+      var row = table.insertRow();
+      row.innerHTML = '<td><input></td><td><input></td><td><input></td><td><input></td>';
+      window.rowEvents.push({ kind: 'added', at: performance.now() });
+    }, 250);
+  });
+  table.addEventListener('input', function (event) {
+    var el = event.target;
+    if (el && el.value) window.rowEvents.push({ kind: 'input', at: performance.now(), value: el.value });
+  }, true);
+</script>
+</body></html>

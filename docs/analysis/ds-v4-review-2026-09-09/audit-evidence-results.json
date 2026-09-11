@@ -1,0 +1,72 @@
+[
+  {
+    "id": "missingFileAndHash",
+    "expectedExit": "nonzero",
+    "actualExit": 0,
+    "tail": [
+      "PASS: 清单项在字段清单内: education.major",
+      "PASS: evidence 含控件清单(write/preserve/forbidden/tables)",
+      "check:adapters 全部通过 ✅(无网络请求)"
+    ]
+  },
+  {
+    "id": "missingHash",
+    "expectedExit": "nonzero",
+    "actualExit": 0,
+    "tail": [
+      "PASS: 清单项在字段清单内: education.major",
+      "PASS: evidence 含控件清单(write/preserve/forbidden/tables)",
+      "check:adapters 全部通过 ✅(无网络请求)"
+    ]
+  },
+  {
+    "id": "wrongPackageVersion",
+    "expectedExit": "nonzero",
+    "actualExit": 0,
+    "tail": [
+      "PASS: 清单项在字段清单内: education.major",
+      "PASS: evidence 含控件清单(write/preserve/forbidden/tables)",
+      "check:adapters 全部通过 ✅(无网络请求)"
+    ]
+  },
+  {
+    "id": "incompleteInventory",
+    "expectedExit": "nonzero",
+    "actualExit": 0,
+    "tail": [
+      "PASS: 清单项在字段清单内: education.startDate",
+      "PASS: evidence 含控件清单(write/preserve/forbidden/tables)",
+      "check:adapters 全部通过 ✅(无网络请求)"
+    ]
+  },
+  {
+    "id": "offlineFailed",
+    "expectedExit": "nonzero",
+    "actualExit": 0,
+    "tail": [
+      "PASS: 清单项在字段清单内: education.major",
+      "PASS: evidence 含控件清单(write/preserve/forbidden/tables)",
+      "check:adapters 全部通过 ✅(无网络请求)"
+    ]
+  },
+  {
+    "id": "offlineAliasBypass",
+    "expectedExit": "nonzero",
+    "actualExit": 0,
+    "tail": [
+      "PASS: evidence 有绑定样本清单",
+      "PASS: evidence 含控件清单(write/preserve/forbidden/tables)",
+      "check:adapters 全部通过 ✅(无网络请求)"
+    ]
+  },
+  {
+    "id": "wrongHash",
+    "expectedExit": "nonzero",
+    "actualExit": 1,
+    "tail": [
+      "PASS: 清单项在字段清单内: education.university",
+      "PASS: 清单项在字段清单内: education.major",
+      "PASS: evidence 含控件清单(write/preserve/forbidden/tables)"
+    ]
+  }
+]

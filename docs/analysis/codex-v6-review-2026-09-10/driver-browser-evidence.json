@@ -1,0 +1,150 @@
+{
+  "results": [
+    {
+      "kind": "ant",
+      "mode": "normal",
+      "result": "picked",
+      "events": [
+        "search",
+        "choose"
+      ],
+      "model": "61"
+    },
+    {
+      "kind": "ant",
+      "mode": "cancel",
+      "result": "failed",
+      "events": [],
+      "model": ""
+    },
+    {
+      "kind": "ant",
+      "mode": "detach",
+      "result": "failed",
+      "events": [],
+      "model": ""
+    },
+    {
+      "kind": "select2",
+      "mode": "normal",
+      "result": "picked",
+      "events": [
+        "search",
+        "choose"
+      ],
+      "model": "61"
+    },
+    {
+      "kind": "select2",
+      "mode": "cancel",
+      "result": "failed",
+      "events": [],
+      "model": ""
+    },
+    {
+      "kind": "select2",
+      "mode": "detach",
+      "result": "failed",
+      "events": [],
+      "model": ""
+    },
+    {
+      "kind": "element",
+      "mode": "normal",
+      "result": "picked",
+      "events": [
+        "search",
+        "choose"
+      ],
+      "model": "61"
+    },
+    {
+      "kind": "element",
+      "mode": "cancel",
+      "result": "failed",
+      "events": [],
+      "model": ""
+    },
+    {
+      "kind": "element",
+      "mode": "detach",
+      "result": "failed",
+      "events": [],
+      "model": ""
+    },
+    {
+      "kind": "layui",
+      "mode": "normal",
+      "result": "picked",
+      "events": [
+        "search",
+        "choose"
+      ],
+      "model": "61"
+    },
+    {
+      "kind": "layui",
+      "mode": "cancel",
+      "result": "failed",
+      "events": [],
+      "model": ""
+    },
+    {
+      "kind": "layui",
+      "mode": "detach",
+      "result": "failed",
+      "events": [],
+      "model": ""
+    },
+    {
+      "kind": "date",
+      "mode": "normal",
+      "ok": true,
+      "events": [
+        "write"
+      ],
+      "value": "2024-01-02"
+    },
+    {
+      "kind": "date",
+      "mode": "panel-success",
+      "ok": true,
+      "events": [
+        "write",
+        "open",
+        "choose",
+        "confirm"
+      ],
+      "value": "2024-01-02"
+    },
+    {
+      "kind": "date",
+      "mode": "cancel-early",
+      "ok": false,
+      "events": [
+        "write"
+      ],
+      "value": ""
+    },
+    {
+      "kind": "date",
+      "mode": "cancel-panel",
+      "ok": false,
+      "events": [
+        "write",
+        "open"
+      ],
+      "value": ""
+    },
+    {
+      "kind": "date",
+      "mode": "detach",
+      "ok": false,
+      "events": [
+        "write"
+      ],
+      "value": ""
+    }
+  ],
+  "external": 0
+}

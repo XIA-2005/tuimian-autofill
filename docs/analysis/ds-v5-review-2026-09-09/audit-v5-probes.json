@@ -1,0 +1,51 @@
+[
+  {
+    "id": "R01-first-option-is-not-empty",
+    "expected": "男",
+    "actual": "女"
+  },
+  {
+    "id": "R02-label-fallback-duplicate-id",
+    "expected": [
+      "",
+      ""
+    ],
+    "actual": [
+      "PROFILE",
+      ""
+    ]
+  },
+  {
+    "id": "R03-blocked-child-generic-bypass",
+    "expected": "",
+    "actual": "13800000000",
+    "statuses": [
+      "filled",
+      "failed"
+    ]
+  },
+  {
+    "id": "R04-write-record-not-run-scoped",
+    "restoreResult": "restored",
+    "value": "",
+    "expected": "old revision record must not authorize restoration"
+  },
+  {
+    "id": "R05-document-id-restarts",
+    "module1": "doc1",
+    "module2": "doc1",
+    "expected": "new content-script instance must have different wire document identity"
+  },
+  {
+    "id": "R06-rejected-terminal-mutates-state",
+    "accepted": false,
+    "allTerminal": true,
+    "expected": false
+  },
+  {
+    "id": "R07-production-early-terminal-registration",
+    "deadlineMs": 15000,
+    "doneBeforeSecondRegistration": true,
+    "participantsInDone": 1
+  }
+]

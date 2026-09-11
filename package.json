@@ -1,6 +1,6 @@
 {
   "name": "tuimian-autofill",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "private": true,
   "description": "预推免报名系统辅助填写浏览器扩展（Edge/Chrome，Manifest V3）",
   "scripts": {
@@ -8,9 +8,17 @@
     "watch": "node build.mjs --watch",
     "test": "node build.mjs && node test/run.js",
     "test:e2e": "node build.mjs && node test/playwright.mjs",
+    "test:regression": "node build.mjs && node test/regression/run.js",
+    "test:regression:e2e": "node build.mjs && node test/regression/run-e2e.js && node test/dependency-e2e.mjs && node test/driver-cancellation-e2e.mjs && node test/deadline-stop-e2e.mjs && node test/manual-handoff-e2e.mjs && node test/manual-handoff-e2e.mjs --reject-resume",
+    "test:deadline:e2e": "node build.mjs && node test/deadline-stop-e2e.mjs",
+    "test:handoff:e2e": "node build.mjs && node test/manual-handoff-e2e.mjs",
+    "test:drivers:e2e": "node test/driver-cancellation-e2e.mjs",
+    "test:dependency:e2e": "node build.mjs && node test/dependency-e2e.mjs",
+    "check:adapters": "node build.mjs && node test/check-adapters.js",
     "test:e2e:real": "node test/bundle-real-e2e.mjs && node test/real-e2e.cjs",
     "typecheck": "tsc --noEmit",
-    "package": "npm test && node package.mjs"
+    "package": "npm test && node package.mjs",
+    "test:offline": "npm run typecheck && npm test && npm run check:adapters && npm run test:regression"
   },
   "devDependencies": {
     "@types/chrome": "latest",
@@ -18,7 +26,10 @@
     "esbuild": "latest",
     "jsdom": "latest",
     "playwright": "^1.62.1",
-    "typescript": "latest"
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "latest",
+    "vue": "3.5.13"
   },
   "dependencies": {
     "tesseract.js": "^7.0.0"

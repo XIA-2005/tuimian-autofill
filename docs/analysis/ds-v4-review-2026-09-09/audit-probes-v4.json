@@ -1,0 +1,160 @@
+[
+  {
+    "id": "Q01-contract-overwrites-conflict",
+    "expected": "PAGE_VALUE",
+    "actual": "PAGE_VALUE",
+    "targetResults": [
+      "conflict"
+    ],
+    "stats": {
+      "total": 1,
+      "filled": 0,
+      "skipped": 0,
+      "noMatch": 0,
+      "profileEmpty": 0,
+      "failed": 0,
+      "picker": 0,
+      "pickerResumeCount": 0
+    }
+  },
+  {
+    "id": "Q02-contract-equal-rewrites",
+    "expectedInputEvents": 0,
+    "actualInputEvents": 0
+  },
+  {
+    "id": "Q03-resolver-not-used",
+    "compilerAmbiguous": true,
+    "actualValues": [
+      "",
+      ""
+    ],
+    "expected": "both empty"
+  },
+  {
+    "id": "Q04-native-date-conflict",
+    "expected": "2001-01-01",
+    "actual": "2001-01-01",
+    "status": "conflict"
+  },
+  {
+    "id": "Q05-radio-conflict",
+    "expected": "女",
+    "actual": "女"
+  },
+  {
+    "id": "Q06-refill-breaks-clear",
+    "ownedAfterFirst": true,
+    "secondStatus": "alreadyCorrect",
+    "cleared": 1,
+    "actual": "",
+    "expected": "empty"
+  },
+  {
+    "id": "Q07-detached-restore",
+    "isConnected": false,
+    "result": "notAttempted",
+    "actual": "AFTER",
+    "expected": "notAttempted and AFTER"
+  },
+  {
+    "id": "Q08-cross-document-scope",
+    "differentDocuments": true,
+    "oldSnapshotValidInNewDocument": false,
+    "expected": false
+  },
+  {
+    "id": "Q09-route-key",
+    "sameHashRoutes": false,
+    "retainsPathToken": true,
+    "expected": "different logical pages; no persisted token"
+  },
+  {
+    "id": "Q10-unrelated-validation",
+    "actual": null,
+    "expected": null
+  },
+  {
+    "id": "V01-empty-contract-duplicate-and-unowned",
+    "statuses": [
+      "skipped",
+      "filled"
+    ],
+    "total": 2,
+    "owned": null,
+    "cleared": 0,
+    "valueAfterClear": "PROFILE"
+  },
+  {
+    "id": "V02-ambiguous-contract-generic-bypass",
+    "values": [
+      "PROFILE",
+      "PROFILE"
+    ],
+    "statuses": [
+      "filled",
+      "filled"
+    ]
+  },
+  {
+    "id": "V03-picker-select-conflict",
+    "value": "NEW",
+    "statuses": [
+      "filled"
+    ]
+  },
+  {
+    "id": "V04-dependency-empty",
+    "parent": "OLD",
+    "child": "13800000000",
+    "results": [
+      {
+        "field": "basic.name",
+        "status": "skipped",
+        "reason": "档案为空"
+      },
+      {
+        "field": "basic.phone",
+        "status": "filled",
+        "reason": "可见值回读一致"
+      }
+    ]
+  },
+  {
+    "id": "V04-dependency-conflict",
+    "parent": "OLD",
+    "child": "13800000000",
+    "results": [
+      {
+        "field": "basic.name",
+        "status": "skipped",
+        "reason": "页面已有不同值,已保留(未覆盖)"
+      },
+      {
+        "field": "basic.phone",
+        "status": "filled",
+        "reason": "可见值回读一致"
+      }
+    ]
+  },
+  {
+    "id": "V05-restore-without-ownership",
+    "result": "restored",
+    "actual": "",
+    "expected": "USER_VALUE"
+  },
+  {
+    "id": "V06-old-callback-global-guard",
+    "writes": 1,
+    "expected": 0,
+    "note": "reproduces exact global guard closure pattern; not full browser proof"
+  },
+  {
+    "id": "V07-background-partial-terminal",
+    "timerMs": 1200,
+    "timedOut": false,
+    "filled": 1,
+    "failed": 0,
+    "privateValueForwarded": true
+  }
+]

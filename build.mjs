@@ -62,11 +62,16 @@ const builds = [
   },
   {
     ...shared,
-    entryPoints: { run: 'test/run.ts' },
+    entryPoints: {
+      run: 'test/run.ts',
+      'regression/run': 'test/regression/run.ts',
+      'regression/run-e2e': 'test/regression/run-e2e.ts',
+      'check-adapters': 'test/check-adapters.ts',
+    },
     outdir: 'test',
     format: 'cjs',
     platform: 'node',
-    external: ['jsdom'],
+    external: ['jsdom', 'playwright', 'esbuild'],
     target: ['node20'],
   },
 ];
@@ -79,5 +84,5 @@ if (watch) {
   console.log('watching... (dist + test)');
 } else {
   await Promise.all(builds.map((b) => esbuild.build(b)));
-  console.log('build done -> dist/ and test/run.js');
+  console.log('build done -> dist/ 与 test/ 下各 node 入口(run.js / regression/*.js)');
 }

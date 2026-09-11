@@ -2,6 +2,7 @@
 // 供适配逻辑与诊断使用（网格表格列头/数据行样例/加行按钮/弹窗触发器等）。
 
 import { findPickerTrigger, normalizeText } from './matcher';
+import { routeKeyFor } from './fill-task';
 
 export interface ScanGridTable {
   header: string[];
@@ -86,5 +87,29 @@ export function scanSite(doc: Document): SiteScan {
     textareas: doc.querySelectorAll('textarea').length,
     gridTables,
     pickers,
+  };
+}
+
+/**
+ * 功能:I02 诊断用站点扫描——去掉页面原文(表头文本、单元格样例、按钮文本),
+ * 只保留结构签名与由文本长度推导的分类。持久化与报告都必须使用本函数的结果。
+ */
+export function sanitizeScanForDiagnostics(scan: SiteScan): SiteScan {
+  return {
+    url: routeKeyFor(scan.url),
+    inputs: scan.inputs,
+    selects: scan.selects,
+    textareas: scan.textareas,
+    gridTables: scan.gridTables.map((table) => ({
+      rows: table.rows,
+      dataRows: table.dataRows,
+      writableRows: table.writableRows,
+      purpose: table.purpose,
+      hasSaveButton: table.hasSaveButton,
+      header: table.header.map((head) => `h:${head.length}`),
+      samples: [],
+      addButtons: table.addButtons.map((button) => ({ tag: button.tag, text: '按钮', cls: `class:${button.cls.length}`, name: `name:${button.name.length}` })),
+    })),
+    pickers: scan.pickers.map((picker) => ({ name: `name:${picker.name.length}`, triggerTag: picker.triggerTag, triggerCls: `class:${picker.triggerCls.length}` })),
   };
 }

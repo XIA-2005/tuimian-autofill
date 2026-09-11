@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>J01 人工接管续轮夹具</title>
+<body>
+<form>
+  <table>
+    <tr><td>本科院校<input id="univ" name="univ"><a id="trigger" href="javascript:void(0)">选择</a>
+      <input id="univCode" type="hidden"><input id="univName" type="hidden"></td></tr>
+    <tr><td>手机号<input id="child" name="child"></td></tr>
+  </table>
+</form>
+<script>
+  window.hoEvents = [];
+  // 自动 picker 必然失败:点开触发后不提供任何可选择的结果行 → 扩展转入人工接管。
+  document.getElementById('trigger').addEventListener('click', function () {
+    window.hoEvents.push({ kind: 'trigger', at: performance.now() });
+    var box = document.getElementById('autoDialog');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'autoDialog';
+      box.className = 'layui-layer';
+      box.textContent = '查询中…';
+      document.body.appendChild(box);
+    }
+  });
+  // 模拟用户在弹窗中选好学校:页面把代码/名称/显示框成对回填。
+  window.__userPickSchool = function () {
+    document.getElementById('univ').value = '10700 测试大学';
+    document.getElementById('univCode').value = '10700';
+    document.getElementById('univName').value = '测试大学';
+    var box = document.getElementById('autoDialog');
+    if (box) box.remove();
+    window.hoEvents.push({ kind: 'user-pick', at: performance.now() });
+  };
+</script>
+</body></html>

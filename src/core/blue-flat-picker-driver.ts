@@ -1,6 +1,7 @@
 // 蓝色报名系统学校/专业三联选择器：代码框、名称框、展示框必须作为一个整体写入和回读。
 
 import { PopupPickContext } from './popup-binding';
+import { sanitizeDiagnosticValue } from './fill-telemetry';
 
 export type BlueFlatPickStatus = 'picked' | 'opened' | 'failed' | 'not-applicable';
 
@@ -100,7 +101,7 @@ function writeBlueDebug(doc: Document, context: PopupPickContext, stages: string
       opened: stages.includes('scope-found'),
       result,
     });
-    store.setItem('tui-pick-debug', JSON.stringify(entries.slice(-10)));
+    store.setItem('tui-pick-debug', JSON.stringify(sanitizeDiagnosticValue(entries.slice(-10))));
   } catch {
     // 某些隐私模式禁止访问 sessionStorage；诊断失败不能影响填表。
   }
@@ -571,7 +572,7 @@ function writeBinding(binding: BlueFlatBinding, hit: ParsedIdentity): boolean {
  * 功能：执行蓝色系统 chooseSch/chooseZy 弹窗点选，并保证代码、名称、展示值完整回读。
  * 安全边界：没有可靠代码时绝不凭校名/专业名伪造隐藏码，也不点击保存、下一步或提交。
  */
-export async function pickBlueFlatIdentity(doc: Document, value: string, context: PopupPickContext): Promise<BlueFlatPickStatus> {
+export async function pickBlueFlatIdentity(doc: Document, value: string, context: PopupPickContext, isCancelled?: () => boolean): Promise<BlueFlatPickStatus> {
   if (context.pickerProtocol !== 'blue-flat') return 'not-applicable';
   const stages = ['blue-flat:start'];
   const finish = (status: BlueFlatPickStatus): BlueFlatPickStatus => {
@@ -598,6 +599,7 @@ export async function pickBlueFlatIdentity(doc: Document, value: string, context
   }
   for (let attempt = 0; attempt < 16 && !scopes.length; attempt++) {
     await delay(250);
+    if (isCancelled?.()) { stages.push('cancelled'); return finish('not-applicable'); } // I01:原轮失效即停止等待/点击
     scopes = pickerScopes(doc, context);
   }
   if (!scopes.length) {
@@ -614,6 +616,7 @@ export async function pickBlueFlatIdentity(doc: Document, value: string, context
   const queries = [expected.code, expected.name, expected.name.slice(0, 8), expected.name.slice(0, 6), expected.name.slice(0, 4)]
     .filter((item, index, all) => item.length >= 2 && all.indexOf(item) === index);
   for (const query of queries) {
+    if (isCancelled?.()) { stages.push('cancelled'); return finish('not-applicable'); } // I01:查询/点选前复核原轮
     scopes = pickerScopes(doc, context);
     for (const scope of scopes) {
       const input = queryInput(scope);
@@ -623,6 +626,7 @@ export async function pickBlueFlatIdentity(doc: Document, value: string, context
     }
     for (let poll = 0; poll < 10; poll++) {
       await delay(250);
+      if (isCancelled?.()) { stages.push('cancelled'); return finish('not-applicable'); }
       scopes = pickerScopes(doc, context);
       const hit = scopes.flatMap((scope) => [findRow(scope, expected), findResultNode(scope, expected)]
         .filter((item): item is RowHit => !!item)
@@ -632,6 +636,7 @@ export async function pickBlueFlatIdentity(doc: Document, value: string, context
       const { item: rowHit, scope: hitScope } = hit;
       const controlKind = rowHit.control.matches('input[type="image"]') ? 'image-input' : rowHit.control.tagName.toLowerCase();
       stages.push(`table-hit:${controlKind}`);
+      if (isCancelled?.()) { stages.push('cancelled'); return finish('not-applicable'); } // I01:点击结果行前复核
       click(rowHit.control);
       stages.push('table-click');
       await delay(120);
@@ -645,12 +650,14 @@ export async function pickBlueFlatIdentity(doc: Document, value: string, context
       }
       for (let readback = 0; readback < 12; readback++) {
         await delay(200);
+        if (isCancelled?.()) { stages.push('cancelled'); return finish('not-applicable'); } // I01:等待回填期间原轮失效 → 不宣称成功
         if (verifyBinding(binding, { code: expected.code || rowHit.code, name: expected.name || rowHit.name })) {
           stages.push('table-row', 'triad-ok');
           return finish('picked');
         }
       }
       const exact = { code: expected.code || rowHit.code, name: expected.name || rowHit.name };
+      if (isCancelled?.()) { stages.push('cancelled'); return finish('not-applicable'); } // I01:写代码/名称前最后复核
       if ((!expected.code || !rowHit.code || expected.code === rowHit.code) && writeBinding(binding, exact)) {
         stages.push('table-row-fallback', 'triad-ok');
         return finish('picked');
@@ -659,5 +666,6 @@ export async function pickBlueFlatIdentity(doc: Document, value: string, context
     }
   }
   stages.push('exhausted');
+  if (isCancelled?.()) { stages.push('cancelled'); return finish('not-applicable'); } // I01:兜底写入前复核
   return finish(expected.code && writeBinding(binding, expected) ? 'picked' : 'opened');
 }

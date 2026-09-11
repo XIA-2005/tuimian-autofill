@@ -1,0 +1,100 @@
+[
+  {
+    "id": "Q01-contract-overwrites-conflict",
+    "expected": "PAGE_VALUE",
+    "actual": "PROFILE_VALUE",
+    "targetResults": [
+      "skipped",
+      "filled"
+    ],
+    "stats": {
+      "total": 2,
+      "filled": 1,
+      "skipped": 1,
+      "noMatch": 0,
+      "profileEmpty": 0,
+      "failed": 0,
+      "picker": 0,
+      "pickerResumeCount": 0
+    }
+  },
+  {
+    "id": "Q02-contract-equal-rewrites",
+    "expectedInputEvents": 0,
+    "actualInputEvents": 1
+  },
+  {
+    "id": "Q03-resolver-not-used",
+    "compilerAmbiguous": true,
+    "actualValues": [
+      "PROFILE_VALUE",
+      ""
+    ],
+    "expected": "both empty"
+  },
+  {
+    "id": "Q04-native-date-conflict",
+    "expected": "2001-01-01",
+    "actual": "2003-02-02",
+    "status": "filled"
+  },
+  {
+    "id": "Q05-radio-conflict",
+    "expected": "女",
+    "actual": "男"
+  },
+  {
+    "id": "Q06-refill-breaks-clear",
+    "ownedAfterFirst": true,
+    "secondStatus": "alreadyCorrect",
+    "cleared": 0,
+    "actual": "VALUE",
+    "expected": "empty"
+  },
+  {
+    "id": "Q07-detached-restore",
+    "isConnected": false,
+    "result": "restored",
+    "actual": "",
+    "expected": "notAttempted and AFTER"
+  },
+  {
+    "id": "Q08-cross-document-scope",
+    "differentDocuments": true,
+    "oldSnapshotValidInNewDocument": true,
+    "expected": false
+  },
+  {
+    "id": "Q09-route-key",
+    "sameHashRoutes": true,
+    "retainsPathToken": true,
+    "expected": "different logical pages; no persisted token"
+  },
+  {
+    "id": "Q10-unrelated-validation",
+    "actual": {
+      "text": "OTHER_FIELD_REQUIRED",
+      "isNew": true
+    },
+    "expected": null
+  },
+  {
+    "id": "Q11-observer-misses-silent-write",
+    "observedHits": 0,
+    "finalValue": "",
+    "expected": "detect two setter side effects"
+  },
+  {
+    "id": "Q12-e2e-button-sentinel",
+    "actualClickCount": 0,
+    "expected": 1
+  },
+  {
+    "id": "Q13-background-fixed-window-and-unscoped-message",
+    "timerMs": 1200,
+    "doneWithoutTerminal": true,
+    "unscopedReportCounted": true,
+    "privatePreviewForwarded": true,
+    "lateFailureNotApplied": true
+  }
+]

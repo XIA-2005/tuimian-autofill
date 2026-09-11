@@ -1,0 +1,13 @@
+{
+  "sourceFile": "nwpu.html",
+  "sourceRelativePath": "nwpu.html",
+  "sourceSha256": "04723e0a9b63ff38daa826f3b234257409f97233af87a375143618fb16d7873e",
+  "sanitizedAt": "2026-09-08T16:42:34.299Z",
+  "replaced": {
+    "idcards": 0,
+    "phones": 0,
+    "emails": 0
+  },
+  "remoteStripped": 0,
+  "note": "静态结构快照:禁止用于真实验收证据;原文件未修改。"
+}

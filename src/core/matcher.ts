@@ -39,7 +39,7 @@ export const FIELD_RULES: FieldRule[] = [
   { field: 'basic.maritalStatus', keywords: ['婚姻状况', '婚否'], attrOnly: ['marriage', 'marital'], control: 'select' },
   { field: 'basic.health', keywords: ['健康状况', '身体状况'], control: 'any' },
   // ============ 联系方式 ============
-  { field: 'basic.phone', keywords: ['手机号', '手机号码', '手机', '移动电话', '联系电话', '电话号码', '联系手机', '联系方式', '本人联系电话', '联系电话常用'], negative: ['紧急', '家长', '父母', '监护人', '家庭', '座机', '固话'], attrOnly: ['phone', 'mobile', 'telephone', 'sjh', 'lxdh'], control: 'input' },
+  { field: 'basic.phone', keywords: ['手机号', '手机号码', '手机', '移动电话', '联系电话', '电话号码', '联系手机', '联系方式', '本人联系电话', '联系电话常用'], negative: ['紧急', '家长', '父母', '监护人', '家庭', '座机', '固话', '导师', '推荐人', '联系人', '担保', '紧急联系人'], attrOnly: ['phone', 'mobile', 'telephone', 'sjh', 'lxdh'], control: 'input' },
   { field: 'basic.landline', keywords: ['固定电话', '座机', '宅电', '家庭电话'], attrOnly: ['landline', 'gddh'], control: 'input' },
   { field: 'basic.emergencyName', keywords: ['紧急联系人', '联系人姓名', '家长姓名', '父母姓名', '监护人', '应急联系人', '应急联系人姓名', '监护人姓名'], negative: ['电话', '手机'], attrOnly: ['emergencyname', 'emergencycontact', 'lxr'], control: 'input' },
   { field: 'basic.emergencyPhone', keywords: ['紧急联系电话', '联系人电话', '家长电话', '父母电话', '监护人电话', '亲属电话', '应急联系人电话', '应急联系人手机', '监护人手机', '家长手机'], attrOnly: ['emergencyphone', 'lxrdh'], control: 'input' },
@@ -504,8 +504,24 @@ export function probeComponentDropdowns(doc: Document): ComponentDropdownProbe[]
   });
 }
 
-export function detectComponentDropdownFields(doc: Document, rules: FieldRule[] = FIELD_RULES): DetectedField[] {
-  const out: DetectedField[] = [];
+export interface ComponentDropdownCandidate {
+  /** 组件触发本体(执行期将获得 data-tui-widget 标记)。 */
+  widget: HTMLElement;
+  /** 值载体(优先空隐藏域/可见显示框/任意隐藏域;无则 null)。 */
+  carrier: HTMLElement | null;
+  container: HTMLElement;
+  rule: FieldRule;
+  key: string;
+  label: string;
+}
+
+/**
+ * 功能:只读收集组件下拉字段候选(PLAN v3 · P02 影子编译用)。
+ * 安全说明:本函数不写任何 DOM 属性/属性标记;旧 detect 的 data-tui-widget 等标记动作
+ * 由 markComponentDropdownCandidate 单独执行,归属执行阶段。
+ */
+export function collectComponentDropdownCandidates(doc: Document, rules: FieldRule[] = FIELD_RULES): ComponentDropdownCandidate[] {
+  const out: ComponentDropdownCandidate[] = [];
   const seenContainers = new Set<Element>();
   for (const { trigger: widget } of findComponentDropdownCandidates(doc)) {
     const container = findWidgetFieldScope(widget);
@@ -554,25 +570,45 @@ export function detectComponentDropdownFields(doc: Document, rules: FieldRule[] 
     const carrier = hiddenInputs.find((h) => !(h.value || '').trim()) || visibleInputs[0] || hiddenInputs[0] || null;
     seenContainers.add(container);
     const key = `widget-${best.rule.field}-${out.length}`;
-    widget.setAttribute('data-tui-widget', 'dropdown');
-    widget.setAttribute('data-tui-widget-key', key);
-    let el: HTMLElement = widget;
-    if (carrier) {
-      carrier.setAttribute('data-tui-widget', 'dropdown-value');
-      carrier.setAttribute('data-tui-widget-key', key);
-      widget.setAttribute('data-tui-widget-target', carrier.id ? `#${carrier.id}` : carrier.getAttribute('name') ? `[name="${carrier.getAttribute('name')}"]` : '');
-      el = carrier; // 值载体作为字段控件：回读/去重/快照都走它
-    }
     // 标签格单独存在时，标签语义已由 prevSiblingText 命中；不要因无 name 的 jqx 显示框本身误命中而跳过组件。
     const rawLabelText = (caption || (normalizeText(containerText).length >= 2 ? containerText : prevSiblingText)).replace(/\s+/g, ' ').trim();
     out.push({
-      el: el as ControlEl,
+      widget,
+      carrier,
+      container,
       rule: best.rule,
+      key,
       label: rawLabelText.slice(0, 30) || best.rule.field,
+    });
+  }
+  return out;
+}
+
+/** 功能:给组件下拉候选打执行期标记(唯一写属性动作;归属执行阶段,与只读收集分离)。 */
+export function markComponentDropdownCandidate(candidate: ComponentDropdownCandidate): void {
+  const { widget, carrier, key } = candidate;
+  widget.setAttribute('data-tui-widget', 'dropdown');
+  widget.setAttribute('data-tui-widget-key', key);
+  if (carrier) {
+    carrier.setAttribute('data-tui-widget', 'dropdown-value');
+    carrier.setAttribute('data-tui-widget-key', key);
+    widget.setAttribute('data-tui-widget-target', carrier.id ? `#${carrier.id}` : carrier.getAttribute('name') ? `[name="${carrier.getAttribute('name')}"]` : '');
+  }
+}
+
+export function detectComponentDropdownFields(doc: Document, rules: FieldRule[] = FIELD_RULES): DetectedField[] {
+  const out: DetectedField[] = [];
+  for (const candidate of collectComponentDropdownCandidates(doc, rules)) {
+    markComponentDropdownCandidate(candidate);
+    const el: HTMLElement = candidate.carrier || candidate.widget;
+    out.push({
+      el: el as ControlEl,
+      rule: candidate.rule,
+      label: candidate.label,
       labelSource: 'sibling',
       skip: null,
       readonly: false,
-      pickerTrigger: widget,
+      pickerTrigger: candidate.widget,
     });
   }
   return out;

@@ -1,0 +1,274 @@
+{
+  "results": [
+    {
+      "name": "K00-暂停缺seq被拒(不补默认1)",
+      "ok": true,
+      "detail": {
+        "ok": false,
+        "reason": "invalid-sequence"
+      }
+    },
+    {
+      "name": "K00-暂停seq为Infinity被拒",
+      "ok": true,
+      "detail": {
+        "ok": false,
+        "reason": "invalid-sequence"
+      }
+    },
+    {
+      "name": "K00-合法暂停被接受",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "paused": true,
+        "runId": "run_842c0839b83b4355"
+      }
+    },
+    {
+      "name": "K00-旧恢复不能解除新暂停",
+      "ok": true,
+      "detail": {
+        "ok": false,
+        "runId": "run_842c0839b83b4355"
+      }
+    },
+    {
+      "name": "K00-新恢复被接受",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "runId": "run_842c0839b83b4355"
+      }
+    },
+    {
+      "name": "K00-旧暂停不能覆盖新恢复",
+      "ok": true,
+      "detail": {
+        "ok": false,
+        "reason": "not-paused",
+        "runId": "run_842c0839b83b4355"
+      }
+    },
+    {
+      "name": "K00-恢复缺seq同样被拒",
+      "ok": true,
+      "detail": {
+        "ok": false,
+        "reason": "invalid-sequence"
+      }
+    },
+    {
+      "name": "K00-恢复seq为Infinity被拒",
+      "ok": true,
+      "detail": {
+        "ok": false,
+        "reason": "invalid-sequence"
+      }
+    },
+    {
+      "name": "K00-仅人工暂停时启用暂停预算",
+      "ok": true,
+      "detail": {
+        "pause": 1,
+        "deadline": 0
+      }
+    },
+    {
+      "name": "K00-新自动区域加入后恢复硬deadline",
+      "ok": true,
+      "detail": {
+        "pause": 0,
+        "deadline": 1
+      }
+    },
+    {
+      "name": "K00-人工到期:未完成区域只计一次",
+      "ok": true,
+      "detail": {
+        "missing": [
+          "0::top"
+        ]
+      }
+    },
+    {
+      "name": "K00-人工到期:保留暂停前已回报快照",
+      "ok": true,
+      "detail": {
+        "total": 3,
+        "filled": 2,
+        "skipped": 0,
+        "noMatch": 0,
+        "profileEmpty": 0,
+        "failed": 0,
+        "picker": 1,
+        "pickerResumeCount": 0
+      }
+    },
+    {
+      "name": "K00-人工到期:waiting-manual只计一次",
+      "ok": true,
+      "detail": {
+        "waiting-manual": 1
+      }
+    },
+    {
+      "name": "K00-STOP带runId与docId",
+      "ok": true,
+      "detail": [
+        {
+          "type": "FILL_STOP",
+          "runId": "run_bbef226f0f6f442b",
+          "docId": "top",
+          "reason": "manual-timeout",
+          "message": "人工接管等待已到期，本轮已停止"
+        }
+      ]
+    },
+    {
+      "name": "K00-STOP使用人工到期原因",
+      "ok": true,
+      "detail": "manual-timeout"
+    },
+    {
+      "name": "K00-旧广播已登记拒绝通道",
+      "ok": true
+    },
+    {
+      "name": "K00-旧广播失败不取消新轮",
+      "ok": true,
+      "detail": {
+        "runId": "run_cdac818857a848fa",
+        "total": 2
+      }
+    },
+    {
+      "name": "K00-新旧轮runId不同",
+      "ok": true,
+      "detail": {
+        "firstRun": "run_f8e2eecb719a44c2",
+        "secondRun": "run_cdac818857a848fa"
+      }
+    },
+    {
+      "name": "K01-新失败不被旧成功掩盖",
+      "ok": true,
+      "detail": [
+        "failed"
+      ]
+    },
+    {
+      "name": "K01-合并统计与条目一致",
+      "ok": true,
+      "detail": {
+        "total": 1,
+        "filled": 0,
+        "skipped": 0,
+        "noMatch": 0,
+        "profileEmpty": 0,
+        "failed": 1,
+        "picker": 0,
+        "pickerResumeCount": 0
+      }
+    },
+    {
+      "name": "K01-新等待不被旧成功掩盖",
+      "ok": true,
+      "detail": {
+        "status": "picker",
+        "stats": {
+          "total": 1,
+          "filled": 0,
+          "skipped": 0,
+          "noMatch": 0,
+          "profileEmpty": 0,
+          "failed": 0,
+          "picker": 1,
+          "pickerResumeCount": 0
+        }
+      }
+    },
+    {
+      "name": "K01-未重新确认的旧目标不沿用成功",
+      "ok": true,
+      "detail": [
+        [
+          "basic.email",
+          "filled"
+        ],
+        [
+          "basic.phone",
+          "failed"
+        ]
+      ]
+    },
+    {
+      "name": "K01-同字段另一控件不能冒充旧目标已确认",
+      "ok": true,
+      "detail": [
+        [
+          "basic.name",
+          "filled",
+          "B"
+        ],
+        [
+          "basic.name",
+          "failed",
+          "detached"
+        ]
+      ]
+    },
+    {
+      "name": "K01-同字段双控件合并统计自洽",
+      "ok": true,
+      "detail": {
+        "total": 2,
+        "filled": 1,
+        "skipped": 0,
+        "noMatch": 0,
+        "profileEmpty": 0,
+        "failed": 1,
+        "picker": 0,
+        "pickerResumeCount": 0
+      }
+    },
+    {
+      "name": "K02-旧runId不原文透传",
+      "ok": true,
+      "detail": "restored_10585d88"
+    },
+    {
+      "name": "K02-旧runId重编码后仍可用于本地恢复",
+      "ok": true
+    },
+    {
+      "name": "K02-未来时间拒绝恢复",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "K02-负时间拒绝恢复",
+      "ok": true
+    },
+    {
+      "name": "K02-起止时间倒置拒绝恢复",
+      "ok": true
+    },
+    {
+      "name": "K02-合法旧诊断仍可恢复(计数/字段保留)",
+      "ok": true,
+      "detail": {
+        "counts": {
+          "total": 4,
+          "completed": 2,
+          "filled": 2,
+          "skipped": 0,
+          "failed": 0,
+          "waiting": 1
+        },
+        "field": "basic.phone"
+      }
+    }
+  ],
+  "fails": []
+}

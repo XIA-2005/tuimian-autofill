@@ -163,7 +163,7 @@ export const SCHOOL_ADAPTER_PACKAGES: SchoolAdapterPackage[] = [
     'lzu-ytms', '兰州大学', '预推免', 'other', ['yjszs.lzu.edu.cn'], ['*/lzuyjsytms/*'],
     [
       page('workspace', '工作区', 'shell', ['*/wlogin.html', '*/main*']),
-      { ...page('information', '信息填报', 'form', ['*/info*', '*/edit*', '*/main*'], ['#xm']), safeNavigationSelectors: ['a,button'], fields: [
+      { ...page('information', '信息填报', 'form', ['*/info*', '*/edit*', '*/main*'], ['#xm']), safeNavigationSelectors: ['a,button'], validationErrorSelectors: ['.field-validation-error', '.error', '.layui-form-danger', '[aria-invalid="true"]'], fields: [
         { nativeId: 'xm', profilePath: 'basic.name', driver: 'text' },
         { nativeId: 'zjlx', profilePath: 'basic.idType', driver: 'text' },
         { nativeId: 'zjhm', profilePath: 'basic.idCard', driver: 'text' },
@@ -172,7 +172,7 @@ export const SCHOOL_ADAPTER_PACKAGES: SchoolAdapterPackage[] = [
         { nativeId: 'xb', profilePath: 'basic.gender', driver: 'radio' },
         { nativeId: 'zzmm', profilePath: 'basic.politicalStatus', driver: 'layui', codeNamespace: 'adapter:lzu-ytms' },
         { nativeId: 'xyjr', profilePath: 'basic.militaryStatus', driver: 'text' },
-        { nativeId: 'rxnf', profilePath: 'education.startDate', driver: 'date' },
+        { nativeId: 'rxnf', profilePath: 'education.startDate', driver: 'date', dependsOn: ['education.university'] },
         { nativeId: 'bkbyny', profilePath: 'education.endDate', driver: 'date' },
         { nativeId: 'bkbysf', profilePath: 'education.province', driver: 'layui' },
         { nativeId: 'bkbyxx', profilePath: 'education.university', driver: 'school-picker', componentDriver: 'layui', codeNamespace: 'moe.school' },
@@ -587,6 +587,38 @@ export function validateAdapterPackage(raw: unknown): SchoolAdapterPackage {
     !stringList(field.picker?.chooseSelectors) || !stringList(field.picker?.categorySelectSelectors),
   ))) throw new Error('字段契约选择器必须是字符串数组');
   if (p.pages.some((x) => !stringList(x.nextSelectors) || !stringList(x.validationErrorSelectors) || !stringList(x.extractIgnoreSelectors))) throw new Error('页面导航或提取契约选择器必须是字符串数组');
+  if (p.pages.some((x) => x.fields?.some((field) => !stringList(field.dependsOn)))) throw new Error('字段契约 dependsOn 必须是字符串数组');
+  // 依赖等待配置必须有界；拒绝非数字或无限等待，防止坏契约挂住整轮。
+  for (const page of p.pages) for (const field of page.fields || []) {
+    const wait = field.dependencyWait;
+    if (!wait) continue;
+    if (typeof wait !== 'object' || (wait.readySelector !== undefined && (typeof wait.readySelector !== 'string' || !wait.readySelector.trim()))) throw new Error('依赖就绪选择器无效');
+    const timeout = wait.timeoutMs ?? 3500;
+    const settle = wait.settleMs ?? 100;
+    if (!Number.isFinite(timeout) || timeout < 100 || timeout > 10000 || !Number.isFinite(settle) || settle < 25 || settle * 2 >= timeout) throw new Error('依赖等待时间必须有界且保留稳定验证预算');
+  }
+  // F08b:dependsOn 必须引用同页字段且无环(声明式依赖在加载期即拒绝坏图)。
+  for (const pageContract of p.pages) {
+    const fields = pageContract.fields || [];
+    const paths = new Set(fields.map((f) => f.profilePath).filter((x): x is string => !!x));
+    for (const field of fields) {
+      for (const dep of field.dependsOn || []) {
+        if (!paths.has(dep)) throw new Error(`字段契约 dependsOn 引用不存在的字段: ${dep}`);
+        if (dep === field.profilePath) throw new Error(`字段契约 dependsOn 不得自引用: ${dep}`);
+      }
+    }
+    const state = new Map<string, 'visiting' | 'done'>();
+    const visit = (path: string, stack: string[]): void => {
+      const mark = state.get(path);
+      if (mark === 'done') return;
+      if (mark === 'visiting') throw new Error(`字段契约 dependsOn 存在环: ${[...stack, path].join(' -> ')}`);
+      state.set(path, 'visiting');
+      const field = fields.find((f) => f.profilePath === path);
+      for (const dep of field?.dependsOn || []) visit(dep, [...stack, path]);
+      state.set(path, 'done');
+    };
+    for (const path of paths) visit(path, []);
+  }
   if (p.pages.some((x) => x.fields?.some((field) => field.picker?.protocol && !['minimal', 'blue-flat'].includes(field.picker.protocol)))) throw new Error('字段契约弹窗协议无效');
   const dateFormats = new Set(['yyyy', 'yyyyMM', 'yyyy-MM', 'yyyy/MM', 'yyyy年MM月', 'yyyyMMdd', 'yyyy-MM-dd', 'yyyy/MM/dd', 'yyyy年MM月dd日']);
   if (p.pages.some((x) => x.fields?.some((field) => field.dateFormat && !dateFormats.has(field.dateFormat)))) throw new Error('字段契约日期格式无效');
@@ -607,25 +639,177 @@ export function validateAdapterPackage(raw: unknown): SchoolAdapterPackage {
   return p;
 }
 
-export function matchAdapterPackage(url: string, packages: SchoolAdapterPackage[] = SCHOOL_ADAPTER_PACKAGES): SchoolAdapterPackage | undefined {
-  // 按 host 精确度排序：精确 host（不含 *）优先于通配 host（如 `*`）
-  const matches = packages.filter((p) => declarativeMatchUrl(p.match, url));
-  if (!matches.length) return undefined;
-  const score = (p: SchoolAdapterPackage): number => {
-    // 计算 host 精确度分数：精确 host 数越多越具体，得分越高
-    const hosts = p.match?.hosts || [];
-    let s = 0;
-    for (const h of hosts) {
-      if (h === '*') s -= 100; // 通配 host 排在最末
-      else if (h.startsWith('*.')) s += 5; // 子域通配
-      else s += 20; // 精确 host 优先
+// ============ 只读候选解析(PLAN v3 · P02) ============
+// 设计说明:包/页候选解析与评分放在本模块(与 URL 匹配/页面门禁共用 glob、路径候选,避免循环依赖);
+// 控件级候选与逻辑目标判定在 task-compiler.ts;两者都只读,不写 DOM/属性/storage。
+
+export interface PackageCandidate {
+  pkg: SchoolAdapterPackage;
+  hostTier: 'exact' | 'subdomain' | 'any';
+  matchedHost: string;
+  /** 实际命中路径模式的最大字面量长度(glob 中 * 不计),用于“更具体优先”。 */
+  pathLiteralLen: number;
+  pathWildcards: number;
+}
+
+function globToLiteralStats(pattern: string): { literalLen: number; wildcards: number } {
+  let literalLen = 0;
+  let wildcards = 0;
+  for (const ch of pattern) {
+    if (ch === '*') wildcards += 1;
+    else literalLen += 1;
+  }
+  return { literalLen, wildcards };
+}
+
+/**
+ * 功能:计算一个包对当前 URL 的“最佳实际命中分支”。
+ * 规则(PLAN v3 P02):只统计当前 URL 真正命中的 host/path,不再累加无关 host/路径数量;
+ * host 明确阶梯 exact host > *.subdomain > *;路径按字面量更长/通配更少更具体。
+ */
+export function bestMatchedBranch(adapter: SchoolAdapterPackage, rawUrl: string): PackageCandidate | undefined {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return undefined;
+  }
+  const host = url.hostname.toLowerCase();
+  const path = `${url.pathname}${url.search}`;
+  const exclude = adapter.match.excludePathPatterns || [];
+  if (exclude.some((p) => glob(p, path))) return undefined;
+  let bestHost: { tier: PackageCandidate['hostTier']; host: string } | undefined;
+  for (const h of adapter.match.hosts) {
+    const hh = h.toLowerCase();
+    let tier: PackageCandidate['hostTier'] | undefined;
+    if (h === '*') tier = 'any';
+    else if (host === hh) tier = 'exact';
+    else if (hh.startsWith('*.') && host.endsWith(hh.slice(1))) tier = 'subdomain';
+    if (!tier) continue;
+    if (!bestHost || tierRank(tier) > tierRank(bestHost.tier)) bestHost = { tier, host: h };
+  }
+  if (!bestHost) return undefined;
+  const patterns = adapter.match.pathPatterns || [];
+  let bestPath: { literalLen: number; wildcards: number } | undefined;
+  if (patterns.length) {
+    for (const p of patterns) {
+      if (!glob(p, path)) continue;
+      const stats = globToLiteralStats(p);
+      if (!bestPath || stats.literalLen > bestPath.literalLen || (stats.literalLen === bestPath.literalLen && stats.wildcards < bestPath.wildcards)) {
+        bestPath = stats;
+      }
     }
-    // pathPatterns 也参与：精确 > 通配
-    const paths = p.match?.pathPatterns || [];
-    s += paths.length;
-    return s;
-  };
-  return matches.sort((a, b) => score(b) - score(a))[0];
+  } else {
+    bestPath = { literalLen: 0, wildcards: 0 };
+  }
+  if (!bestPath) return undefined;
+  return { pkg: adapter, hostTier: bestHost.tier, matchedHost: bestHost.host, pathLiteralLen: bestPath.literalLen, pathWildcards: bestPath.wildcards };
+}
+
+function tierRank(tier: PackageCandidate['hostTier']): number {
+  return tier === 'exact' ? 3 : tier === 'subdomain' ? 2 : 1;
+}
+
+/** 功能:比较两个候选的具体程度(用于稳定排序;返回 0 表示同等级)。 */
+export function comparePackageCandidates(a: PackageCandidate, b: PackageCandidate): number {
+  const tierDiff = tierRank(b.hostTier) - tierRank(a.hostTier);
+  if (tierDiff !== 0) return tierDiff;
+  const literalDiff = b.pathLiteralLen - a.pathLiteralLen;
+  if (literalDiff !== 0) return literalDiff;
+  return a.pathWildcards - b.pathWildcards;
+}
+
+export interface PackageResolution {
+  candidates: PackageCandidate[];
+  /** 前两名同等级且为不同包:存在无法消歧的歧义。 */
+  ambiguous: boolean;
+  winner?: PackageCandidate;
+}
+
+/** 功能:收集全部命中包并给出确定性排序(改变传入数组顺序不改变结果;无关 host 不参与计分)。 */
+export function collectAdapterPackageCandidates(url: string, packages: SchoolAdapterPackage[] = SCHOOL_ADAPTER_PACKAGES): PackageResolution {
+  const withIndex = packages
+    .map((pkg) => bestMatchedBranch(pkg, url))
+    .filter((c): c is PackageCandidate => !!c)
+    .map((c, index) => ({ c, index }));
+  withIndex.sort((x, y) => comparePackageCandidates(x.c, y.c) || x.index - y.index);
+  const candidates = withIndex.map((x) => x.c);
+  const winner = candidates[0];
+  const ambiguous = !!winner && !!candidates[1] && comparePackageCandidates(winner, candidates[1]) === 0 && winner.pkg.id !== candidates[1].pkg.id;
+  return { candidates, ambiguous, winner };
+}
+
+export function matchAdapterPackage(url: string, packages: SchoolAdapterPackage[] = SCHOOL_ADAPTER_PACKAGES): SchoolAdapterPackage | undefined {
+  // P02 起:只按当前 URL 实际命中的分支评分,精确 host 优先、路径字面量更长优先;不再累加无关 host/路径数量。
+  return collectAdapterPackageCandidates(url, packages).winner?.pkg;
+}
+
+// ============ 页面候选(只读,PLAN v3 · P02) ============
+
+export interface AdapterPageCandidate {
+  page: AdapterPageContract;
+  pathLiteralLen: number;
+  requiredTotal: number;
+  matchedRequired: number;
+  titleMatched: boolean;
+  forbiddenHit: boolean;
+  fingerprintOk: boolean;
+  /** form/crawl-only 且全部门禁通过。 */
+  allowed: boolean;
+  reason: string;
+}
+
+/**
+ * 功能:收集一个包内全部满足“路径/标题/必选选择器”的页面候选(不改数组顺序语义;
+ * forbidden 命中页与指纹不符页不参与 allowed 竞争,但保留在候选里供诊断)。
+ */
+export function collectAdapterPageCandidates(adapter: SchoolAdapterPackage, doc: Document, rawUrl: string): AdapterPageCandidate[] {
+  const paths = crawlUrlPathCandidates(rawUrl);
+  const out: AdapterPageCandidate[] = [];
+  for (const page of adapter.pages) {
+    const pathHits = page.pathPatterns.filter((pattern) => paths.some((candidate) => glob(pattern, candidate)));
+    if (!pathHits.length) continue;
+    const titlePatterns = page.titlePatterns || [];
+    const titleMatched = titlePatterns.length === 0 || titlePatterns.some((p) => glob(p, doc.title));
+    if (!titleMatched) continue;
+    const required = page.requiredSelectors || [];
+    const matchedRequired = required.filter((sel) => !!doc.querySelector(sel)).length;
+    if (matchedRequired !== required.length) continue;
+    const forbiddenHit = (page.forbiddenSelectors || []).some((sel) => !!doc.querySelector(sel));
+    const literalLen = Math.max(...pathHits.map((p) => globToLiteralStats(p).literalLen), 0);
+    const fingerprintOk = !page.expectedFingerprints?.length || page.expectedFingerprints.includes(fingerprintDocument(doc));
+    const roleAllowed = page.role === 'form' || page.role === 'crawl-only';
+    const allowed = roleAllowed && !forbiddenHit && fingerprintOk;
+    out.push({
+      page,
+      pathLiteralLen: literalLen,
+      requiredTotal: required.length,
+      matchedRequired,
+      titleMatched,
+      forbiddenHit,
+      fingerprintOk,
+      allowed,
+      reason: !roleAllowed ? '非可采集填报页(role)' : forbiddenHit ? '命中禁止选择器' : !fingerprintOk ? '页面结构指纹变化,专项降级' : '通过页面门禁',
+    });
+  }
+  out.sort((a, b) => (Number(b.allowed) - Number(a.allowed)) || b.pathLiteralLen - a.pathLiteralLen || b.matchedRequired - a.matchedRequired);
+  return out;
+}
+
+export interface PageResolution {
+  candidates: AdapterPageCandidate[];
+  winner?: AdapterPageCandidate;
+  ambiguous: boolean;
+}
+
+/** 功能:确定唯一可写页面(多个同等级 allowed 候选 → 歧义,不按数组顺序取第一个)。 */
+export function resolveAdapterPage(adapter: SchoolAdapterPackage, doc: Document, rawUrl: string): PageResolution {
+  const candidates = collectAdapterPageCandidates(adapter, doc, rawUrl);
+  const allowed = candidates.filter((c) => c.allowed);
+  const winner = allowed[0];
+  const ambiguous = !!winner && !!allowed[1]
+    && allowed[1].pathLiteralLen === winner.pathLiteralLen && allowed[1].matchedRequired === winner.matchedRequired;
+  return { candidates, winner, ambiguous };
 }
 
 function glob(pattern: string, value: string): boolean {

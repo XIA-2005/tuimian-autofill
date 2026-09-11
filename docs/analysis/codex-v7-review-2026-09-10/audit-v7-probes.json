@@ -1,0 +1,39 @@
+[
+  {
+    "id": "D01-ascii-debug",
+    "actual": "ASCII_PRIVATE_TOKEN",
+    "expected": "marker absent"
+  },
+  {
+    "id": "D02-short-name",
+    "actual": "张三",
+    "expected": "fixed field label, not name"
+  },
+  {
+    "id": "D03-url",
+    "actual": "https://audit.invalid/PRIVATE_PATH?token=PRIVATE_QUERY",
+    "expected": "no raw path or query token"
+  },
+  {
+    "id": "D04-unknown-keys-and-stats",
+    "debug": {
+      "PRIVATE_KEY": "PRIVATE_VALUE"
+    },
+    "summary": {
+      "stats": {
+        "total": 1,
+        "secret": "PRIVATE_STATS"
+      },
+      "items": []
+    },
+    "expected": "no markers"
+  },
+  {
+    "id": "D05-pending-at-limit",
+    "pending": true,
+    "sent": 1,
+    "kind": "done",
+    "expected": "no done terminal while work pending",
+    "level": "actual source functions with controlled pending state"
+  }
+]

@@ -4,6 +4,7 @@
 // 每表差异通过 DynamicTableSpec 钩子表达；新增动态表只需实现 spec，不再复制整个循环。
 
 import { isVisible, normalizeText } from './matcher';
+import { sanitizeDiagnosticValue } from './fill-telemetry';
 import { mainWorldJqueryClick } from './world-bridge';
 import { syncTableBlobs } from './hidden-blob';
 
@@ -281,7 +282,7 @@ function logClickDebug(doc: Document, entry: Record<string, unknown>): void {
       }
     })();
     arr.push({ at: Date.now(), ...entry });
-    store.setItem('tui-click-debug', JSON.stringify(arr.slice(-20)));
+    store.setItem('tui-click-debug', JSON.stringify(sanitizeDiagnosticValue(arr.slice(-20))));
   } catch {
     // 忽略
   }
@@ -527,6 +528,8 @@ export async function handleDialogAfterClick(
   kindLabel: string,
   entryIndex: number,
   fillAdd?: (dialog: OpenDialogInfo) => Promise<boolean>,
+  /** I01:原轮取消谓词;弹窗填写属于写入副作用,失效后不得继续。 */
+  isCancelled?: () => boolean,
 ): Promise<'filled' | 'closed-edit' | 'closed-new' | 'left-open' | 'none'> {
   const after = visibleDialogRoots(doc);
   if (sameRootSet(beforeRoots, after)) return 'none';
@@ -572,7 +575,7 @@ function logAddSkip(c: HTMLElement, why: string): void {
       text: (c.textContent || (c as HTMLInputElement).value || '').replace(/\s+/g, ' ').trim().slice(0, 20),
       disabled: !!(c as HTMLButtonElement).disabled,
     });
-    store.setItem('tui-addbtn-debug', JSON.stringify(arr.slice(-16)));
+    store.setItem('tui-addbtn-debug', JSON.stringify(sanitizeDiagnosticValue(arr.slice(-16))));
   } catch {
     // 忽略
   }
@@ -745,6 +748,8 @@ export async function runDynamicTableFill<TInfo extends { table: HTMLTableElemen
   maxAddAttempts = 10,
   allowCommitActions = true,
   onProcessed?: (nextIndex: number) => void,
+  /** H04:原轮/文档失效判定;每个 await 恢复点与写入前都必须复核,不得只在外层入口检查。 */
+  isCancelled?: () => boolean,
 ): Promise<number> {
   const entries = spec.entries;
   let filled = 0;
@@ -759,6 +764,7 @@ export async function runDynamicTableFill<TInfo extends { table: HTMLTableElemen
     let iters = 0; // 安全阀：单条记录总迭代上限，防"行一直加但永远不被判定可用"的异常页面无限点击
     while (attempt <= maxAddAttempts && ++iters <= maxAddAttempts * 2 + 6) {
       if (!docAlive(doc)) return filled; // 整页回发已刷新：续填接管，旧文档不再操作
+      if (isCancelled?.()) return filled; // H04:原轮失效(换档案/导航/新轮)立即停止,不再点击或写入
       if (postbackJustFired(doc)) {
         if (++pbWaits <= 4) {
           await sleep(2000); // 回发进行中：等刷新，不连点
@@ -774,6 +780,7 @@ export async function runDynamicTableFill<TInfo extends { table: HTMLTableElemen
       }
       const ctx: TableFillCtx = { doc, beforeAdd, attempt, index: i, allowCommitActions };
       const existing = spec.matchExisting ? await spec.matchExisting(info, entry, ctx) : null;
+      if (isCancelled?.()) return filled; // I01:行内匹配(可能 await)之后复核原轮
       if (existing === 'present' || existing === 'filled') {
         doneKind = existing;
         break;
@@ -818,7 +825,8 @@ export async function runDynamicTableFill<TInfo extends { table: HTMLTableElemen
           break;
         }
         // 点击打开的是弹窗而非直接加行：新增弹窗就地填写确认，编辑弹窗立即关闭（防止覆盖已有行）
-        const dialogOutcome = await handleDialogAfterClick(doc, dialogsBefore, spec.kind, i, spec.fillAddDialog ? (dialog) => spec.fillAddDialog!(doc, dialog, entry, i) : undefined);
+        if (isCancelled?.()) { abort = true; break; } // I01:弹窗处理前复核原轮
+        const dialogOutcome = await handleDialogAfterClick(doc, dialogsBefore, spec.kind, i, spec.fillAddDialog ? (dialog) => spec.fillAddDialog!(doc, dialog, entry, i) : undefined, isCancelled);
         if (dialogOutcome === 'filled') continue;
         if (dialogOutcome !== 'none') {
           abort = true; // 弹窗已处理（关闭/无法安全填写）：本条中止，交由外层预算与人工核对
@@ -861,11 +869,12 @@ export async function runDynamicTableFill<TInfo extends { table: HTMLTableElemen
     if (abort || !row) break;
     const info = spec.findTable(doc);
     if (!info) break;
+    if (isCancelled?.()) break; // H04:写入前最后复核原轮,失效即不写
     spec.beforeFillRow?.(info, doc);
     if (!spec.fillRow(row, info, entry, doc)) break;
     filled++;
     onProcessed?.(i + 1); // 本条已完整写入：显式推进断点（n 计数不含"已存在跳过"的条目）
-    if (spec.blobSync !== false) {
+    if (spec.blobSync !== false && !isCancelled?.()) {
       try {
         // 隐藏行串同步：以页面实况回读重编码写入关联隐藏域（页面脚本对值做过变换时以页面为准），并落盘跨页 stash（富者优先）
         syncTableBlobs(doc, info.table, { stashKey: `table:${spec.kind}` });
@@ -877,8 +886,11 @@ export async function runDynamicTableFill<TInfo extends { table: HTMLTableElemen
     if (spec.rowCommitButton && allowCommitActions && maxAddAttempts > 0) {
       const rowBtn = spec.rowCommitButton(info, row);
       if (rowBtn && isDoPostbackAction(rowBtn)) {
+        // I01:提交/落库属于写入副作用——只允许"明确的加行动作"按钮,且原轮失效即不得点击。
+        if (isCancelled?.()) break;
         await clickPageAction(rowBtn, clickAttempt(beforeAdd, i, 0));
         await sleep(1500); // 北邮等服务器回发较慢：给足新行出现的时间再继续
+        if (isCancelled?.()) break;
       }
     }
   }

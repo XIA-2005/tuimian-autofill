@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>教育信息</title><form>
+<input id="bydwm" type="hidden" value="10700"><input id="bydw" type="hidden" value="西安理工大学"><input id="bkbydwShow" value="10700 西安理工大学">
+<input id="byzydm" type="hidden" value="080301"><input id="byzymc" type="hidden" value="测控技术与仪器"><input id="bkbyzyShow" value="080301 测控技术与仪器">
+<input id="rxny"><input id="byny"><button class="button bg-sub" type="button" onclick="location.href='/ksxt/ssxly/summary'">下一步</button>
+</form>
+<script>
+  // G08 夹具:统计三联控件的写事件(页面已有正确值 → 期望零事件)。
+  window.__eduEvents = { school: 0, major: 0 };
+  document.addEventListener('input', function (e) {
+    var t = e.target;
+    if (!t || !t.id) return;
+    if (t.id === 'bydwm' || t.id === 'bydw' || t.id === 'bkbydwShow') window.__eduEvents.school += 1;
+    if (t.id === 'byzydm' || t.id === 'byzymc' || t.id === 'bkbyzyShow') window.__eduEvents.major += 1;
+  }, true);
+</script>

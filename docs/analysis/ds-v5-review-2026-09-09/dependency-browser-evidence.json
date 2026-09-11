@@ -1,0 +1,273 @@
+{
+  "results": [
+    {
+      "mode": "normal",
+      "province": "61",
+      "school": "10700",
+      "major": "080901",
+      "email": "dependency@example.invalid",
+      "oldSchool": "",
+      "events": [
+        {
+          "kind": "change",
+          "target": "province",
+          "at": 404.39999997615814
+        },
+        {
+          "kind": "change",
+          "target": "email",
+          "at": 432.19999998807907
+        },
+        {
+          "kind": "ready",
+          "target": "province",
+          "at": 668.1999999880791
+        },
+        {
+          "kind": "change",
+          "target": "school",
+          "at": 774.1000000238419
+        },
+        {
+          "kind": "ready",
+          "target": "school",
+          "at": 959
+        },
+        {
+          "kind": "change",
+          "target": "major",
+          "at": 1066.3999999761581
+        }
+      ],
+      "counts": {
+        "total": 4,
+        "completed": 4,
+        "filled": 4,
+        "skipped": 0,
+        "failed": 0,
+        "waiting": 0,
+        "alreadyCorrect": 0,
+        "conflict": 0
+      }
+    },
+    {
+      "mode": "same",
+      "province": "61",
+      "school": "10700",
+      "major": "080901",
+      "email": "dependency@example.invalid",
+      "oldSchool": "10700",
+      "events": [
+        {
+          "kind": "change",
+          "target": "email",
+          "at": 383.19999998807907
+        },
+        {
+          "kind": "change",
+          "target": "school",
+          "at": 516.3000000119209
+        },
+        {
+          "kind": "ready",
+          "target": "school",
+          "at": 703.8999999761581
+        },
+        {
+          "kind": "change",
+          "target": "major",
+          "at": 812.3000000119209
+        }
+      ],
+      "counts": {
+        "total": 4,
+        "completed": 4,
+        "filled": 3,
+        "skipped": 1,
+        "failed": 0,
+        "waiting": 0,
+        "alreadyCorrect": 0,
+        "conflict": 0
+      }
+    },
+    {
+      "mode": "conflict",
+      "province": "62",
+      "school": "",
+      "major": "",
+      "email": "dependency@example.invalid",
+      "oldSchool": "",
+      "events": [
+        {
+          "kind": "change",
+          "target": "email",
+          "at": 424.60000002384186
+        }
+      ],
+      "counts": {
+        "total": 4,
+        "completed": 4,
+        "filled": 1,
+        "skipped": 1,
+        "failed": 2,
+        "waiting": 0,
+        "alreadyCorrect": 0,
+        "conflict": 0
+      }
+    },
+    {
+      "mode": "empty",
+      "province": "",
+      "school": "",
+      "major": "",
+      "email": "dependency@example.invalid",
+      "oldSchool": "",
+      "events": [
+        {
+          "kind": "change",
+          "target": "email",
+          "at": 343.60000002384186
+        }
+      ],
+      "counts": {
+        "total": 4,
+        "completed": 4,
+        "filled": 1,
+        "skipped": 1,
+        "failed": 2,
+        "waiting": 0,
+        "alreadyCorrect": 0,
+        "conflict": 0
+      }
+    },
+    {
+      "mode": "timeout",
+      "province": "61",
+      "school": "",
+      "major": "",
+      "email": "dependency@example.invalid",
+      "oldSchool": "",
+      "events": [
+        {
+          "kind": "change",
+          "target": "province",
+          "at": 291.80000001192093
+        },
+        {
+          "kind": "change",
+          "target": "email",
+          "at": 321.19999998807907
+        }
+      ],
+      "counts": {
+        "total": 4,
+        "completed": 4,
+        "filled": 1,
+        "skipped": 0,
+        "failed": 3,
+        "waiting": 0,
+        "alreadyCorrect": 0,
+        "conflict": 0
+      }
+    },
+    {
+      "mode": "cancel",
+      "province": "61",
+      "school": "",
+      "major": "",
+      "email": "",
+      "oldSchool": "",
+      "events": [
+        {
+          "kind": "change",
+          "target": "province",
+          "at": 320.4000000357628
+        },
+        {
+          "kind": "ready",
+          "target": "province",
+          "at": 589.8000000119209
+        }
+      ],
+      "counts": {
+        "total": 0,
+        "completed": 0,
+        "filled": 0,
+        "skipped": 0,
+        "failed": 0,
+        "waiting": 0
+      }
+    },
+    {
+      "mode": "replace-parent",
+      "province": "",
+      "school": "",
+      "major": "",
+      "email": "dependency@example.invalid",
+      "oldSchool": "",
+      "events": [
+        {
+          "kind": "change",
+          "target": "province",
+          "at": 291
+        },
+        {
+          "kind": "change",
+          "target": "email",
+          "at": 318.60000002384186
+        },
+        {
+          "kind": "ready",
+          "target": "province",
+          "at": 553.7000000476837
+        }
+      ],
+      "counts": {
+        "total": 4,
+        "completed": 4,
+        "filled": 1,
+        "skipped": 0,
+        "failed": 3,
+        "waiting": 0,
+        "alreadyCorrect": 0,
+        "conflict": 0
+      }
+    },
+    {
+      "mode": "parent-rejected",
+      "province": "61",
+      "school": "",
+      "major": "",
+      "email": "dependency@example.invalid",
+      "oldSchool": "",
+      "events": [
+        {
+          "kind": "change",
+          "target": "province",
+          "at": 303.7000000476837
+        },
+        {
+          "kind": "change",
+          "target": "email",
+          "at": 331.5
+        },
+        {
+          "kind": "ready",
+          "target": "province",
+          "at": 565.7000000476837
+        }
+      ],
+      "counts": {
+        "total": 4,
+        "completed": 4,
+        "filled": 1,
+        "skipped": 0,
+        "failed": 3,
+        "waiting": 0,
+        "alreadyCorrect": 0,
+        "conflict": 0
+      }
+    }
+  ],
+  "external": 0
+}

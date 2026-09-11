@@ -1,8 +1,10 @@
 // 安全填充器：兼容 React/Vue 受控组件（原生 setter + 事件派发），支持文本框/下拉/单选/文本域，
 // 日期值按输入框 placeholder 提示的格式自适应，长文本域由结构化列表合成。
 
+import { isEmptyValue, isPlaceholderOption, isSemanticEqual, isTextFieldEqual, compareKindForField } from './value-semantics';
+import { fixedFieldLabel, safeDiagnosticField, sanitizeDiagnosticValue } from './fill-telemetry';
 import { DetectedField, detectAllFields, detectComponentDropdownFields, detectField, FIELD_RULES, FieldRule, findPickerTrigger, isVisible, normalizeText } from './matcher';
-import { isRegionLike, regionCode6, regionFromIdCard, regionKeywords, regionMatchTokens, regionTreeTokens } from './regionutil';
+import { isRegionLike, regionCode6, regionKeywords, regionMatchTokens, regionTreeTokens } from './regionutil';
 import { composeListText, Experience, FamilyMember, getByPath, Profile, Application } from './profile';
 import { matchAdapter } from './adapters';
 import { fillDateControl } from './date-drivers';
@@ -39,6 +41,8 @@ import {
   validDataRows,
 } from './dynamic-table';
 import { handleDialogAfterClick, sleep, visibleDialogRoots } from './dynamic-table';
+import { currentDocumentEpoch, currentProfileRevision, documentIdentity } from './fill-session';
+import type { RunSnapshot } from './fill-session';
 
 // 机器层与统一内核已收敛至 dynamic-table.ts；这里保持既有公开 API 的导出位置不变
 export { handleDialogAfterClick, sleep, visibleDialogRoots } from './dynamic-table';
@@ -46,13 +50,15 @@ export { handleDialogAfterClick, sleep, visibleDialogRoots } from './dynamic-tab
 export interface FillItem {
   label: string;
   field: string | null;
-  status: 'filled' | 'profileEmpty' | 'noMatch' | 'failed' | 'skipped' | 'picker';
+  status: 'filled' | 'profileEmpty' | 'noMatch' | 'failed' | 'skipped' | 'picker' | 'alreadyCorrect' | 'conflict';
   reason?: string;
   valuePreview?: string;
   /** 稳定问题码（core/error-codes.ts）：报告与漏填清单据此给出"用户该做什么" */
   issueCode?: string;
   /** 对应页面控件（仅内存使用，跨消息传递时会被剥离） */
   el?: Element;
+  /** F06:本轮期望写入值(仅内存;settle 用它比较真实 DOM 值,不依赖受控框架的实例级 value)。 */
+  expectedValue?: string;
   /** 弹窗字段语义与可接受代码；用于学校/专业代码和名称的精确成对校验。 */
   pickerContext?: PopupPickContext;
 }
@@ -81,10 +87,15 @@ export interface FillResult {
 export interface FillAllOptions {
   /** 仅用户主动开始新一轮填写时为 true；自动补填必须为 false，避免解除人工跳过。 */
   resetPickerAttempts?: boolean;
+  /**
+   * P03:本轮执行排除回调——返回 true 的逻辑目标视为已被更高权威(合同)认领,
+   * 通用链不再写入、不进入 manual/date/picker 分支;结果以 skipped 项保留供统计。
+   */
+  excludeEl?: (el: Element) => boolean;
 }
 
 /** 常见编码值 → 显示文本 的别名映射（用于下拉框/单选） */
-const VALUE_ALIASES: Record<string, string[]> = {
+export const VALUE_ALIASES: Record<string, string[]> = {
   男: ['男', '1', '01', 'm', 'male'],
   女: ['女', '2', '02', 'f', 'female', '0'],
   中共党员: ['中共党员', '党员', '正式党员', '01', '1'],
@@ -109,18 +120,28 @@ function escapeAttr(s: string): string {
 }
 
 function setInputValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const doc = el.ownerDocument;
+  // P07:文本类写入前捕获原值(仅当新值与现值不同,避免清空/等值调用污染快照)。
+  if (doc && readableControlValue(el) !== String(value)) captureBeforeValue(doc, el);
   // 写前临时解锁：readonly/disabled 控件的值页面校验器与表单序列化会忽略，造成"回读通过、保存丢失"
-  withUnlocked(el, () => {
-    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-    if (desc && desc.set) desc.set.call(el, value);
-    else el.value = value;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    // 部分系统在失焦时校验/同步内部状态，补发 blur/focusout
-    el.dispatchEvent(new Event('blur', { bubbles: false }));
-    el.dispatchEvent(new Event('focusout', { bubbles: true }));
-  });
+  beginInternalWrite();
+  try {
+    withUnlocked(el, () => {
+      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (desc && desc.set) desc.set.call(el, value);
+      else el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      // 部分系统在失焦时校验/同步内部状态，补发 blur/focusout
+      el.dispatchEvent(new Event('blur', { bubbles: false }));
+      el.dispatchEvent(new Event('focusout', { bubbles: true }));
+    });
+  } finally {
+    endInternalWrite();
+  }
+  // G02:真实写入登记 ownership(清空调用 value='' 时同样登记,由调用方决定语义)。
+  if (doc) registerWriteOwnership(doc, el, String(value), 'text');
 }
 
 /**
@@ -188,14 +209,22 @@ function formatDateForInput(raw: string, el: HTMLInputElement): string {
 }
 
 function pickOption(el: HTMLSelectElement, index: number): void {
-  // 禁用下拉的选中值会被表单序列化忽略；写前临时启用，写后恢复
-  withUnlocked(el, () => {
-    const desc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
-    if (desc && desc.set) desc.set.call(el, el.options[index].value);
-    else el.selectedIndex = index;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  });
+  const doc = el.ownerDocument;
+  beginInternalWrite();
+  try {
+    // 禁用下拉的选中值会被表单序列化忽略；写前临时启用，写后恢复
+    withUnlocked(el, () => {
+      const desc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+      if (desc && desc.set) desc.set.call(el, el.options[index].value);
+      else el.selectedIndex = index;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  } finally {
+    endInternalWrite();
+  }
+  // G02:select 写入登记 ownership(清除也走这里,记录随后由 clearPageFill 删除)。
+  if (doc) registerWriteOwnership(doc, el, el.options[index].value, 'native-select');
 }
 
 function setSelectValue(el: HTMLSelectElement, value: string): boolean {
@@ -239,12 +268,25 @@ function radioLabel(r: HTMLInputElement): string {
   return r.value;
 }
 
-function setRadioGroup(el: HTMLInputElement, value: string): boolean {
-  const name = el.getAttribute('name') || el.id;
-  if (!name) return false;
+/**
+ * 功能:G01 按 name + 所属表单限定 radio 组——同名 radio 分布在多个 form 时不得串组。
+ * 规则:优先用元素所属 form(或最近的 form/表格行容器);无容器时退回全文档同名。
+ */
+export function radioGroupOf(el: HTMLInputElement): HTMLInputElement[] {
   const doc = el.ownerDocument || document;
-  const group = Array.from(doc.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${escapeAttr(name)}"]`));
+  const name = el.getAttribute('name') || '';
+  if (!name) return [el];
+  const scope: Element | null = el.form || el.closest('form') || el.closest('table') || null;
+  const all = Array.from(doc.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${escapeAttr(name)}"]`));
+  if (!scope) return all;
+  return all.filter((r) => (r.form || r.closest('form') || r.closest('table')) === scope);
+}
+
+function setRadioGroup(el: HTMLInputElement, value: string): boolean {
+  const group = radioGroupOf(el);
   if (!group.length) return false;
+  const doc = el.ownerDocument || document;
+  void doc;
   const want = normalizeText(value);
   const candidates = VALUE_ALIASES[want] || [value];
   for (const r of group) {
@@ -267,8 +309,10 @@ function fillControl(d: DetectedField, value: unknown): boolean {
   const tag = el.tagName;
   if (tag === 'SELECT') return setSelectValue(el as HTMLSelectElement, String(value));
   if (tag === 'TEXTAREA') {
-    setInputValue(el as HTMLTextAreaElement, String(value));
-    return true;
+    const text = String(value);
+    setInputValue(el as HTMLTextAreaElement, text);
+    // F06:写后必须回读真实 DOM 值(受控框架可能在事件处理中立刻还原)。
+    return readNativeControlValue(el) === text;
   }
   const input = el as HTMLInputElement;
   switch (input.type) {
@@ -277,13 +321,162 @@ function fillControl(d: DetectedField, value: unknown): boolean {
     case 'checkbox':
       // 复选框语义复杂（如"是否服从调剂"、多选获奖类别），一律留人工确认
       return false;
-    default:
-      setInputValue(input, formatDateForInput(String(value), input));
-      return true;
+    default: {
+      const expected = formatDateForInput(String(value), input);
+      setInputValue(input, expected);
+      return readNativeControlValue(input) === expected;
+    }
   }
 }
 
+/** 功能:读取控件的"可写值"快照(仅标量;select 取选中值;checkbox/radio 取 checked 文本)。 */
+export function readableControlValue(el: Element): string {
+  const tag = el.tagName;
+  if (tag === 'SELECT') return (el as HTMLSelectElement).value;
+  if (tag === 'TEXTAREA') return (el as HTMLTextAreaElement).value;
+  if (tag === 'INPUT') {
+    const input = el as HTMLInputElement;
+    if (input.type === 'checkbox' || input.type === 'radio') return input.checked ? (input.value || 'on') : '';
+    return input.value;
+  }
+  return '';
+}
+
+/**
+ * 功能:F06 读取控件真实 DOM 值——用原型 getter 绕过 React/Vue 在元素实例上安装的 value tracker。
+ * 说明:受控框架会劫持实例级 value(读回的是框架内部逻辑值),导致"已被框架还原"仍被读成写入值;
+ * 原型 getter 反映真实 DOM 状态,是写入回读与稳定验证的可靠依据。
+ */
+export function readNativeControlValue(el: Element): string {
+  const tag = el.tagName;
+  const win = el.ownerDocument ? el.ownerDocument.defaultView : null;
+  if (tag === 'INPUT') {
+    const input = el as HTMLInputElement;
+    if (input.type === 'checkbox' || input.type === 'radio') return input.checked ? (input.value || 'on') : '';
+    const proto = (win && (win as unknown as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement ? (win as unknown as { HTMLInputElement: typeof HTMLInputElement }).HTMLInputElement.prototype : HTMLInputElement.prototype);
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    return desc && desc.get ? String(desc.get.call(input) ?? '') : input.value;
+  }
+  if (tag === 'TEXTAREA') {
+    const proto = (win && (win as unknown as { HTMLTextAreaElement?: typeof HTMLTextAreaElement }).HTMLTextAreaElement ? (win as unknown as { HTMLTextAreaElement: typeof HTMLTextAreaElement }).HTMLTextAreaElement.prototype : HTMLTextAreaElement.prototype);
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    return desc && desc.get ? String(desc.get.call(el as HTMLTextAreaElement) ?? '') : (el as HTMLTextAreaElement).value;
+  }
+  if (tag === 'SELECT') return (el as HTMLSelectElement).value;
+  return '';
+}
+
+// G02:写入记录(doc → el → 记录)。ownership 只能由真实写入登记,markEl(UI 高亮)不再授予所有权。
+export interface WriteRecord {
+  /** 写前原值(空态也保存)。 */
+  before: string;
+  /** 本轮期望语义值。 */
+  expected: string;
+  /** 写入后真实 DOM 值。 */
+  after: string;
+  driver: string;
+  /** 用户/未知来源干预过该控件(值即使后来相同也不恢复可清除权限)。 */
+  userIntervened: boolean;
+  /** H02:写入时的轮次身份(原轮 runId)——恢复必须与当前轮一致。 */
+  runId?: string;
+  /** H02:写入时的文档实例+代际(epoch 字符串),跨导航/新 Document 失效。 */
+  epoch: string;
+  /** H02:写入时的档案修订——档案变更后旧记录不得授权恢复。 */
+  revision: number;
+}
+const writeRecords = new WeakMap<Document, Map<Element, WriteRecord>>();
+// P07:写入前快照(doc → el → 写前原值,含空态)。仅驱动可逆的普通标量捕获;用于失败后的有条件恢复。
+const beforeFillValues = new WeakMap<Document, Map<Element, string>>();
+// G02:内部写入深度——写入期间触发的 input/change 不算用户干预。
+let internalWriteDepth = 0;
+// H02:当前写入作用域(由编排入口在每轮开始时登记)。写入记录据此绑定 runId/档案修订/文档代际。
+let activeWriteScope: { doc: Document; runId?: string; revision: number; epoch: string } | null = null;
+/** 功能:H02 进入一轮写入作用域;未登记时记录只绑定当前文档代际与修订(仍不得跨修订恢复)。 */
+export function beginWriteScope(doc: Document, run?: Pick<RunSnapshot, 'runId'>): void {
+  activeWriteScope = {
+    doc,
+    runId: run?.runId,
+    revision: currentProfileRevision(doc),
+    epoch: `${documentIdentity(doc)}:${currentDocumentEpoch(doc)}`,
+  };
+}
+export function endWriteScope(): void {
+  activeWriteScope = null;
+}
+/** 功能:标记进入/退出内部写入(供事件监听区分扩展写入与用户编辑)。 */
+export function beginInternalWrite(): void {
+  internalWriteDepth += 1;
+}
+export function endInternalWrite(): void {
+  internalWriteDepth = Math.max(0, internalWriteDepth - 1);
+}
+/** 功能:记录外部(用户/页面)对控件的干预;内部写入期间的事件忽略。 */
+export function noteExternalInput(el: Element | null): void {
+  if (!el || internalWriteDepth > 0) return;
+  const doc = el.ownerDocument;
+  if (!doc) return;
+  const rec = writeRecords.get(doc)?.get(el);
+  if (rec) rec.userIntervened = true;
+}
+/** 功能:查询控件是否被用户/未知来源干预过。 */
+export function isUserIntervened(doc: Document, el: Element): boolean {
+  return !!writeRecords.get(doc)?.get(el)?.userIntervened;
+}
+
+/** 功能:捕获控件写前原值(空态也保存);已捕获不覆盖。 */
+export function captureBeforeValue(doc: Document, el: Element): void {
+  if (!beforeFillValues.has(doc)) beforeFillValues.set(doc, new Map());
+  const map = beforeFillValues.get(doc);
+  if (map && !map.has(el)) map.set(el, readableControlValue(el));
+}
+
+/** 功能:读取写前原值(未捕获返回 undefined)。 */
+export function getBeforeValue(doc: Document, el: Element): string | undefined {
+  return beforeFillValues.get(doc)?.get(el);
+}
+
+/**
+ * 功能:G02 登记一次真实写入(before/expected/after/driver),ownership 只来自这里。
+ * 说明:markEl 仅做 UI 高亮,不授予所有权;合同/通用/组件/picker 的写入路径都必须调用本函数。
+ */
+export function registerWriteOwnership(doc: Document, el: Element, expected: string, driver = 'text'): void {
+  let map = writeRecords.get(doc);
+  if (!map) {
+    map = new Map();
+    writeRecords.set(doc, map);
+  }
+  const before = getBeforeValue(doc, el) ?? readableControlValue(el);
+  // H02:记录绑定原轮 runId、文档代际与档案修订;作用域缺失时按当前文档即时取值(仍受修订/代际约束)。
+  const scope = activeWriteScope && activeWriteScope.doc === doc ? activeWriteScope : null;
+  map.set(el, {
+    before,
+    expected,
+    after: readNativeControlValue(el),
+    driver,
+    userIntervened: false,
+    runId: scope?.runId,
+    epoch: scope?.epoch ?? `${documentIdentity(doc)}:${currentDocumentEpoch(doc)}`,
+    revision: scope?.revision ?? currentProfileRevision(doc),
+  });
+}
+
+/** 功能:查询某控件是否在本轮被本扩展写入过(写入记录为准)。 */
+export function isOwnedByFill(doc: Document, el: Element): boolean {
+  return !!writeRecords.get(doc)?.get(el);
+}
+
+/** 功能:读取本轮写入后的值快照(无记录返回 undefined)。 */
+export function getOwnedValue(doc: Document, el: Element): string | undefined {
+  return writeRecords.get(doc)?.get(el)?.after;
+}
+
+/** 功能:读取完整写入记录(供恢复/清除/诊断使用)。 */
+export function getWriteRecord(doc: Document, el: Element): WriteRecord | undefined {
+  return writeRecords.get(doc)?.get(el);
+}
+
 export function markEl(el: Element, kind: 'filled' | 'missing' | 'empty'): void {
+  // G02:仅 UI 高亮;所有权由 registerWriteOwnership 单独登记(高亮不能授予清除权限)。
   el.classList.remove('tui-filled', 'tui-missing', 'tui-empty');
   el.classList.add(kind === 'filled' ? 'tui-filled' : kind === 'empty' ? 'tui-empty' : 'tui-missing');
   el.setAttribute('data-tui', kind);
@@ -342,9 +535,30 @@ function detectCharLimit(el: Element): number | null {
  * 并移除全部高亮标记。绝不触碰密码/验证码（从未标记）、未标记字段与服务器已保存内容。
  */
 export function clearPageFill(doc: Document): number {
-  const marked = Array.from(doc.querySelectorAll<HTMLElement>('[data-tui="filled"]'));
+  // F03:清除以"所有权记录"为准(不再依赖 data-tui 高亮标记——同值再填轮会清掉标记,但记录必须延续)。
+  // 只清:本轮确实写入、此后未被用户改动、仍在该文档中的目标;无所有权/未知目标一律不清。
+  const records = writeRecords.get(doc);
+  if (!records) {
+    clearHighlights(doc);
+    return 0;
+  }
   let cleared = 0;
-  for (const el of marked) {
+  for (const el of Array.from(records.keys())) {
+    if (!doc.contains(el)) {
+      records.delete(el); // 节点已离开文档:让出所有权
+      continue;
+    }
+    const rec = records.get(el);
+    if (!rec) continue;
+    // G02:用户/未知来源干预过 → 永久让出(值即使后来相同也不恢复可清除权限)。
+    if (rec.userIntervened) {
+      records.delete(el);
+      continue;
+    }
+    if (readableControlValue(el) !== rec.after) {
+      records.delete(el); // 值偏离写入后快照:来源不确定,让出所有权保留现值
+      continue;
+    }
     const tag = el.tagName;
     if (tag === 'SELECT') {
       const sel = el as HTMLSelectElement;
@@ -365,10 +579,105 @@ export function clearPageFill(doc: Document): number {
       el.textContent = '';
       cleared++;
     }
+    records.delete(el);
     markEl(el, 'empty');
   }
   clearHighlights(doc);
   return cleared;
+}
+
+export type RestoreVerdict = 'restored' | 'alreadyRestored' | 'restoreFailed' | 'notAttempted';
+
+/**
+ * 功能:G06 有条件恢复——只有"本轮真实写入过且状态可证明"的文本目标才恢复。
+ * 条件(缺一即 notAttempted):同文档且节点仍连接;存在写入记录(ownership);
+ * 记录未被用户/未知来源干预;driver 为可逆文本且真实 input.type 仍可逆(日期/radio/文件/密码不按文本恢复);
+ * H02:记录的原轮 runId / 文档代际 / 档案修订必须与调用方显式传入的原轮 ctx 及当前状态一致——
+ * 提高档案修订、导航、换轮后旧记录不得恢复。
+ * 区分:页面已回到写前值 → alreadyRestored(无需动作,不作为"实际恢复"证据);
+ * 实际写回成功 → restored;写回后回读不一致 → restoreFailed。
+ */
+export function conditionalRestore(doc: Document, el: Element, ctx: RunSnapshot | null | undefined): RestoreVerdict {
+  if (!ctx) return 'notAttempted'; // H02:缺原轮 context 一律不恢复
+  if (!el.isConnected || el.ownerDocument !== doc) return 'notAttempted';
+  const record = getWriteRecord(doc, el);
+  if (!record) return 'notAttempted'; // 缺 ownership:不得凭写前快照恢复
+  if (record.userIntervened) return 'notAttempted'; // 用户/未知来源干预过
+  if (record.driver !== 'text') return 'notAttempted'; // 仅可逆文本驱动(日期/radio/组件不可通用撤销)
+  if (!record.runId || record.runId !== ctx.runId) return 'notAttempted'; // H02:跨轮记录不恢复
+  const epochNow = `${documentIdentity(doc)}:${currentDocumentEpoch(doc)}`;
+  if (record.epoch !== epochNow || ctx.epoch !== epochNow) return 'notAttempted'; // H02:导航/新文档失效
+  const revisionNow = currentProfileRevision(doc);
+  if (record.revision !== revisionNow || ctx.profileRevision !== revisionNow) return 'notAttempted'; // H02:档案修订后失效
+  const tag = el.tagName;
+  if (tag === 'TEXTAREA') {
+    /* 文本域可逆 */
+  } else if (tag === 'INPUT') {
+    // H02:以真实 input.type 为准,不因登记为 text 就把日期/文件等当文本恢复。
+    const type = ((el as HTMLInputElement).type || 'text').toLowerCase();
+    if (!['text', 'tel', 'email', 'url', 'search'].includes(type)) return 'notAttempted';
+  } else {
+    return 'notAttempted';
+  }
+  const before = record.before;
+  const current = readNativeControlValue(el);
+  if (current === before) return 'alreadyRestored'; // 页面已回原值:无动作
+  if (current !== record.after) return 'notAttempted'; // 既非写后值也非原值:来源不明
+  try {
+    setInputValue(el as HTMLInputElement | HTMLTextAreaElement, before);
+  } catch {
+    return 'restoreFailed';
+  }
+  if (readNativeControlValue(el) === before) {
+    writeRecords.get(doc)?.delete(el); // 已回写前状态:不再具备可清除所有权
+    return 'restored';
+  }
+  return 'restoreFailed';
+}
+
+/**
+ * 功能:P04 已有值语义判定(仅普通标量:text/textarea/原生 select)。
+ * 空→照写;语义相等→alreadyCorrect(不 setter/click、不占清除所有权);不同→conflict(保留原值,仅该目标暂停)。
+ * 弹窗/组件/只读日期类由调用方排除,不在此判定,维持既有驱动路径。
+ */
+function existingValueDecision(d: DetectedField, target: string): 'empty' | 'equal' | 'different' | 'unknown' {
+  const el = d.el;
+  const field = (d.rule && d.rule.field) || '';
+  if (el.tagName === 'SELECT') {
+    const sel = el as HTMLSelectElement;
+    const opt = sel.selectedOptions[0];
+    if (!opt || isPlaceholderOption(opt.value, opt.text || '')) return 'empty';
+    // H01:删除"无显式 selected 且停在首项=浏览器默认选中"的 DOM 推断——用户点选首项不会留下 selected 属性,
+    // 该推断会把用户真实选择当空值覆盖。空值只来自占位文本/空值规则或页面合同的显式声明。
+    const candidates = [opt.text.trim(), opt.value.trim()];
+    const aliases = VALUE_ALIASES[target] || [];
+    if (candidates.includes(target.trim()) || aliases.some((a) => candidates.includes(a))) return 'equal';
+    return 'different';
+  }
+  if (el.tagName === 'INPUT' && (el as HTMLInputElement).type.toLowerCase() === 'radio') {
+    // G01:同 name 跨 form 不串组。
+    const radios = radioGroupOf(el as HTMLInputElement);
+    const checked = radios.find((r) => r.checked);
+    if (!checked) return 'empty';
+    const label = (checked.labels?.[0]?.textContent || checked.closest('label')?.textContent || checked.nextElementSibling?.textContent || '').replace(/\s+/g, '');
+    const candidates = [label, checked.value].map((x) => String(x).replace(/\s+/g, ''));
+    const aliases = VALUE_ALIASES[target] || [];
+    const targetN = String(target).replace(/\s+/g, '');
+    if (candidates.includes(targetN) || aliases.some((a) => candidates.includes(a))) return 'equal';
+    return 'different';
+  }
+  const isTextualInput = el.tagName === 'INPUT' && ['text', 'tel', 'email', 'number', 'url', '', 'date', 'month'].includes((el as HTMLInputElement).type.toLowerCase());
+  if (!isTextualInput && el.tagName !== 'TEXTAREA') return 'unknown';
+  const input = el as HTMLInputElement;
+  if ((input.readOnly || input.disabled)) return 'unknown';
+  const current = input.value;
+  if (isEmptyValue(current)) return 'empty';
+  const kind = compareKindForField(field);
+  if (kind.kind === 'date') {
+    // 日期类仅在两侧都能按精度解析时判定,避免把页面自定义格式误读为不等。
+    return kind.precision && isSemanticEqual(kind.precision, current, target) ? 'equal' : 'different';
+  }
+  return isTextFieldEqual(field, current, target) ? 'equal' : 'different';
 }
 
 /** 判断控件是否有"弹窗选择"行为：带"选择"触发按钮的输入框一律走弹窗（真实值常是隐藏编码/弹窗点选结果，直接注入文本会写坏代码列导致数据库截断） */
@@ -438,16 +747,30 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
 
   // 组件下拉（页面上没有原生 select 的 jqx/自定义组件，如 ehall gsapp 的性别/政治面貌）先识别：
   // 它会把值载体（隐藏域/组件显示输入框）打上 data-tui-widget 标记，随后常规检测自动排除这些元素（消除 noMatch 噪音）
-  const widgetFields = detectComponentDropdownFields(doc, rules).filter((w) => !handled.has(w.el));
-  const detected = detectAllFields(doc, rules).filter((d) => !handled.has(d.el));
+  // G01:被合同认领/歧义的节点在检测阶段即排除——它们的目标由合同结果代表,
+  // 不再产生"通用内部跳过"条目(避免同目标重复统计与绕过)。
+  const excludedByContract = (el: Element): boolean => !!options.excludeEl?.(el);
+  const widgetFields = detectComponentDropdownFields(doc, rules).filter((w) => !handled.has(w.el) && !excludedByContract(w.el));
+  const detected = detectAllFields(doc, rules).filter((d) => !handled.has(d.el) && !excludedByContract(d.el));
   for (const w of widgetFields) {
     if (detected.some((d) => d.el === w.el)) continue;
     detected.push(w);
   }
-  const items: FillItem[] = [...preItems];
-  const stats: FillStats = { total: detected.length + preItems.length, filled: preStats.filled, skipped: 0, noMatch: 0, profileEmpty: preStats.profileEmpty, failed: 0, picker: 0, pickerResumeCount };
-
+  // F03:radio 同 name 同规则只保留一个逻辑目标(组),避免逐节点重复结果/重复写组。
+  const radioSeen = new Set<string>();
+  const dedupedDetected: typeof detected = [];
   for (const d of detected) {
+    if (d.el.tagName === 'INPUT' && (d.el as HTMLInputElement).type === 'radio' && d.rule) {
+      const key = `${d.rule.field}\0${(d.el as HTMLInputElement).name}`;
+      if (radioSeen.has(key)) continue;
+      radioSeen.add(key);
+    }
+    dedupedDetected.push(d);
+  }
+  const items: FillItem[] = [...preItems];
+  const stats: FillStats = { total: dedupedDetected.length + preItems.length, filled: preStats.filled, skipped: 0, noMatch: 0, profileEmpty: preStats.profileEmpty, failed: 0, picker: 0, pickerResumeCount };
+
+  for (const d of dedupedDetected) {
     if (d.skip) {
       stats.skipped++;
       items.push({
@@ -474,6 +797,18 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
       const essay = pickEssayForManual(profile, d.label);
       const limit = detectCharLimit(d.el);
       const content = essay?.content?.trim() || '';
+      const currentEssayText = (d.el as HTMLTextAreaElement | HTMLInputElement).value?.trim() || '';
+      if (currentEssayText) {
+        // F02:已有内容(可能是用户自写/上轮写入)绝不静默覆盖。
+        if (content && currentEssayText === content) {
+          items.push({ label: d.label, field: essay?.field || d.rule.field, status: 'alreadyCorrect', reason: '页面已有相同长文,跳过写入', el: d.el });
+          continue;
+        }
+        stats.skipped++;
+        items.push({ label: d.label, field: essay?.field || d.rule.field, status: 'skipped', reason: '页面已有长文内容,保留现有内容(不覆盖)', issueCode: 'E1206', el: d.el });
+        markEl(d.el, 'missing');
+        continue;
+      }
       if (essay && content && limit && content.length <= limit && fillControl(d, content)) {
         stats.filled++;
         items.push({
@@ -483,6 +818,7 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
           reason: `已按页面上限 ${limit} 字自动填写（共 ${content.length} 字，未截断）`,
           valuePreview: `${content.slice(0, 30)}…`,
           el: d.el,
+          expectedValue: content,
         });
         markEl(d.el, 'filled');
         continue;
@@ -499,11 +835,6 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
     if (d.rule.derive) value = deriveValue(profile, d.rule.derive, doc);
     else if (d.rule.compose) value = composeListText(profile, d.rule.compose);
     else value = getByPath(profile, d.rule.field);
-    // 地区字段空时：用身份证前 6 位区划码推导出生地/籍贯/户口地（成熟填表软件同款；仅兜底，不覆盖已填值）
-    if ((value === undefined || value === null || String(value).trim() === '') && /^basic\.(birthPlace|hometown|hukou)$/.test(d.rule.field || '')) {
-      const fromId = regionFromIdCard(profile);
-      if (fromId) value = fromId;
-    }
     if (value === undefined || value === null || String(value).trim() === '') {
       stats.profileEmpty++;
       items.push({ label: d.label, field: d.rule.field, status: 'profileEmpty', issueCode: 'E1102', el: d.el });
@@ -529,9 +860,27 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
         if (mm) v = `${mm[1]}${mm[2].padStart(2, '0')}`;
       }
     }
-    // 长字段保守截断：部分学校数据库列长较小，超长会报"将截断字符串或二进制数据"
+    // P10b:超限不静默截断——保留页面原值(通常为空)并提示人工精简;
+    // 数据库列长约束是站点问题,不应以裁剪用户核心信息(身份证/电话/代码等一律不裁)换取写入成功。
     const cap = FIELD_LENGTH_CAPS[d.rule.field];
-    if (cap && v.length > cap) v = v.slice(0, cap);
+    if (cap && v.length > cap) {
+      items.push({ label: d.label, field: d.rule.field, status: 'skipped', reason: `档案值 ${v.length} 字超过页面安全上限 ${cap},为避免静默截断已跳过,请人工精简`, issueCode: 'E1206', el: d.el });
+      markEl(d.el, 'missing');
+      continue;
+    }
+    // P04:已有值语义(仅普通标量;弹窗/日期类保持既有驱动路径)。
+    if (!hasPopupBehavior(d)) {
+      const verdict = existingValueDecision(d, v);
+      if (verdict === 'equal') {
+        items.push({ label: d.label, field: d.rule.field, status: 'alreadyCorrect', reason: '页面已有相同值,跳过写入(不触发事件)', el: d.el });
+        continue;
+      }
+      if (verdict === 'different') {
+        items.push({ label: d.label, field: d.rule.field, status: 'conflict', reason: '页面已有不同值,已保留原值(未覆盖)', el: d.el });
+        markEl(d.el, 'missing');
+        continue;
+      }
+    }
     // 弹窗选择框（只读/禁用/隐藏输入框 + 选择按钮、Show 显示框）：不直接注入文本（真实值往往是隐藏编码），交给自动点选处理。
     // 日期类字段除外：值本质就是文本（年月格式），直接注入并同步页面状态。
     const input = d.el as HTMLInputElement;
@@ -603,7 +952,7 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
     const ok = dateOutcome ? dateOutcome.ok : fillControl(d, v);
     if (ok) {
       stats.filled++;
-      items.push({ label: d.label, field: d.rule.field, status: 'filled', reason: dateOutcome?.reason, valuePreview: dateOutcome?.written || v, el: d.el });
+      items.push({ label: d.label, field: d.rule.field, status: 'filled', reason: dateOutcome?.reason, valuePreview: dateOutcome?.written || v, el: d.el, expectedValue: dateOutcome?.written || v });
       markEl(d.el, 'filled');
     } else {
       stats.failed++;
@@ -626,18 +975,9 @@ export function fillAll(profile: Profile, doc: Document, rules: FieldRule[] = FI
         JSON.stringify({
           at: Date.now(),
           stats,
-          // 档案关键内容快照（诊断"为什么没填"用：报告里可见家庭成员/奖项/经历清单）
-          profileLists: {
-            name: profile.basic.name || '',
-            university: profile.education.university || '',
-            major: profile.education.major || '',
-            familyMembers: profile.familyMembers.map((m) => m.name).filter(Boolean),
-            awards: profile.awards.map((a) => (a.content && a.content.trim() ? `${a.content.trim()}${a.date ? '（' + a.date + '）' : ''}` : '')).filter(Boolean),
-            experiences: profile.experiences.map((e) => e.org).filter(Boolean),
-            research: profile.research.map((r) => r.title).filter(Boolean),
-          },
+          // I02:诊断摘要只保留固定字段类别/状态/问题码——不写资料值、页面标签原文与页面错误原文。
           items: items
-            .map((i) => ({ label: i.label, field: i.field, status: i.status, value: String(i.valuePreview || '').slice(0, 30), reason: i.reason || '', issue: i.issueCode || '' }))
+            .map((i) => ({ label: fixedFieldLabel(i.field), field: safeDiagnosticField(i.field), status: i.status, issue: i.issueCode || '' }))
             .slice(0, 80),
         }),
       );
@@ -895,6 +1235,7 @@ export async function fillAchievements(
   maxAddAttempts = 10,
   allowCommitActions = true,
   onProcessed?: (nextIndex: number) => void,
+  isCancelled?: () => boolean,
 ): Promise<number> {
   const spec: DynamicTableSpec<AchievementTableInfo, Profile['research'][number]> = {
     kind: 'achievements',
@@ -929,7 +1270,7 @@ export async function fillAchievements(
     // 加行点击策略按连续失败轮次轮换（0 标准回发 → 1 主世界求值 → 2 原生点击）
     strategyForAttempt: (attempt) => attempt,
   };
-  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed);
+  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed, isCancelled);
 }
 
 export interface ExperienceTableInfo {
@@ -1110,6 +1451,7 @@ export async function fillExperiences(
   maxAddAttempts = 10,
   allowCommitActions = true,
   onProcessed?: (nextIndex: number) => void,
+  isCancelled?: () => boolean,
 ): Promise<number> {
   const spec: DynamicTableSpec<ExperienceTableInfo, Experience> = {
     kind: 'experiences',
@@ -1140,7 +1482,7 @@ export async function fillExperiences(
     },
     rowCommitButton: (info, row) => findAddButton(info.table, row),
   };
-  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed);
+  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed, isCancelled);
 }
 
 export interface AwardTableInfo {
@@ -1307,6 +1649,7 @@ export async function fillAwardRows(
   maxAddAttempts = 10,
   allowCommitActions = true,
   onProcessed?: (nextIndex: number) => void,
+  isCancelled?: () => boolean,
 ): Promise<number> {
   const spec: DynamicTableSpec<AwardTableInfo, Profile['awards'][number]> = {
     kind: 'awards',
@@ -1349,7 +1692,7 @@ export async function fillAwardRows(
       return true;
     },
   };
-  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed);
+  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed, isCancelled);
 }
 
 interface LanguageTableInfo {
@@ -1542,6 +1885,7 @@ export async function fillLanguageExams(
   beforeAdd?: (nextIndex: number) => number | void,
   maxAddAttempts = 10,
   allowCommitActions = false,
+  isCancelled?: () => boolean,
 ): Promise<number> {
   const spec: DynamicTableSpec<LanguageTableInfo, LanguageEntry> = {
     kind: 'language',
@@ -1557,7 +1901,7 @@ export async function fillLanguageExams(
     fillRow: (row, info, entry, ctxDoc) => fillLanguageRow(row, info, entry, ctxDoc),
     useSaveButton: false, // 外语表绝不借"保存"按钮制造下一行
   };
-  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions);
+  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, undefined, isCancelled);
 }
 
 /** 家庭成员表格信息（列头：姓名/关系/单位/电话/政治面貌） */
@@ -1754,6 +2098,7 @@ export async function fillFamilyMembers(
   maxAddAttempts = 10,
   allowCommitActions = true,
   onProcessed?: (nextIndex: number) => void,
+  isCancelled?: () => boolean,
 ): Promise<number> {
   const spec: DynamicTableSpec<FamilyTableInfo, FamilyMember> = {
     kind: 'family',
@@ -1784,7 +2129,7 @@ export async function fillFamilyMembers(
     },
     rowCommitButton: (info, row) => findAddButton(info.table, row),
   };
-  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed);
+  return runDynamicTableFill(spec, doc, startIndex, beforeAdd, maxAddAttempts, allowCommitActions, onProcessed, isCancelled);
 }
 
 /** 同源 iframe 内的文档列表（EasyUI 弹窗常在窗口里嵌 iframe 加载树/列表） */
@@ -2753,7 +3098,7 @@ function writePickDebug(doc: Document, el: Element, attempts: string[], opened: 
       arr = [];
     }
     arr.push({ at: Date.now(), name: (el as HTMLElement).getAttribute('name') || (el as HTMLElement).id || '', attempts, opened, result });
-    store.setItem('tui-pick-debug', JSON.stringify(arr.slice(-10)));
+    store.setItem('tui-pick-debug', JSON.stringify(sanitizeDiagnosticValue(arr.slice(-10))));
   } catch {
     // 忽略
   }
@@ -2801,23 +3146,23 @@ async function tryOpenPicker(doc: Document, inputEl: Element, trigger: Element):
 }
 
 /** 弹窗选择框半自动：点「选择」按钮打开选择器，若浮层选项可定位则自动点选；必要时先在弹层搜索框输入关键字过滤 */
-export async function pickInPage(doc: Document, el: Element, value: string, context?: PopupPickContext): Promise<'picked' | 'opened' | 'none'> {
+export async function pickInPage(doc: Document, el: Element, value: string, context?: PopupPickContext, isCancelled?: () => boolean): Promise<'picked' | 'opened' | 'none'> {
   // 组件下拉（jqx 等"请选择..."组件，页面上无原生 select）：进入组件下拉内核
   const widget = resolveWidgetDropdown(doc, el);
   if (widget) {
-    return await pickWidgetDropdown(doc, widget, value);
+    return await pickWidgetDropdown(doc, widget, value, isCancelled);
   }
   // 本科院校和本科专业先进入各自独立内核；不适用时才回落到通用地区树/浮层流程。
   if (context?.profilePath === 'education.university') {
-    const result = await pickSchool(doc, el, value, context);
+    const result = await pickSchool(doc, el, value, context, isCancelled);
     if (result !== 'not-applicable') return result === 'failed' ? 'none' : result;
   }
   if (context?.profilePath === 'education.major') {
-    const result = await pickMajor(doc, el, value, context);
+    const result = await pickMajor(doc, el, value, context, isCancelled);
     if (result !== 'not-applicable') return result === 'failed' ? 'none' : result;
   }
   if (context?.componentDriver) {
-    const component = await pickComponentOption(el, value, context);
+    const component = await pickComponentOption(el, value, context, isCancelled);
     if (component.status !== 'not-applicable') return component.status === 'failed' ? 'none' : component.status;
   }
   // Element-UI 等组件无独立"选择"按钮：点输入框自身即可展开下拉（海大式 el-select）
@@ -2832,7 +3177,7 @@ export async function pickInPage(doc: Document, el: Element, value: string, cont
     }, 20_000); // 弹窗选择整体预算 20s（原 30s）：配合兜底提前写入，失败更快转人工
   });
   try {
-    return await Promise.race([pickInPageInner(doc, el, trigger, value, () => aborted, context), timed]);
+    return await Promise.race([pickInPageInner(doc, el, trigger, value, () => aborted || !!isCancelled?.() || !el.isConnected, context), timed]);
   } catch (e) {
     writePickDebug(doc, el, ['pick-exception:' + String((e as Error).message || e).slice(0, 60)], false, 'none');
     return 'none';
@@ -2855,7 +3200,7 @@ function resolveWidgetDropdown(doc: Document, el: Element): HTMLElement | null {
  * 回读以值载体（隐藏域/组件显示输入框）为准——jqx 会把选项列表预渲染在容器里，组件文本不可作为选中依据；
  * 页面自身的组件脚本负责写入真实值与联动；扩展只负责“替用户点”，绝不猜测隐藏域编码。
  */
-async function pickWidgetDropdown(doc: Document, widget: HTMLElement, value: string): Promise<'picked' | 'opened' | 'none'> {
+async function pickWidgetDropdown(doc: Document, widget: HTMLElement, value: string, isCancelled?: () => boolean): Promise<'picked' | 'opened' | 'none'> {
   const target = normalizeText(value);
   if (!target) return 'opened';
   const key = widget.getAttribute('data-tui-widget-key') || '';
@@ -2885,6 +3230,7 @@ async function pickWidgetDropdown(doc: Document, widget: HTMLElement, value: str
   // jqx 学校列表使用虚拟渲染，目标学校可能根本不在当前 DOM 中。
   // 优先通过主世界白名单桥调用组件 getItems/selectItem；失败才回退到可见选项点选。
   const jqxResult = await mainWorldJqxSelectLabel(doc, widget, value);
+  if (isCancelled?.()) return 'none'; // I01:主世界点选返回后原轮可能已失效
   widgetSteps.push(jqxResult.ok ? 'jqx-api-selected' : `jqx-api-${jqxResult.reason || 'failed'}`);
   if (jqxResult.ok) {
     await sleep(180);
@@ -2915,6 +3261,7 @@ async function pickWidgetDropdown(doc: Document, widget: HTMLElement, value: str
   for (let round = 0; round < 14; round++) {
     await sleep(300);
     if (!docAlive(doc)) return 'opened';
+    if (isCancelled?.()) return 'none'; // I01:轮询浮层期间原轮失效 → 不再点选/写隐藏代码
     if (committed()) {
       widget.setAttribute('data-tui-value', (valueEl && valueEl.value.trim()) || value);
       markEl(widget, 'filled');
@@ -2937,6 +3284,7 @@ async function pickWidgetDropdown(doc: Document, widget: HTMLElement, value: str
         filterFilled = true;
         // jqx 会在 keyup 后异步过滤并重新渲染虚拟行，给远端数据源留出首轮响应时间。
         await sleep(700);
+        if (isCancelled?.()) return 'none'; // I01:过滤等待后复核原轮
         const visibleOptionCount = Array.from(doc.querySelectorAll<HTMLElement>('[role="option"],.jqx-item,[class*="listitem"]'))
           .filter((item) => isVisible(item) && !!(item.textContent || '').trim()).length;
         widgetSteps.push(`filter-visible:${Math.min(visibleOptionCount, 999)}`);

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>H03 跨 frame 夹具(父)</title>
+<body>
+<form><label>邮箱<input name="email"></label></form>
+<iframe id="child" src="/frame-child" width="520" height="260"></iframe>
+<script>
+// 仅本地夹具：显式延迟超过10秒，验证轮询上限不能伪造终态。
+const delay = new URL(location.href).searchParams.get('delay');
+if (delay) document.getElementById('child').src = '/frame-child?delay=' + encodeURIComponent(delay);
+</script>
+</body></html>

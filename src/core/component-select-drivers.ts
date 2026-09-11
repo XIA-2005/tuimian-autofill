@@ -156,7 +156,10 @@ function readbackOk(root: HTMLElement, anchor: Element, kind: ComponentSelectKin
  * 功能：驱动 Ant/Select2/Element/Layui 下拉并读取可见标签和底层模型。
  * 安全边界：只点击组件展开、搜索和选项，不点击页面保存、下一步或提交。
  */
-export async function pickComponentOption(anchor: Element, value: string, context?: PopupPickContext): Promise<ComponentPickResult> {
+export async function pickComponentOption(anchor: Element, value: string, context?: PopupPickContext, isCancelled?: () => boolean): Promise<ComponentPickResult> {
+  const cancelled = () => !!isCancelled?.() || !anchor.isConnected;
+  const stopped = (): ComponentPickResult => ({ status: 'failed', reason: '原轮或组件目标已失效，停止选项操作' });
+  if (cancelled()) return stopped();
   const detected = detectComponentSelect(anchor, context?.componentDriver);
   if (!detected) return { status: 'not-applicable', reason: '当前字段不是已支持的前端选择组件' };
   const { kind, root } = detected;
@@ -169,12 +172,14 @@ export async function pickComponentOption(anchor: Element, value: string, contex
   const opener = (root.querySelector(spec.opener) || root) as HTMLElement;
   fireClick(opener);
   await new Promise((resolve) => setTimeout(resolve, 180));
+  if (cancelled() || !root.isConnected) return stopped();
 
   const doc = anchor.ownerDocument;
   const search = (root.querySelector(spec.search) || doc.querySelector(spec.search)) as HTMLInputElement | null;
   if (search && !search.readOnly) {
     setInput(search, context?.expectedCode || value);
     await new Promise((resolve) => setTimeout(resolve, 260));
+    if (cancelled() || !root.isConnected) return stopped();
   }
   const wantedCodes = [context?.expectedCode || '', ...(context?.codeAliases || [])].filter(Boolean);
   const candidates = Array.from(doc.querySelectorAll<HTMLElement>(spec.option)).filter(visible).map((option) => {
@@ -187,11 +192,13 @@ export async function pickComponentOption(anchor: Element, value: string, contex
     return { option, score };
   }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
   const hit = candidates[0]?.option;
+  if (cancelled() || !root.isConnected) return stopped();
   if (!hit) return { status: 'opened', kind, reason: '组件已展开，但没有找到匹配代码或名称的选项' };
   const hitCode = hit.getAttribute('data-value') || hit.getAttribute('value') || hit.getAttribute('lay-value') || hit.getAttribute('data-key') || '';
   if (hitCode) root.setAttribute('data-tui-selected-code', hitCode);
   fireClick(hit);
   await new Promise((resolve) => setTimeout(resolve, 300));
+  if (cancelled() || !root.isConnected) return stopped();
   const ok = readbackOk(root, anchor, kind, value, context);
   const got = readback(root, anchor, kind);
   return {

@@ -17,11 +17,13 @@ const SCHOOL_SPEC = {
 export type SchoolPickStatus = 'picked' | 'opened' | 'failed' | 'not-applicable';
 
 /** 功能：填写本科院校，保证目标学校代码和名称属于同一字段对。 */
-export async function pickSchool(doc: Document, anchor: Element, value: string, context: PopupPickContext = {}): Promise<SchoolPickStatus> {
+export async function pickSchool(doc: Document, anchor: Element, value: string, context: PopupPickContext = {}, isCancelled?: () => boolean): Promise<SchoolPickStatus> {
+  if (isCancelled?.() || !anchor.isConnected) return 'failed';
   const next = { ...context, expectedCode: context.expectedCode || standardSchoolCode(value) || undefined };
-  const blue = await pickBlueFlatIdentity(doc, value, next);
+  const blue = await pickBlueFlatIdentity(doc, value, next, isCancelled);
   if (blue !== 'not-applicable') return blue;
-  const component = await pickComponentOption(anchor, value, next);
+  if (isCancelled?.() || !anchor.isConnected) return 'failed';
+  const component = await pickComponentOption(anchor, value, next, isCancelled);
   if (component.status !== 'not-applicable') return component.status;
-  return runMinimalPicker(doc, anchor, value, SCHOOL_SPEC, { ...next, profilePath: context.profilePath || 'education.university' });
+  return runMinimalPicker(doc, anchor, value, SCHOOL_SPEC, { ...next, profilePath: context.profilePath || 'education.university' }, isCancelled);
 }

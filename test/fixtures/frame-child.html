@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>H03 跨 frame 夹具(子)</title>
+<body>
+<form>
+  <label>姓名<input name="xm"></label>
+  <label>手机号<input name="sjh"></label>
+  <label>民族<select name="mz"><option value="">请选择</option><option value="1">苗族</option></select></label>
+  <label>专业<select name="zy"><option value="">请选择</option></select></label>
+</form>
+<script>
+  // 子 frame 的补填轮次有真实工作:1.3s 后出现选项 → 子 frame 终态必须晚于顶层快速完成。
+  setTimeout(function () {
+    var sel = document.querySelector('select[name="zy"]');
+    if (!sel) return;
+    var opt = document.createElement('option');
+    opt.value = '软件工程';
+    opt.textContent = '软件工程';
+    sel.appendChild(opt);
+  }, Number(new URL(location.href).searchParams.get('delay')) || 1300);
+</script>
+</body></html>

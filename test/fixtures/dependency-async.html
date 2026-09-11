@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>本地异步依赖夹具</title>
+<body>
+<label>本科省份<select id="province"><option value="">请选择</option><option value="61">陕西省</option><option value="62">甘肃省</option></select></label>
+<label>本科院校<select id="school" disabled><option value="">请选择</option></select></label>
+<label>本科专业<select id="major" disabled><option value="">请选择</option></select></label>
+<label>邮箱<input id="email" name="email"></label>
+<button id="submit" type="button">提交</button>
+<span id="dependencyError"></span>
+<script>
+/** 功能：记录真实 DOM 事件顺序，所有资料均为合成值。 */
+window.depEvents = [];
+window.oldSchool = document.getElementById('school');
+const mode = new URL(location.href).searchParams.get('mode');
+function record(kind, target) { window.depEvents.push({ kind, target, at: performance.now() }); }
+/** 功能：模拟父选择后才异步创建子选项，测试替换节点而不是静态顺序写入。 */
+document.addEventListener('change', function(event) {
+  const el = event.target;
+  record('change', el.id);
+  if (el.id === 'province') {
+    el.setAttribute('aria-busy', 'true');
+    if (mode === 'timeout') return;
+    setTimeout(function() {
+      if (mode === 'replace-parent') el.replaceWith(el.cloneNode(true));
+      const next = document.createElement('select'); next.id = 'school';
+      next.innerHTML = '<option value="">请选择</option><option value="10700">测试大学</option>';
+      document.getElementById('school').replaceWith(next);
+      if (mode === 'parent-rejected') {
+        el.setAttribute('aria-describedby', 'dependencyError');
+        document.getElementById('dependencyError').textContent = '父字段校验未通过';
+      }
+      el.removeAttribute('aria-busy'); record('ready', 'province');
+    }, 260);
+  }
+  if (el.id === 'school') {
+    el.setAttribute('aria-busy', 'true');
+    setTimeout(function() {
+      const next = document.createElement('select'); next.id = 'major';
+      next.innerHTML = '<option value="">请选择</option><option value="080901">计算机科学与技术</option>';
+      document.getElementById('major').replaceWith(next);
+      el.removeAttribute('aria-busy'); record('ready', 'school');
+    }, 180);
+  }
+}, true);
+document.getElementById('submit').addEventListener('click', () => record('forbidden', 'submit'));
+if (mode === 'conflict') document.querySelector('#province option[value="62"]').selected = true;
+if (mode === 'same') {
+  document.querySelector('#province option[value="61"]').selected = true;
+  const school = document.getElementById('school'); school.disabled = false;
+  school.innerHTML = '<option value="">请选择</option><option value="10700">测试大学</option>';
+}
+</script></body></html>

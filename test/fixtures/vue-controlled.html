@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Vue 受控组件夹具</title>
+</head>
+<body>
+  <div id="app">
+    <table>
+      <tbody>
+        <tr><td>姓名*</td><td><input name="xm" v-model="name"></td></tr>
+        <tr><td>手机号码*</td><td><input name="sjh" v-model="phone"></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <!-- 本地 vendor(由测试服务器从 node_modules 提供,非 CDN) -->
+  <script src="/vendor/vue.js"></script>
+  <script>
+    // F06 夹具行为(vue 3.5.13,global 完整版含编译器):
+    // - xm 为 v-model 受控 input:watch 到非空后 300ms 把模型重置为空 —— 模拟"框架即时接受后又重置"。
+    // - sjh 为普通 v-model:接受写入并保持 —— 对照组。
+    (function () {
+      var app = Vue.createApp({
+        setup: function () {
+          var name = Vue.ref('');
+          var phone = Vue.ref('');
+          Vue.watch(name, function (value) {
+            if (!value) return;
+            setTimeout(function () { name.value = ''; }, 300);
+          });
+          return { name: name, phone: phone };
+        }
+      });
+      app.mount('#app');
+      window.__vueFixtureReady = true;
+    })();
+  </script>
+</body>
+</html>
