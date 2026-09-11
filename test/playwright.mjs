@@ -60,12 +60,15 @@ const executablePath = edgeCandidates.find((candidate) => existsSync(candidate))
 let context;
 try {
   context = await chromium.launchPersistentContext(userDataDir, {
-    ...(executablePath ? { executablePath } : {}),
+    // 无 Edge 时(headless CI)必须回退完整 Chromium(channel:'chromium'→headless=new)：
+    // chromium-headless-shell 不支持加载扩展，MV3 serviceworker 永不上线(2026-09-11 CI 实证)。
+    // 与 dependency/manual-handoff/deadline 三个 e2e 的既有回退惯例收敛。
+    ...(executablePath ? { executablePath } : { channel: 'chromium' }),
     headless: process.env.PW_HEADLESS === '1',
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`],
   });
   let worker = context.serviceWorkers()[0];
-  if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 15000 });
+  if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 30000 });
   const extensionId = new URL(worker.url()).host;
 
   const optionsPage = await context.newPage();

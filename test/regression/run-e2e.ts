@@ -117,7 +117,8 @@ ${e2eFormHtml}
   let context;
   try {
     context = await chromium.launchPersistentContext(userDataDir, {
-      ...(executablePath ? { executablePath } : {}),
+      // headless CI 无 Edge 时回退完整 Chromium(headless=new)；headless shell 不加载扩展。
+      ...(executablePath ? { executablePath } : { channel: 'chromium' }),
       headless: process.env.PW_HEADLESS === '1',
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`],
     });
@@ -160,7 +161,7 @@ ${e2eFormHtml}
     });
 
     let worker = context.serviceWorkers()[0];
-    if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 15000 });
+    if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 30000 });
     const extensionId = new URL(worker.url()).host;
 
     // 用生产档案页面通道写入 profile(与既有 E2E 相同,避免绕过真实存储)。
