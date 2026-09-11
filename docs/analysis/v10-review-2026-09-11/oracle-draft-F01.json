@@ -2,6 +2,7 @@
  "schema": "oracle_f01_v1",
  "batch": "trial-sign-3-schools",
  "provenanceNote": "blue-form/retro-form 两夹具为合成件：字段族与 nativeId 取自本仓库适配包合同的真实系统形状（liveVerified=false，D 阶段以真实页核验）；wisedu-generic 为既有 jsdom 夹具。controlInventory 由本生成器直接解析三份夹具 DOM 反推（radio/checkbox 按 name 折叠为逻辑控件，hidden/submit/button/image 不计），与抽样规则文档表格同源。",
+ "revisions": "rev2：修正审查者 D2 拒签项（hjqk 定位子不存在→已从拒填集移除；F-3 一致性→refusals 改为 inventory 机械推导）；引入 F-2 二分语义 expect/deferredTo 与 E1 解析断言（判据 v1.1 预实现）。",
  "fixtures": [
   {
    "fixtureId": "wisedu-generic-existing",
@@ -439,16 +440,24 @@
       "kind": "name",
       "value": "yzm"
      },
-     "reason": "验证码禁止读写，作为控件全集枚举成员显式带理由",
-     "gapId": "S-CAPTCHA"
+     "reason": "验证码/安全字段禁读写，运行期须产出带理由的人工提示",
+     "gapId": "S-CAPTCHA",
+     "expect": "explicit-refusal",
+     "covers": [
+      "yzm"
+     ]
     },
     {
      "locator": {
-      "kind": "css",
-      "value": "textarea#hjqk"
+      "kind": "name",
+      "value": "pwd"
      },
-     "reason": "超长经历文本按超限转人工纪律，草案不为其预设字面期望",
-     "gapId": "S3-EDGE"
+     "reason": "登录密码字段零写入硬约束，允许无痕迹",
+     "gapId": "S-SECURITY",
+     "expect": "silent-no-write",
+     "covers": [
+      "pwd"
+     ]
     }
    ]
   },
@@ -984,24 +993,40 @@
       "kind": "name",
       "value": "agree"
      },
-     "reason": "同意/承诺类勾选不得代勾",
-     "gapId": "S1"
+     "reason": "同意/承诺类勾选不得代勾；B1 合同化拒填决策后升级 explicit",
+     "gapId": "S1",
+     "expect": "silent-no-write",
+     "covers": [
+      "agree"
+     ],
+     "deferredTo": "B1"
     },
     {
      "locator": {
       "kind": "name",
       "value": "yzm"
      },
-     "reason": "验证码/安全字段禁读写",
-     "gapId": "S-CAPTCHA"
+     "reason": "验证码禁读写，须产出人工提示决策",
+     "gapId": "S-CAPTCHA",
+     "expect": "explicit-refusal",
+     "covers": [
+      "yzm"
+     ]
     },
     {
      "locator": {
       "kind": "css",
-      "value": "input.k-datepicker"
+      "value": "input[name=kssj_start],input[name=kssj_end]"
      },
-     "reason": "起止日期区间对（kendo 形态）驱动未实现，整对拒填",
-     "gapId": "S4"
+     "reason": "起止日期区间对（kendo 形态）驱动未实现，整对禁写",
+     "gapId": "S4",
+     "expect": "silent-no-write",
+     "covers": [
+      "kssj_start",
+      "kssj_end"
+     ],
+     "deferredTo": "B4",
+     "fold": "E2 折叠：2 控件→1 条区间对"
     }
    ]
   },
@@ -1455,24 +1480,41 @@
       "kind": "id",
       "value": "editorEssay"
      },
-     "reason": "独立 contenteditable 富文本驱动未实现，拒填并转人工",
-     "gapId": "S3"
+     "reason": "独立 contenteditable 未被检测面枚举；B3\"先可见\"后升级 explicit——本条存在即防\"门禁全绿而 S3 隐身\"",
+     "gapId": "S3",
+     "expect": "silent-no-write",
+     "covers": [
+      "editorEssay"
+     ],
+     "deferredTo": "B3"
     },
     {
      "locator": {
       "kind": "name",
       "value": "txtAgree"
      },
-     "reason": "同意声明勾选拒填",
-     "gapId": "S1"
+     "reason": "同意声明勾选不得代勾",
+     "gapId": "S1",
+     "expect": "silent-no-write",
+     "covers": [
+      "txtAgree"
+     ],
+     "deferredTo": "B1"
     },
     {
      "locator": {
       "kind": "css",
       "value": "input[name=txtKsj],input[name=txtKss]"
      },
-     "reason": "起止日期区间对（含整页回发语境）驱动未实现，整对拒填",
-     "gapId": "S4"
+     "reason": "起止日期区间对（整页回发语境）整对禁写",
+     "gapId": "S4",
+     "expect": "silent-no-write",
+     "covers": [
+      "txtKsj",
+      "txtKss"
+     ],
+     "deferredTo": "B4",
+     "fold": "E2 折叠：2 控件→1 条区间对"
     }
    ]
   }

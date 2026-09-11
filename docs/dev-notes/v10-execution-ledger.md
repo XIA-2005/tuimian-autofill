@@ -98,4 +98,15 @@
 - **签名后状态如实报告（时序错误披露）**：STEP4 签名时（提交 2f8bdad）`check` 确为 `漂移 0|缺失 0|exit 0`✓；随后 F01a 交付（050aa5b）向**已签名的** `touch-lists.json` 追加 F01 范围 → 现 `check` = **`漂移 1（DRIFT docs/analysis/v10-hashes/touch-lists.json）|其余全零|外部 3`，exit 1**。根因=顺序错误：新卡范围登记应发生在上一签名动作之前。**处置**：依 RD-7 不自动重签，与三校试签批一并交审查者核定后 `update F04 touch-lists.json` 恢复归零。审查者复跑预期：STEP4 归零核对以 2f8bdad 为准；HEAD 上多出的这条 DRIFT 是**本披露项**，非隐藏改动。
 - 下一动作：审查者判卷（三校草案 + touch-list 重签核定 + 5 文件清单）→ 过则扩 15 校 + bench 设施。
 
+## L-F01b · rev2：D2 拒签项修正 + F-2/F-3 落实 + E1/E2 预实现（2026-09-11）
+
+- 依 `复审-F01三校试签批-2026-09-11.md`：
+  - **§2 拒签项**：generic refusals 不再手写——**由 inventory refusable 行机械推导**（`deriveRefusals`，双向覆盖断言：规则↔行 双射，多覆盖/漏覆盖/指向非 refusable 全抛错）。generic 拒填集变为 `{yzm(explicit), pwd(silent)}`——与抽样文档 refusable **构造一致**（F-3 根治）；`hjqk` 归 optional，其"超长转人工"属运行期 E1206 纪律非 oracle 拒填桶（文档 E2 折叠映射节已写明；rev1 错误仅在 JSON `revisions` 变更注中留痕，非条目）。
+  - **F-2 二分**：每条 refusal 增 `expect ∈ {explicit-refusal, silent-no-write}` + `deferredTo`（agree→B1、kendo 对→B4、editorEssay→B3、txtAgree→B1）；S3 占位锚存在即防"门禁全绿而 S3 隐身"。**采纳决定权在审查者**（本批签名将含这两个新键——若欲先签纯七键版请指出，我出 rev3 撤键）。
+  - **E1 预实现**：items+refusals 全部 locator 经 jsdom `querySelectorAll` 实测解析 ≥1（折叠条要求 =covers 数），生成器内断言，解析不足即抛错（上批 hjqk 类错误在生成阶段即死）。
+  - **E2 折叠落文档**：抽样 md 表新增"拒填归属"列（gapId/expect/deferredTo 映射到控件行）+ 折叠映射节。
+- 实测：`node test/gen-oracle-draft.cjs`=0（含 E1/E2 断言全过）；校验器仍**仅预期内 A6 一项 FAIL**（3<15）exit 1；`check`=DRIFT 1（仅已披露 touch-lists.json，裁定为随本批 `update F01` 重签——未自动签，RD-7）。
+- 审查者判卷采纳项：其 STEP4 签名回算探针（PASS 10/FAIL 0 @2f8bdad）与"L-R6 披露无隐藏改动"确认在案；判据 v1.1 E1-E3 对扩批适用声明收悉；strict 延迟修+§5.1"待修"标记保留在案。
+- 下一动作：审查者三项复跑（定位子回查/一致性核对/校验器）→ 出签 `oracle-F01.signed.json` + 我方可执行 `update F01`（含 touch-lists 漂移一并重签）→ 扩 15 校（需用户提供真实目标校清单，F-1/E3 必需）+ bench 骨架推进中。
+
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->

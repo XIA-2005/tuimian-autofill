@@ -157,7 +157,7 @@ function inventory(file) {
     if (['hidden', 'submit', 'button', 'image'].includes(type)) continue;
     const lb = labelFor(d, el);
     const bucket = refuse(el) ? 'refusable' : (/\*/.test(lb) || /必填/.test(lb)) ? 'required' : 'optional';
-    rows.push({ ident: (el.name || el.id || '(无)'), type, label: lb, bucket, maxlength: el.getAttribute('maxlength') || '' });
+    rows.push({ ident: (el.name || el.id || '(无)'), name: el.name || '', id: el.id || '', type, label: lb, bucket, maxlength: el.getAttribute('maxlength') || '' });
   }
   // radio/checkbox 同 name 折叠为一行（逻辑控件），避免同名多值虚增 total
   const seen = new Map();
@@ -174,25 +174,83 @@ function inventory(file) {
 const invGeneric = inventory('test/fixture-form.html');
 const invBlue = inventory('test/bench/fixtures/blue-form.html');
 const invRetro = inventory('test/bench/fixtures/retro-form.html');
-// items↔DOM 一致性：每个 name/id 定位必须命中夹具真实控件，防 basis 与文件漂移
-function assertLocators(items, inv, tag) {
-  for (const itx of items) {
-    if (itx.locator.kind !== 'name' && itx.locator.kind !== 'id') continue;
-    const hit = inv.rows.some((r) => r.ident === itx.locator.value);
-    if (!hit) throw new Error(tag + ' 定位落空: ' + JSON.stringify(itx.locator));
+// ── F-3 根治：refusals 由 inventory 的 refusable 行机械推导（禁手写清单——手写正是上批 hjqk/§2 漂移的根因）。
+//    规则表决定 gapId/expect/deferredTo；expect 二分[F-2]：explicit-refusal=须产出带理由拒填决策可核；
+//    silent-no-write=允许无痕迹但零写入硬约束；deferredTo=该卡实现后升级 expect，扩批重签翻转。
+const REFUSAL_RULES = {
+  'test/fixture-form.html': [
+    { idents: ['yzm'], gapId: 'S-CAPTCHA', expect: 'explicit-refusal', reason: '验证码/安全字段禁读写，运行期须产出带理由的人工提示' },
+    { idents: ['pwd'], gapId: 'S-SECURITY', expect: 'silent-no-write', reason: '登录密码字段零写入硬约束，允许无痕迹' },
+  ],
+  'test/bench/fixtures/blue-form.html': [
+    { idents: ['agree'], gapId: 'S1', expect: 'silent-no-write', reason: '同意/承诺类勾选不得代勾；B1 合同化拒填决策后升级 explicit', deferredTo: 'B1' },
+    { idents: ['yzm'], gapId: 'S-CAPTCHA', expect: 'explicit-refusal', reason: '验证码禁读写，须产出人工提示决策' },
+    { idents: ['kssj_start', 'kssj_end'], gapId: 'S4', expect: 'silent-no-write', reason: '起止日期区间对（kendo 形态）驱动未实现，整对禁写', deferredTo: 'B4', fold: 'E2 折叠：2 控件→1 条区间对' },
+  ],
+  'test/bench/fixtures/retro-form.html': [
+    { idents: ['editorEssay'], gapId: 'S3', expect: 'silent-no-write', reason: '独立 contenteditable 未被检测面枚举；B3"先可见"后升级 explicit——本条存在即防"门禁全绿而 S3 隐身"', deferredTo: 'B3' },
+    { idents: ['txtAgree'], gapId: 'S1', expect: 'silent-no-write', reason: '同意声明勾选不得代勾', deferredTo: 'B1' },
+    { idents: ['txtKsj', 'txtKss'], gapId: 'S4', expect: 'silent-no-write', reason: '起止日期区间对（整页回发语境）整对禁写', deferredTo: 'B4', fold: 'E2 折叠：2 控件→1 条区间对' },
+  ],
+};
+function rowOf(inv, idn) {
+  const r = inv.rows.find((x) => x.name === idn || x.id === idn);
+  if (!r) throw new Error('规则指向不存在控件: ' + idn);
+  return r;
+}
+function deriveRefusals(file, inv) {
+  const covered = new Set(); const out = [];
+  for (const rule of REFUSAL_RULES[file]) {
+    for (const idn of rule.idents) {
+      const r = rowOf(inv, idn);
+      if (r.bucket !== 'refusable') throw new Error(file + ' 规则指向非 refusable: ' + idn);
+      if (covered.has(idn)) throw new Error(file + ' 规则重复覆盖: ' + idn);
+      covered.add(idn);
+    }
+    const loc = rule.idents.length === 1
+      ? (() => { const r = rowOf(inv, rule.idents[0]); return r.name ? { kind: 'name', value: r.name } : { kind: 'id', value: r.id }; })()
+      : { kind: 'css', value: rule.idents.map((n) => { const r = rowOf(inv, n); return r.name ? 'input[name=' + n + ']' : 'input[id=' + n + ']'; }).join(',') };
+    const entry = { locator: loc, reason: rule.reason, gapId: rule.gapId, expect: rule.expect, covers: rule.idents.slice() };
+    if (rule.deferredTo) entry.deferredTo = rule.deferredTo;
+    if (rule.fold) entry.fold = rule.fold;
+    out.push(entry);
+  }
+  for (const r of inv.rows) if (r.bucket === 'refusable' && !covered.has(r.ident)) throw new Error(file + ' refusable 行未被拒填规则覆盖: ' + r.ident);
+  return out;
+}
+const refusalsGeneric = deriveRefusals('test/fixture-form.html', invGeneric);
+const refusalsBlue = deriveRefusals('test/bench/fixtures/blue-form.html', invBlue);
+const refusalsRetro = deriveRefusals('test/bench/fixtures/retro-form.html', invRetro);
+// ── E1 预实现（判据 v1.1）：items+refusals 全部 locator 在真实 DOM 经 querySelectorAll 解析 ≥1（折叠条须=covers 数）
+const doms = {
+  'test/fixture-form.html': new JSDOM(fs.readFileSync('test/fixture-form.html', 'utf8')).window.document,
+  'test/bench/fixtures/blue-form.html': new JSDOM(fs.readFileSync('test/bench/fixtures/blue-form.html', 'utf8')).window.document,
+  'test/bench/fixtures/retro-form.html': new JSDOM(fs.readFileSync('test/bench/fixtures/retro-form.html', 'utf8')).window.document,
+};
+function resolveCount(loc, doc) {
+  if (loc.kind === 'name') return doc.querySelectorAll('input[name=' + loc.value + '],select[name=' + loc.value + '],textarea[name=' + loc.value + ']').length;
+  if (loc.kind === 'id') return doc.querySelectorAll('#' + loc.value).length;
+  return doc.querySelectorAll(loc.value).length;
+}
+function assertLocators(items, refusals, file, tag) {
+  for (const itx of items) if (resolveCount(itx.locator, doms[file]) < 1) throw new Error(tag + ' E1 item 定位解析为 0: ' + JSON.stringify(itx.locator));
+  for (const rf of refusals) {
+    const n = resolveCount(rf.locator, doms[file]);
+    if (n < rf.covers.length) throw new Error(tag + ' E1 refusal 定位解析不足(' + n + '<' + rf.covers.length + '): ' + JSON.stringify(rf.locator));
   }
 }
-assertLocators(genericItems, invGeneric, 'generic');
-assertLocators(blueItems, invBlue, 'blue');
-assertLocators(retroItems, invRetro, 'retro');
+assertLocators(genericItems, refusalsGeneric, 'test/fixture-form.html', 'generic');
+assertLocators(blueItems, refusalsBlue, 'test/bench/fixtures/blue-form.html', 'blue');
+assertLocators(retroItems, refusalsRetro, 'test/bench/fixtures/retro-form.html', 'retro');
 const ci = (inv) => ({ total: inv.total, required: inv.required, optional: inv.optional, refusable: inv.refusable });
 const doc = {
   schema: 'oracle_f01_v1', batch: 'trial-sign-3-schools',
   provenanceNote: 'blue-form/retro-form 两夹具为合成件：字段族与 nativeId 取自本仓库适配包合同的真实系统形状（liveVerified=false，D 阶段以真实页核验）；wisedu-generic 为既有 jsdom 夹具。controlInventory 由本生成器直接解析三份夹具 DOM 反推（radio/checkbox 按 name 折叠为逻辑控件，hidden/submit/button/image 不计），与抽样规则文档表格同源。',
+  revisions: 'rev2：修正审查者 D2 拒签项（hjqk 定位子不存在→已从拒填集移除；F-3 一致性→refusals 改为 inventory 机械推导）；引入 F-2 二分语义 expect/deferredTo 与 E1 解析断言（判据 v1.1 预实现）。',
   fixtures: [
-    { fixtureId: 'wisedu-generic-existing', fixturePage: 'test/fixture-form.html', school: '智慧教务通用夹具（既有）', controlInventory: ci(invGeneric), items: genericItems, refusals: [{ locator: { kind: 'name', value: 'yzm' }, reason: '验证码禁止读写，作为控件全集枚举成员显式带理由', gapId: 'S-CAPTCHA' }, { locator: { kind: 'css', value: 'textarea#hjqk' }, reason: '超长经历文本按超限转人工纪律，草案不为其预设字面期望', gapId: 'S3-EDGE' }] },
-    { fixtureId: 'blue-form-trial', fixturePage: 'test/bench/fixtures/blue-form.html', school: '蓝色报名系统形态（合成，liveVerified=false）', controlInventory: ci(invBlue), items: blueItems, refusals: [{ locator: { kind: 'name', value: 'agree' }, reason: '同意/承诺类勾选不得代勾', gapId: 'S1' }, { locator: { kind: 'name', value: 'yzm' }, reason: '验证码/安全字段禁读写', gapId: 'S-CAPTCHA' }, { locator: { kind: 'css', value: 'input.k-datepicker' }, reason: '起止日期区间对（kendo 形态）驱动未实现，整对拒填', gapId: 'S4' }] },
-    { fixtureId: 'retro-form-trial', fixturePage: 'test/bench/fixtures/retro-form.html', school: '复古报名系统形态（合成，liveVerified=false）', controlInventory: ci(invRetro), items: retroItems, refusals: [{ locator: { kind: 'id', value: 'editorEssay' }, reason: '独立 contenteditable 富文本驱动未实现，拒填并转人工', gapId: 'S3' }, { locator: { kind: 'name', value: 'txtAgree' }, reason: '同意声明勾选拒填', gapId: 'S1' }, { locator: { kind: 'css', value: 'input[name=txtKsj],input[name=txtKss]' }, reason: '起止日期区间对（含整页回发语境）驱动未实现，整对拒填', gapId: 'S4' }] },
+    { fixtureId: 'wisedu-generic-existing', fixturePage: 'test/fixture-form.html', school: '智慧教务通用夹具（既有）', controlInventory: ci(invGeneric), items: genericItems, refusals: refusalsGeneric },
+    { fixtureId: 'blue-form-trial', fixturePage: 'test/bench/fixtures/blue-form.html', school: '蓝色报名系统形态（合成，liveVerified=false）', controlInventory: ci(invBlue), items: blueItems, refusals: refusalsBlue },
+    { fixtureId: 'retro-form-trial', fixturePage: 'test/bench/fixtures/retro-form.html', school: '复古报名系统形态（合成，liveVerified=false）', controlInventory: ci(invRetro), items: retroItems, refusals: refusalsRetro },
   ],
 };
 fs.mkdirSync('docs/analysis/v10-review-2026-09-11', { recursive: true });
@@ -200,15 +258,19 @@ fs.writeFileSync('docs/analysis/v10-review-2026-09-11/oracle-draft-F01.json', JS
 // ── C1 抽样规则文档：控件全集枚举（逐夹具表格）+ 分层定义 + 占比
 let md = '# F01 抽样规则与控件全集（oracle-draft 三校试签批）\n\n';
 md += '> 生成方式：与 `oracle-draft-F01.json` 同一脚本、同一次 DOM 解析产出（机械一致）。分层定义：refusable=同意/勾选/验证码/密码/文件/独立富文本/未实现区间对；required=label 含 `*` 的必填可填控件；optional=其余可填控件。radio/checkbox 按 name 折叠为逻辑控件；hidden/submit/button/image 不计。\n\n';
-md += 'provenance：blue/retro 为**合成夹具**（字段族与 id 取自本仓库适配包合同的真实系统形状；liveVerified=false，D 阶段真实页核验）；wisedu-generic 为既有 jsdom 夹具。C3：三校 items 均未把"档案可能为空"的字段列入期望（见各表 optional 桶）——漏填检测由后续批次在 optional 桶扩样覆盖。\n\n';
-const table = (name, inv, items) => {
+md += 'provenance：blue/retro 为**合成夹具**（字段族与 id 取自本仓库适配包合同的真实系统形状；liveVerified=false，D 阶段真实页核验）；wisedu-generic 为既有 jsdom 夹具。[F-1/E3] 三校 items 均未把"档案可能为空"的字段列入期望——扩批（≥15 校）时 C3 为必需项，本批漏填指标不可测（如实声明）。[F-2] 拒填二分：`explicit-refusal`=运行期须产出带理由的拒填决策（bench 可核对存在性），`silent-no-write`=允许无痕迹但零写入为硬约束；`deferredTo`=指定卡实现后翻转 expect 并扩批重签——`editorEssay`(S3) 即"防门禁全绿而 S3 隐身"的占位锚。\n\n';
+md += '[E2 折叠映射] kendo/回发起止对按"区间对"折叠为 1 条拒填（covers 列明成员控件）；`textarea#hjqk` 类"超长转人工"属运行期 E1206 纪律、非 oracle 拒填桶（该控件按文档归 optional，不预设字面期望也不计漏填）。\n\n';
+const table = (name, inv, items, refusals, file) => {
   const mapped = new Set(items.filter((i) => i.locator.kind === 'name' || i.locator.kind === 'id').map((i) => i.locator.value));
-  let s = '## ' + name + '（total=' + inv.total + '，required=' + inv.required + '，optional=' + inv.optional + '，refusable=' + inv.refusable + '，items=' + items.length + '，items/total=' + (100 * items.length / inv.total).toFixed(1) + '%）\n\n| id/name | 类型 | label | maxlength | 分层 | 入草案? |\n|---|---|---|---|---|---|\n';
-  for (const r of inv.rows) s += '| ' + r.ident + ' | ' + r.type + ' | ' + (r.label || '').replace(/\|/g, '\\|') + ' | ' + r.maxlength + ' | ' + r.bucket + ' | ' + (mapped.has(r.ident) ? '✓' : '') + ' |\n';
+  const coverOf = new Map();
+  for (const rf of refusals) for (const c of rf.covers) coverOf.set(c, rf.gapId + '/' + rf.expect + (rf.deferredTo ? '→' + rf.deferredTo : ''));
+  let s = '## ' + name + '（total=' + inv.total + '，required=' + inv.required + '，optional=' + inv.optional + '，refusable=' + inv.refusable + '，items=' + items.length + '，items/total=' + (100 * items.length / inv.total).toFixed(1) + '%）\n\n| id/name | 类型 | label | maxlength | 分层 | 入草案? | 拒填归属 |\n|---|---|---|---|---|---|---|\n';
+  for (const r of inv.rows) s += '| ' + r.ident + ' | ' + r.type + ' | ' + (r.label || '').replace(/\|/g, '\\|') + ' | ' + r.maxlength + ' | ' + r.bucket + ' | ' + (mapped.has(r.ident) ? '✓' : '') + ' | ' + (coverOf.get(r.ident) || '') + ' |\n';
+  // E2 校验：refusable 行与拒填规则 covers 双射（推导函数已保证，此处仅落文档）
   return s + '\n';
 };
-md += table('test/fixture-form.html（既有）', invGeneric, genericItems);
-md += table('test/bench/fixtures/blue-form.html（合成）', invBlue, blueItems);
-md += table('test/bench/fixtures/retro-form.html（合成）', invRetro, retroItems);
+md += table('test/fixture-form.html（既有）', invGeneric, genericItems, refusalsGeneric);
+md += table('test/bench/fixtures/blue-form.html（合成）', invBlue, blueItems, refusalsBlue);
+md += table('test/bench/fixtures/retro-form.html（合成）', invRetro, retroItems, refusalsRetro);
 fs.writeFileSync('docs/analysis/v10-review-2026-09-11/oracle-sampling-F01.md', md);
 console.log('inventories:', JSON.stringify({ generic: ci(invGeneric), blue: ci(invBlue), retro: ci(invRetro) }), 'items:', genericItems.length, blueItems.length, retroItems.length);
