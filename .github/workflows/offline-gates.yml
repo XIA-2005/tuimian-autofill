@@ -15,7 +15,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # jsdom 当前依赖的 undici 使用 Node 22+ WebIDL 能力；与本地发布验证统一使用 Node 24。
+          node-version: '24'
       - name: Install dependencies (network required only in this step)
         run: npm ci
       - name: Install Chromium for Playwright (network required only in this step)
