@@ -1,6 +1,6 @@
 # v10 执行账本：正确率与可填写范围收敛
 
-- 任务书：`docs/analysis/任务书-v10-正确率与范围收敛-2026-09-11.md` **当前冻结 v10.3 sha256=`8a619e6afa54781eed24fd359159bf4c466c3ec7e26415a14bcf6dc477b55d6e`**（v10.3 初值 facd23a6… 因"六字段→七键"正名更新为此值；v10.1=a5f1f78c… → v10.2=1a0b6388…，演进见任务书版本日志）
+- 任务书：`docs/analysis/任务书-v10-正确率与范围收敛-2026-09-11.md` **当前冻结 v10.4 sha256=`df0539e884384de6db4a3a2f5bc10850eeac039ef8787bb13233d9da6a9dce65`**（v10.3=8a619e6a…/facd23a6… → v10.4 落 §5.1 三条具名残留；v10.1=a5f1f78c… → v10.2=1a0b6388…，演进见任务书版本日志）
 - 冻结基线 HEAD：`9a0f40a`；审查依据：`docs/analysis/v10-review-2026-09-11/预审意见-任务书-v10.md`（通过 4 / 修订 16 / 否决 1，全部处置见任务书版本日志与 §1.4 勘误）
 - 引用一律用稳定 ID（R/S/F/A/B/C/D/INV/P/RD/VB），禁章节号。
 
@@ -90,5 +90,12 @@
 - 哈希状态：`check` = `受控一致 140|漂移 1|缺失 0|未声明 0|存量漂移 0`——**唯一 DRIFT=touch-lists.json**（F04 签名后又登记 F01 范围）。处置：**不自动重签**，连同试签批交审查者判定（其过审后 `update F04 docs/analysis/v10-hashes/touch-lists.json` 重签）。
 - 剩余限制：①两合成夹具 liveVerified=false（D 阶段真实页核验；provenance 已写明取自合同字段族）；②generic 夹具 items/total≈19%（既有夹具控件多而语义杂，扩 15 校批次将拉高映射密度）；③bench 实现未动工——按 D1 等草案试签结果，防整体返工。
 - 下一动作：审查者判卷（D2 逐条拒签权）→ 过则扩至 ≥15 校 + bench 设施（P1/P4 只读台账/P5 独立判等/P9 脱敏/--negative-overfill/并入 test:offline）。
+
+## L-R6 · v10.4 残留落档 + 签名后状态说明（2026-09-11）
+
+- 按 `复审-第四轮-B3-2026-09-11.md` §4：三条具名残留写入任务书 **§5.1**（externalDrift 三文件豁免表〔independent-probes.cjs/.json、ds-v9-复核报告〕、strict 恒红、留痕补偿），版本升 **v10.4**（sha=df0539e8…，见头部）。
+- **残留 2 处置决定**：`--strict` 排除 externalMod 的一行修复**推迟至 F01 批准批与工具其他改动合并重签**——此刻单独改 `tools/v10-hashes.cjs` 会使已签文件出 DRIFT，破坏审查者要求的 STEP4 归零核对（分两拍走纪律，审查者 §4 已注"不阻塞"）。
+- **签名后状态如实报告（时序错误披露）**：STEP4 签名时（提交 2f8bdad）`check` 确为 `漂移 0|缺失 0|exit 0`✓；随后 F01a 交付（050aa5b）向**已签名的** `touch-lists.json` 追加 F01 范围 → 现 `check` = **`漂移 1（DRIFT docs/analysis/v10-hashes/touch-lists.json）|其余全零|外部 3`，exit 1**。根因=顺序错误：新卡范围登记应发生在上一签名动作之前。**处置**：依 RD-7 不自动重签，与三校试签批一并交审查者核定后 `update F04 touch-lists.json` 恢复归零。审查者复跑预期：STEP4 归零核对以 2f8bdad 为准；HEAD 上多出的这条 DRIFT 是**本披露项**，非隐藏改动。
+- 下一动作：审查者判卷（三校草案 + touch-list 重签核定 + 5 文件清单）→ 过则扩 15 校 + bench 设施。
 
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->
