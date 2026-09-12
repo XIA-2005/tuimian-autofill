@@ -209,4 +209,16 @@ EXTERNAL-MOD docs/analysis/ds-v9-复核报告-2026-09-11.md
 - 剩余限制：E1301 号段 E13xx 为新增段（E11/E12 既有），报表消费端（漏填清单/字段报告）对 E1301 的展示走 `issueMeta` 通用路径未专测。
 - 下一卡：审查者判 B4 → A1（开工前重读 INV-A1 四不变式）或等用户清单走 T3。
 
+## L-A1 · 事件策略层统一（R1 翻绿 + INV-A1 a–e 不变量，2026-09-12）
+
+- **新文件 `src/core/event-policy.ts`**：`eventPolicy ∈ {full, soft, silent}` + 统一派发口 `dispatchValueEvents(el, {tail, policy?, declared?, field?, aspPage?})`。**tail 口别参数保留六口差异**（`blur-focusout`=filler/date-drivers 现行四事件、`blur-bubble`=emitChange/blue-flat 现行三事件、`none`=组件/隐藏载体两件套）——**full 与迁移前逐字面等价**（默认路径零行为变化）；soft=去失焦族；silent=零事件。风险级：`RISK_SOFT_FIELD`（分数/GPA/排名/语言/日期路径族）× `isAspLikePage`（`__doPostBack`/`WebForm_DoPostBackWithOptions` 函数或 HTML 特征，WeakMap 按 doc 缓存）→ soft；**合同声明覆盖最高**（`AdapterFieldContract.eventPolicy?`，缺省 undefined=full，73 包零声明不受影响）。`dispatchForcedChange`（学校/专业三联 forceChange 信号，不受策略抑制）。
+- **六口收敛迁移**：`filler.setInputValue`（export 化，+field 参，主链 `fillControl` 传 `d.rule?.field`）、`control-drivers.emitChange`（+declared，helper 链 `fillSelect/fillText/fillRadioGroup` 透传 `contract.eventPolicy`）、`date-drivers.setNativeValue`、`hidden-blob`、`component-select-drivers.setInput`、`blue-flat-picker-driver.setInput/setSelectOption`。
+- **INV-A1 五条负向断言**（`src/core/event-policy.test.ts`，注册入 `test/run.ts`）：a 登记四元组+干预位（经真实 `setInputValue` 路径验证收敛后不变）；b conditionalRestore 五道门逐门反例（缺 ctx/干预/driver≠text/非文本 type/跨轮 runId）+正面 restored；c tracker 清理后原型 getter 读数不变+快照已清；d full/soft/silent 三策略读数一致；e B4 继承三件（RETIRED 守卫 E1301/merge issueCode 透传/E1301 码表）+check:adapters 5 常驻用例。**测试自身两处修正（如实记）**：①初版裸调 `registerWriteOwnership` 未走写入路径致 after≠expected——改经 `setInputValue`；②INV-b 并行持有多 ctx 违反 `makeDomIsolated` **栈式 apply/restore 配对契约**→全局域停留 jsdomB→地区三联 `instanceof` 假阴性 3 断言红——改逐门栈式后复绿（插桩定位：`globalIsA:false` 实证）。
+- **[工具缺陷修复，交审查者裁定]** `expectedMap()` 按卡名**字母序**遍历——`test/run.ts` ∈ F03/A1/A7 三卡共签，字母序 F03 在 A1 后处理 → F03 陈旧条目 `BFD160EB` **覆盖** A1 新签 `FC174EA1` → check 恒 DRIFT 循环（两轮 update/check 实证：update 输出成功而紧随的 check 仍 DRIFT）。修复：按卡 `at` 时间戳升序遍历、后签覆盖先签。修复后终态 `受控一致 157 | 漂移 0 | 缺失 0 | 未声明 0 | 存量漂移 0 | 外部 3`，**EXIT=0**。
+- **雷区复验**：`test/run.ts` picker===10/紧急槽（jxlxr/qtdh）/progress 与 `regression` 计数全绿；`check:adapters` B4 5 用例全 PASS（INV-e 盯防生效）。
+- **bench 四元组前后**：A1 前=后完全一致——generic `(0,0,3,2) filled=19 untracked=94`、blue `(0,1,3,4) filled=22`、retro `(0,0,3,3) filled=19`（full 逐字面等价实证；日期族 D1 缺口保持显形，翻绿在 A3+A4）。
+- **命令+退出码**：`npm run typecheck`=0；`npm test`=0；`npm run check:adapters`=0；`npm run test:offline`=0；`--oracle` exit 0。签名批：update F04（工具 `E1E5A36E→8D5B87E2`+touch-lists A1 范围增补 `4212E3F2→12853455`）=0；update A1 十文件首签（filler `8F7A8E1D→A119ACFB`、control-drivers `42C35720→B259409B`、event-policy/test `null→EACA6FA2/47A7BECD`、adapters `C6939104→B328B1FF`、date-drivers `01B02D4A→2E5DB8D4`、hidden-blob `2462FBC4→7DC8B28F`、component-select `1E8A5CF2→0258354A`、blue-flat `D300F854→7E8E2829`、run.ts `BFD160EB→FC174EA1`）=0；update B4（adapters/control-drivers 双卡重申）=0。
+- 剩余限制：①soft/silent 现无生产调用方（合同 eventPolicy 字段零包声明）——行为面=full 等价+能力就绪，ASP 页真实降 soft 待 A3/A4 日期族卡联动验证；②`isAspLikePage` 对 300KB 截断外的尾部特征不可见（缓存限幅取舍）；③R1 的"翻绿"=事件层收敛完成+零回归，分数字段 ASP 页行为变化待 D 阶段真页验证。
+- 下一卡：审查者判 A1 → A2a（回发诊断，只读）。
+
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->

@@ -54,6 +54,8 @@ export interface AdapterFieldContract {
   labels?: string[];
   selectors?: string[];
   driver: ControlDriverId;
+  /** A1:合同声明的事件策略覆盖（缺省 undefined=full 现行行为；RD-8 同款显式声明，不做隐式推断）。 */
+  eventPolicy?: 'full' | 'soft' | 'silent';
   codeNamespace?: string;
   /** 弹窗型代码框和名称框必须显式成对声明；不得从整个表单猜第一个 dm/mc。 */
   codeSelectors?: string[];

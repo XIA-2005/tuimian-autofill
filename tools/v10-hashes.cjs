@@ -64,7 +64,10 @@ function allTouchRes() {
 function expectedMap() {
   const out = { ...readJson(BASE, { files: {} }).files };
   const signed = readJson(SIGNED, {});
-  for (const card of Object.keys(signed).sort()) for (const f of signed[card].files) out[norm(f.path)] = f.sha256;
+  // [A1 批修复] 多卡共签同一文件（如 test/run.ts ∈ F03/A1/A7）时按**卡签名时间**升序遍历、后签覆盖先签；
+  // 原字母序会让字母靠后卡（F03）的陈旧条目覆盖字母靠前卡（A1）的新签名 → check 恒 DRIFT 循环。
+  const cards = Object.keys(signed).sort((a, b) => String(signed[a].at || '').localeCompare(String(signed[b].at || '')));
+  for (const card of cards) for (const f of signed[card].files) out[norm(f.path)] = f.sha256;
   return out;
 }
 

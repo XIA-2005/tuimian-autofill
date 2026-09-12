@@ -1,5 +1,6 @@
 // 蓝色报名系统学校/专业三联选择器：代码框、名称框、展示框必须作为一个整体写入和回读。
 
+import { dispatchValueEvents } from './event-policy';
 import { PopupPickContext } from './popup-binding';
 import { sanitizeDiagnosticValue } from './fill-telemetry';
 
@@ -148,10 +149,8 @@ function setInput(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(win?.HTMLInputElement.prototype || HTMLInputElement.prototype, 'value')?.set;
   if (setter) setter.call(input, value);
   else input.value = value;
-  const EventCtor = win?.Event || Event;
-  input.dispatchEvent(new EventCtor('input', { bubbles: true }));
-  input.dispatchEvent(new EventCtor('change', { bubbles: true }));
-  input.dispatchEvent(new EventCtor('blur', { bubbles: true }));
+  // A1:派发收敛至 event-policy（tail=blur-bubble 与原三事件逐字面等价）。
+  dispatchValueEvents(input, { tail: 'blur-bubble' });
 }
 
 /**
@@ -280,9 +279,8 @@ function setSelectOption(select: HTMLSelectElement, option: HTMLOptionElement): 
   const setter = Object.getOwnPropertyDescriptor(win?.HTMLSelectElement.prototype || HTMLSelectElement.prototype, 'value')?.set;
   if (setter) setter.call(select, option.value);
   else select.value = option.value;
-  const EventCtor = win?.Event || Event;
-  select.dispatchEvent(new EventCtor('input', { bubbles: true }));
-  select.dispatchEvent(new EventCtor('change', { bubbles: true }));
+  // A1:派发收敛至 event-policy（tail=none 与原两件套逐字面等价）。
+  dispatchValueEvents(select, { tail: 'none' });
 }
 
 function exactOption(select: HTMLSelectElement, value: string, cascade = false): HTMLOptionElement | null {

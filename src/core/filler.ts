@@ -2,6 +2,7 @@
 // 日期值按输入框 placeholder 提示的格式自适应，长文本域由结构化列表合成。
 
 import { isEmptyValue, isPlaceholderOption, isSemanticEqual, isTextFieldEqual, compareKindForField } from './value-semantics';
+import { dispatchValueEvents, isAspLikePage } from './event-policy';
 import { fixedFieldLabel, safeDiagnosticField, sanitizeDiagnosticValue } from './fill-telemetry';
 import { DetectedField, detectAllFields, detectComponentDropdownFields, detectField, FIELD_RULES, FieldRule, findPickerTrigger, isVisible, normalizeText } from './matcher';
 import { isRegionLike, regionCode6, regionKeywords, regionMatchTokens, regionTreeTokens } from './regionutil';
@@ -119,7 +120,7 @@ function escapeAttr(s: string): string {
   return (s || '').replace(/["\\]/g, '\\$&');
 }
 
-function setInputValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+export function setInputValue(el: HTMLInputElement | HTMLTextAreaElement, value: string, field?: string | null): void {
   const doc = el.ownerDocument;
   // P07:文本类写入前捕获原值(仅当新值与现值不同,避免清空/等值调用污染快照)。
   if (doc && readableControlValue(el) !== String(value)) captureBeforeValue(doc, el);
@@ -131,11 +132,8 @@ function setInputValue(el: HTMLInputElement | HTMLTextAreaElement, value: string
       const desc = Object.getOwnPropertyDescriptor(proto, 'value');
       if (desc && desc.set) desc.set.call(el, value);
       else el.value = value;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      // 部分系统在失焦时校验/同步内部状态，补发 blur/focusout
-      el.dispatchEvent(new Event('blur', { bubbles: false }));
-      el.dispatchEvent(new Event('focusout', { bubbles: true }));
+      // A1:事件派发收敛至 event-policy——full 与原四事件逐字面等价；field 语境供 ASP 页风险级降 soft。
+      dispatchValueEvents(el, { tail: 'blur-focusout', field: field ?? null, aspPage: doc ? isAspLikePage(doc) : false });
     });
   } finally {
     endInternalWrite();
@@ -310,7 +308,7 @@ function fillControl(d: DetectedField, value: unknown): boolean {
   if (tag === 'SELECT') return setSelectValue(el as HTMLSelectElement, String(value));
   if (tag === 'TEXTAREA') {
     const text = String(value);
-    setInputValue(el as HTMLTextAreaElement, text);
+    setInputValue(el as HTMLTextAreaElement, text, d.rule?.field ?? null);
     // F06:写后必须回读真实 DOM 值(受控框架可能在事件处理中立刻还原)。
     return readNativeControlValue(el) === text;
   }
@@ -323,7 +321,7 @@ function fillControl(d: DetectedField, value: unknown): boolean {
       return false;
     default: {
       const expected = formatDateForInput(String(value), input);
-      setInputValue(input, expected);
+      setInputValue(input, expected, d.rule?.field ?? null);
       return readNativeControlValue(input) === expected;
     }
   }

@@ -1,6 +1,8 @@
 // 声明式适配包控件驱动。适配包只能描述字段，实际 DOM 操作固定由本模块实现。
 
 import { AdapterFieldContract, SchoolAdapterPackage } from './adapters';
+import { dispatchValueEvents } from './event-policy';
+import type { EventPolicy } from './event-policy';
 import { resolveAdapterPage } from './adapter-packages';
 import { Profile, getByPath, getProfileCode } from './profile';
 import { fillDateControl } from './date-drivers';
@@ -35,11 +37,9 @@ export interface ContractFillItem {
 /** B4/RD-8:已收口 driver——schema 白名单已剔除，此表用于运行时防御旧包/手工包声明，遇之显式 E1301 报错，禁静默降级。 */
 const RETIRED_DRIVERS: readonly string[] = ['date-range', 'kendo', 'aspnet'];
 
-function emitChange(el: Element): void {
-  const win = el.ownerDocument.defaultView;
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-  if (win) el.dispatchEvent(new win.Event('blur', { bubbles: true }));
+function emitChange(el: Element, declared?: EventPolicy): void {
+  // A1:派发收敛至 event-policy——tail=blur-bubble 与原三事件逐字面等价；declared=合同声明覆盖。
+  dispatchValueEvents(el, { tail: 'blur-bubble', declared });
 }
 
 function escapeCssIdent(value: string): string {
@@ -138,7 +138,7 @@ function normalized(value: string): string {
   return value.replace(/^\s*\d+[|\s-]*/, '').replace(/\s+/g, '').toLowerCase();
 }
 
-function fillSelect(select: HTMLSelectElement, label: string, code: string): { ok: boolean; reason: string } {
+function fillSelect(select: HTMLSelectElement, label: string, code: string, declared?: EventPolicy): { ok: boolean; reason: string } {
   const options = Array.from(select.options);
   const byCode = code ? options.find((option) => option.value === code) : undefined;
   const byName = options.find((option) => normalized(option.textContent || '') === normalized(label));
@@ -149,7 +149,7 @@ function fillSelect(select: HTMLSelectElement, label: string, code: string): { o
   if (select.ownerDocument) captureBeforeValue(select.ownerDocument, select);
   withUnlocked(select, () => {
     select.value = option.value;
-    emitChange(select);
+    emitChange(select, declared);
   });
   const selected = select.selectedOptions[0];
   if (!selected || selected.value !== option.value || (label && normalized(selected.textContent || '') !== normalized(label))) return { ok: false, reason: '写入后代码/名称回读不一致' };
@@ -158,13 +158,13 @@ function fillSelect(select: HTMLSelectElement, label: string, code: string): { o
   return { ok: true, reason: '代码和显示名称回读一致' };
 }
 
-function fillText(control: HTMLInputElement | HTMLTextAreaElement, value: string): { ok: boolean; reason: string } {
+function fillText(control: HTMLInputElement | HTMLTextAreaElement, value: string, declared?: EventPolicy): { ok: boolean; reason: string } {
   const type = control.tagName === 'INPUT' ? (control as HTMLInputElement).type.toLowerCase() : '';
   if (['password', 'file', 'hidden', 'submit', 'button'].includes(type) || /captcha|verify|验证码/i.test(`${control.id} ${control.getAttribute('name') || ''}`)) return { ok: false, reason: '秘密、文件、隐藏或验证码控件禁止写入' };
   if (control.ownerDocument) captureBeforeValue(control.ownerDocument, control);
   withUnlocked(control, () => {
     control.value = value;
-    emitChange(control);
+    emitChange(control, declared);
   });
   // G02/F06:回读用真实 DOM 值(受控框架实例级 value 不可信),成功后登记所有权。
   if (readNativeControlValue(control) !== value) return { ok: false, reason: '写入后可见值回读不一致' };
@@ -172,7 +172,7 @@ function fillText(control: HTMLInputElement | HTMLTextAreaElement, value: string
   return { ok: true, reason: '可见值回读一致' };
 }
 
-function fillRadioGroup(control: HTMLInputElement, value: string, code: string): { ok: boolean; reason: string } {
+function fillRadioGroup(control: HTMLInputElement, value: string, code: string, declared?: EventPolicy): { ok: boolean; reason: string } {
   // G01/G02:radio 组按 name+所属表单限定(同 name 跨 form 不串组)。
   const radios = radioGroupOf(control);
   const target = radios.find((radio) => {
@@ -184,7 +184,7 @@ function fillRadioGroup(control: HTMLInputElement, value: string, code: string):
   if (target.ownerDocument) captureBeforeValue(target.ownerDocument, target);
   withUnlocked(target, () => {
     target.checked = true;
-    emitChange(target);
+    emitChange(target, declared);
   });
   if (!target.checked) return { ok: false, reason: '单选模型回读不一致' };
   if (target.ownerDocument) registerWriteOwnership(target.ownerDocument, target, value, 'radio');
@@ -319,7 +319,7 @@ export function fillAdapterContract(profile: Profile, doc: Document, url: string
       }
     }
     if ((contract.driver === 'school-picker' || contract.driver === 'major-picker') && control.tagName === 'SELECT') {
-      outcome = fillSelect(control as HTMLSelectElement, value, code);
+      outcome = fillSelect(control as HTMLSelectElement, value, code, contract.eventPolicy);
       if (outcome.ok) syncNativeComponentSelect(control as HTMLSelectElement, contract.componentDriver);
     } else if (contract.driver === 'school-picker' || contract.driver === 'major-picker') {
       const binding = resolveCodeNameBinding(doc, control, {
@@ -386,11 +386,11 @@ export function fillAdapterContract(profile: Profile, doc: Document, url: string
       const result = fillDateControl(control as HTMLInputElement, value, { precision: contract.datePrecision, format: contract.dateFormat });
       outcome = { ok: result.ok, reason: result.reason };
     } else if (control.tagName === 'SELECT') {
-      outcome = fillSelect(control as HTMLSelectElement, value, code);
+      outcome = fillSelect(control as HTMLSelectElement, value, code, contract.eventPolicy);
       const componentKind = contract.componentDriver || (['layui', 'ant', 'select2', 'element'].includes(contract.driver) ? contract.driver as 'layui' | 'ant' | 'select2' | 'element' : undefined);
       if (outcome.ok && componentKind) syncNativeComponentSelect(control as HTMLSelectElement, componentKind);
     } else if (contract.driver === 'radio' && control.tagName === 'INPUT') {
-      outcome = fillRadioGroup(control as HTMLInputElement, value, code);
+      outcome = fillRadioGroup(control as HTMLInputElement, value, code, contract.eventPolicy);
     } else if (control.tagName === 'INPUT' || control.tagName === 'TEXTAREA') {
       // 有代码命名空间的组件必须通过真实选项或弹窗选择，禁止只改可见文本造成隐藏代码仍为空。
       if (contract.codeNamespace && ['layui', 'ant', 'select2', 'element'].includes(contract.driver)) {
@@ -407,7 +407,7 @@ export function fillAdapterContract(profile: Profile, doc: Document, url: string
         });
         continue;
       }
-      outcome = fillText(control as HTMLInputElement | HTMLTextAreaElement, value);
+      outcome = fillText(control as HTMLInputElement | HTMLTextAreaElement, value, contract.eventPolicy);
     } else {
       outcome = { ok: false, reason: `${contract.driver} 控件没有可回读的输入模型` };
     }

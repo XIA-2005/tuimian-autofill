@@ -1,5 +1,6 @@
 // 前端选择组件驱动：分别处理 Ant Select、Select2、Element Select 和 Layui Select。
 
+import { dispatchValueEvents } from './event-policy';
 import { PopupPickContext } from './popup-binding';
 
 export type ComponentSelectKind = 'ant' | 'select2' | 'element' | 'layui';
@@ -52,9 +53,8 @@ function setInput(el: HTMLInputElement, value: string): void {
   else el.value = value;
   const tracker = (el as HTMLInputElement & { _valueTracker?: { setValue(value: string): void } })._valueTracker;
   tracker?.setValue('');
-  const EventCtor = win?.Event || Event;
-  el.dispatchEvent(new EventCtor('input', { bubbles: true }));
-  el.dispatchEvent(new EventCtor('change', { bubbles: true }));
+  // A1:派发收敛至 event-policy（tail=none 与原两件套逐字面等价）。
+  dispatchValueEvents(el, { tail: 'none' });
 }
 
 function fireClick(el: HTMLElement): void {

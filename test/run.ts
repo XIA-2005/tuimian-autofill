@@ -34,6 +34,7 @@ import { formatIssue, issueMeta } from '../src/core/error-codes';
 import { getHighlightFailures, runHighlightTests } from '../src/core/highlight.test';
 import { getTaskCompilerFailures, runTaskCompilerTests } from '../src/core/task-compiler.test';
 import { getFillMergeFailures, runFillMergeTests } from '../src/core/fill-merge.test';
+import { getEventPolicyFailures, runEventPolicyTests } from '../src/core/event-policy.test';
 import { getValueSemanticsFailures, runValueSemanticsTests } from '../src/core/value-semantics.test';
 import { getAggregationFailures, runAggregationTests } from '../src/background/aggregation.test';
 import { getTaskExecutorFailures, runTaskExecutorTests } from '../src/core/task-executor.test';
@@ -192,6 +193,18 @@ try {
   if (fmf.length === 0) console.log('fill-merge 用例: 全部通过(P03 双写消除合并语义)');
 } catch (e) {
   check(false, '[fill-merge] runFillMergeTests 抛错：' + (e instanceof Error ? e.message : String(e)));
+}
+
+// ===== A1 事件策略层 + INV-A1 不变量(a-e) =====
+try {
+  runEventPolicyTests();
+  const epf = getEventPolicyFailures();
+  for (const f of epf) {
+    check(false, '[event-policy] ' + f);
+  }
+  if (epf.length === 0) console.log('event-policy 用例: 全部通过(A1 策略收敛 + INV-A1 a-e 不变量)');
+} catch (e) {
+  check(false, '[event-policy] runEventPolicyTests 抛错：' + (e instanceof Error ? e.message : String(e)));
 }
 
 // ===== 值语义比较(P04) =====

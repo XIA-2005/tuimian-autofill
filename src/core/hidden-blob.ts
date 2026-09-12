@@ -4,6 +4,7 @@
 // 超长时"优先缩格保行"（二分查找每格截断长度，绝不丢行）；跨页 stash + 富者优先修复。
 // 糟粕（不取）：写死表 ID、破坏式清除组件状态、静默丢行的兜底。
 
+import { dispatchValueEvents } from './event-policy';
 import { withUnlocked } from './unlock';
 
 export const BLOB_CELL_JOIN = '|';
@@ -249,8 +250,8 @@ export function syncTableBlobs(doc: Document, table: HTMLTableElement, opts?: { 
       const desc = Object.getOwnPropertyDescriptor(proto, 'value');
       if (desc && desc.set) desc.set.call(el, outcome.encoded);
       else el.value = outcome.encoded;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+      // A1:派发收敛至 event-policy（tail=none 与原两件套逐字面等价；隐藏载体页面自有轮询，无失焦族）。
+      dispatchValueEvents(el, { tail: 'none' });
     });
     outcome.synced.push(el);
   }

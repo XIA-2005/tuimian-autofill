@@ -121,14 +121,11 @@ function setNativeValue(el: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
   if (setter) setter.call(el, value);
   else el.value = value;
-  // React 会用 _valueTracker 判断值是否变化，清除旧快照后事件才能进入受控模型。
+  // React 会用 _valueTracker 判断值是否变化，清除旧快照后事件才能进入受控模型（INV-A1-c：清理不改回读结论）。
   const tracker = (el as HTMLInputElement & { _valueTracker?: { setValue(value: string): void } })._valueTracker;
   if (tracker) tracker.setValue('');
-  const EventCtor = win?.Event || Event;
-  el.dispatchEvent(new EventCtor('input', { bubbles: true }));
-  el.dispatchEvent(new EventCtor('change', { bubbles: true }));
-  el.dispatchEvent(new EventCtor('blur', { bubbles: false }));
-  el.dispatchEvent(new EventCtor('focusout', { bubbles: true }));
+  // A1:事件派发收敛至 event-policy（tail=blur-focusout 与原四事件逐字面等价）。
+  dispatchValueEvents(el, { tail: 'blur-focusout', aspPage: isAspLikePage(el.ownerDocument) });
 }
 
 function canonical(value: string, precision: DatePrecision): string {
@@ -421,3 +418,4 @@ export async function fillDateControlAsync(el: HTMLInputElement, raw: string, co
   }
   return { ...direct, ok: check.ok, precision, reason: `${direct.driver}：${check.reason}` };
 }
+import { dispatchValueEvents, isAspLikePage } from './event-policy';

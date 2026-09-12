@@ -14,8 +14,13 @@
     "src/core/filler.ts",
     "src/core/control-drivers.ts",
     "src/core/event-policy.ts",
-    "test/run.ts",
-    "src/core/event-policy.test.ts"
+    "src/core/event-policy.test.ts",
+    "src/core/adapters.ts",
+    "src/core/date-drivers.ts",
+    "src/core/hidden-blob.ts",
+    "src/core/component-select-drivers.ts",
+    "src/core/blue-flat-picker-driver.ts",
+    "test/run.ts"
   ],
   "A7": [
     "src/core/standard-code-catalog.ts",
