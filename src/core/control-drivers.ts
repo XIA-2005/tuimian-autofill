@@ -28,7 +28,12 @@ export interface ContractFillItem {
   ambiguousNodes?: Element[];
   /** G03:本轮期望写入值(合同结果必须带,供稳定验证比较;无此值不得报告成功)。 */
   expectedValue?: string;
+  /** B4:显式问题码（如 E1301 已收口驱动），经 merge 透传进字段报告。 */
+  issueCode?: string;
 }
+
+/** B4/RD-8:已收口 driver——schema 白名单已剔除，此表用于运行时防御旧包/手工包声明，遇之显式 E1301 报错，禁静默降级。 */
+const RETIRED_DRIVERS: readonly string[] = ['date-range', 'kendo', 'aspnet'];
 
 function emitChange(el: Element): void {
   const win = el.ownerDocument.defaultView;
@@ -228,7 +233,7 @@ function guardExistingScalar(doc: Document, contract: AdapterFieldContract, cont
     const current = input.value;
     if (isEmptyValue(current)) return 'empty';
     const kind = compareKindForField(field);
-    if (kind.kind === 'date' || contract.driver === 'date' || contract.driver === 'month-picker' || contract.driver === 'date-range') {
+    if (kind.kind === 'date' || contract.driver === 'date' || contract.driver === 'month-picker') {
       const precision = contract.datePrecision || kind.precision;
       if (precision) return isSemanticEqual(precision, current, target) ? 'equal' : 'different';
       return 'unknown';
@@ -262,6 +267,17 @@ export function fillAdapterContract(profile: Profile, doc: Document, url: string
   };
   for (const contract of orderedFields) {
     if (!contract.profilePath || contract.readonly || contract.driver === 'table') continue;
+    // B4/RD-8:已收口 driver 显式 E1301 报错,禁静默降级(schema 白名单已剔除,此处防御绕过 validate 的旧包/手工包)。
+    if (RETIRED_DRIVERS.includes(contract.driver)) {
+      results.push({
+        profilePath: contract.profilePath,
+        status: 'failed',
+        reason: `[E1301] 适配包声明了已停用驱动 ${contract.driver}（B4 收口，禁静默降级）`,
+        issueCode: 'E1301',
+      });
+      markBlocked(contract.profilePath);
+      continue;
+    }
     if (blockedPaths.has(contract.profilePath)) {
       results.push({ profilePath: contract.profilePath, status: 'skipped', reason: '依赖字段未成功填写,已跳过(不阻塞其它独立字段)' });
       continue;
@@ -280,7 +296,7 @@ export function fillAdapterContract(profile: Profile, doc: Document, url: string
       continue;
     }
     let control: HTMLElement | null = resolved.el;
-    if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(control.tagName) && ['layui', 'ant', 'select2', 'element', 'kendo', 'school-picker', 'major-picker'].includes(contract.driver)) {
+    if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(control.tagName) && ['layui', 'ant', 'select2', 'element', 'school-picker', 'major-picker'].includes(contract.driver)) {
       control = control.querySelector('select,input,textarea') as HTMLElement | null;
       if (!control) { results.push({ profilePath: contract.profilePath, status: 'failed', reason: `${contract.driver} 容器没有可回读的内部模型` }); markBlocked(contract.profilePath); continue; }
     }
@@ -377,7 +393,7 @@ export function fillAdapterContract(profile: Profile, doc: Document, url: string
       outcome = fillRadioGroup(control as HTMLInputElement, value, code);
     } else if (control.tagName === 'INPUT' || control.tagName === 'TEXTAREA') {
       // 有代码命名空间的组件必须通过真实选项或弹窗选择，禁止只改可见文本造成隐藏代码仍为空。
-      if (contract.codeNamespace && ['layui', 'ant', 'select2', 'element', 'kendo', 'aspnet'].includes(contract.driver)) {
+      if (contract.codeNamespace && ['layui', 'ant', 'select2', 'element'].includes(contract.driver)) {
         const componentDriver = contract.componentDriver || (['layui', 'ant', 'select2', 'element'].includes(contract.driver) ? contract.driver as 'layui' | 'ant' | 'select2' | 'element' : undefined);
         if (componentDriver) control.setAttribute('data-tui-component-driver', componentDriver);
         markBlocked(contract.profilePath); // G07a:组件等待同样阻塞依赖者

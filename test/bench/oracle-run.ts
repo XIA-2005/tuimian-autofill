@@ -182,7 +182,7 @@ export function runOracle(signedPath: string, negative: boolean): number {
   if (negative) {
     const injectedAll = summary.every((s) => s.injected && s.detected);
     if (injectedAll && !failures.length) {
-      console.error('具名断言[NEGATIVE-OVERFILL@oracle]: 真实(已签 oracle)路径下每校注入的期望外写入均被四分类判定 overfill —— 越界门禁有效，负向证明成立，按约定 exit 1');
+      console.error('具名断言[NEGATIVE-OVERFILL@oracle]: 真实(已签 oracle)路径下每校注入的拒填清单内控件被写入均被四分类判定 overfill —— 越界门禁有效，负向证明成立，按约定 exit 1');
       return 1;
     }
     console.error(`具名断言[NEGATIVE-OVERFILL@oracle-失效]: 每校注入+检出配对未全部成立(注入/检出: ${summary.map((s) => `${s.injected}/${s.detected}`).join(', ')}) —— P4 台账口径在真实 oracle 路径失效`);

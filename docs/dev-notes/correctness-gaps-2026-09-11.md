@@ -24,7 +24,7 @@
 - **[F02-S1] 同意/承诺类 checkbox 进报告并可执行（冻结词表）或 skipped 人工、禁 failed 噪音 :: 现状 `filler.ts:321-323` checkbox 硬拒、不进 FillItem（机会缺口：竞品 checkbox_group 亦无通用派发） :: B1 :: QWEN/待 DeepSeek**
 - **[F02-S2] Cascader forced 路径漏排 `.ant-cascader` 修复且 DOM 回读命中才算成功 :: 现状 `component-select-drivers.ts:90` 裸 `.ant-select` 必败 :: B2 :: QWEN/待 DeepSeek**
 - **[F02-S3] 独立 contenteditable 进 FillItem/可报 noMatch/可高亮（先可见） :: 现状 `matcher.ts:618` 只扫 input/select/textarea——不填、不报、不高亮（"漏填不报"最大盲区）；oracle 折叠条 retro `editorEssay`(css 定位)已为其 oracle 侧占位锚（silent-no-write+deferredTo=B3） :: B3（前置 F05 清单） :: QWEN/待 DeepSeek**
-- **[F02-S4] `date-range/kendo/aspnet` 三 driver 声明即 `check:adapters` 报错、运行时显式 E 码报错，禁静默降级 :: 现状 `adapters.ts:40/47/48`+`adapter-packages.ts:579` 白名单，全 src 3/4/3 refs 零合同使用（实测零使用故风险降级但收口成本极低） :: B4 :: QWEN/待 DeepSeek**
+- **[F02-S4] `date-range/kendo/aspnet` 三 driver 声明即 `check:adapters` 报错、运行时显式 E 码报错，禁静默降级 :: 现状 `adapters.ts:40/47/48`+`adapter-packages.ts:579` 白名单，全 src 3/4/3 refs 零合同使用（实测零使用故风险降级但收口成本极低） :: B4 :: QWEN/待 DeepSeek** —— **✅ 已翻绿（B4 收口，2026-09-12）：类型联合+schema 白名单双剔除；运行时守卫显式 `[E1301]` failed（issueCode 透传报告）；`check:adapters` 新增常驻负向用例（schema×3 拒绝 + 运行时 E1301 + 正向对照不误伤）全 PASS**
 
 ## 次优先红素材（F02-D1 之外的本批 bench 实测）
 

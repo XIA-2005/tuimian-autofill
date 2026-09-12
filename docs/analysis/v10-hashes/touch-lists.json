@@ -46,5 +46,13 @@
     "docs/analysis/v10-review-2026-09-11/oracle-F01.signed.json",
     "test/bench/**",
     "package.json"
+  ],
+  "B4": [
+    "src/core/adapters.ts",
+    "src/core/adapter-packages.ts",
+    "src/core/control-drivers.ts",
+    "src/core/error-codes.ts",
+    "src/core/fill-merge.ts",
+    "test/check-adapters.ts"
   ]
 }

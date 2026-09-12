@@ -576,7 +576,8 @@ export function validateAdapterPackage(raw: unknown): SchoolAdapterPackage {
   if (p.schemaVersion !== 1 || !p.id || !p.version || !p.schoolName || !p.match?.hosts?.length) throw new Error('适配包缺少必需字段');
   if (!Array.isArray(p.pages) || !p.pages.every((x) => x.id && x.name && Array.isArray(x.pathPatterns) && ['form', 'crawl-only', 'shell', 'upload', 'print', 'result'].includes(x.role))) throw new Error('页面契约格式错误');
   if (new Set(p.pages.map((x) => x.id)).size !== p.pages.length) throw new Error('页面契约 ID 重复');
-  const driverIds = new Set(['text', 'radio', 'native-select', 'date', 'month-picker', 'date-range', 'textarea', 'table', 'layui', 'ant', 'select2', 'element', 'kendo', 'aspnet', 'school-picker', 'major-picker']);
+  // B4:已收口 driver（date-range/kendo/aspnet）从 schema 白名单剔除——声明即 validate 拒绝（RD-8 禁静默降级）。
+  const driverIds = new Set(['text', 'radio', 'native-select', 'date', 'month-picker', 'textarea', 'table', 'layui', 'ant', 'select2', 'element', 'school-picker', 'major-picker']);
   const stringList = (value: unknown): boolean => value === undefined || (Array.isArray(value) && value.every((item) => typeof item === 'string'));
   if (p.pages.some((x) => x.fields?.some((field) => !driverIds.has(field.driver) || (!field.profilePath && !field.extensionKey)))) throw new Error('字段契约格式错误');
   if (p.pages.some((x) => x.fields?.some((field) =>

@@ -193,4 +193,20 @@ EXTERNAL-MOD docs/analysis/ds-v9-复核报告-2026-09-11.md
 - 剩余限制：F02 红断言未接入执行门禁（登记+素材形态，翻绿接入路径已写明）；oracle 签名未随 P4 修订重签（draft 内容未变，874F2F25 仍锚定有效——P4 修订改的是 bench 判读语义非 oracle 数据）。
 - 下一卡：审查者判 F02 → B4（S4 收口）或等用户清单走 T3。
 
+## L-B4 · W-4 文案统一 + B4 S4 收口（F02-S4 翻绿，2026-09-12）
+
+- **W-4**：`test/bench/oracle-run.ts:185` 具名断言文案改"每校注入的**拒填清单内控件被写入**均被四分类判定 overfill"——与 self-test.ts:177/classify.ts:114/oracle-run.ts:136 注释四处口径统一（P4 v10.5"期望外写入不再算越界"，断言凭据不得写反）。
+- **B4 收口（touch-list 先行登记 `B4` 卡范围再开工）**：
+  - `src/core/adapters.ts`：`ControlDriverId` 联合剔除 `date-range/kendo/aspnet`（:34-47）；
+  - `src/core/adapter-packages.ts:580`：schema 白名单 Set 同步剔除（**两处都剔**，73 包零使用实证不受影响）；
+  - `src/core/control-drivers.ts`：主循环加 `RETIRED_DRIVERS` 守卫——遇旧包/手工包声明产出 `status:'failed'` + `reason:'[E1301] 适配包声明了已停用驱动 …（B4 收口，禁静默降级）'` + `issueCode:'E1301'`（RD-8）；三处运行时残留清理（:231 date-range 比较、:283/:380 kendo/aspnet 数组）；`ContractFillItem` 增 `issueCode?`；
+  - `src/core/error-codes.ts`：新增 **E1301**（"适配包声明了已停用的控件驱动"）；
+  - `src/core/fill-merge.ts`：failed 两处 push 透传 `issueCode` 进字段报告。
+- **负向自检（常驻 `check:adapters` 用例，非一次性命令；`test/check-adapters.ts` 入 B4 范围）**：①schema 双向——三 driver 合成包 `validateAdapterPackage` → `字段契约格式错误` throw，`PASS: B4 schema 拒绝已收口 driver {date-range,kendo,aspnet}（声明即报错）`×3；②运行时——绕过 validate 的手工包（date-range field）→ `PASS: B4 运行时已收口 driver 显式 [E1301] failed（禁静默降级）`（issueCode+reason 双验）；③正向对照——text driver 不被误伤 `PASS`。**失败形态原文（首跑实证）**：裸 JSDOM 探针 `TypeError: Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.`——根因=Node 全局 Event ≠ jsdom Event，改 `makeDomIsolated`（applyGlobals 注入）后复绿；`check()` 误传第 3 参 TS2554 一处（提交前 typecheck 拦截，未上 CI）。
+- **F02-S4 翻绿标注**：`correctness-gaps-2026-09-11.md` [F02-S4] 条目加 ✅ 翻绿记录（待审查者复跑确认）。
+- **命令+退出码**：`npm run typecheck`=0；`npm run check:adapters`=0（含 B4 五用例）；签名批 update F04（touch-lists 登记 B4）/update B4 六文件首签/update F01（W-4）均 exit 0，终态 check=0（详见下方签名记录）。
+- **签名批记录（§2-2）**：update 前 check 全文= `受控一致 147 | 漂移 8 | 缺失 0 | 新文件已声明 26 | 未声明 0 | 存量已声明改动 0 | 存量漂移 0 | 外部改动 3`，exit 1（漂移 8=B4 六文件+oracle-run.ts W-4+touch-lists.json B4 登记）。`update F04`（touch-lists `1E545D62→4212E3F2`+3 重申）=0；`update B4` 六文件首签（adapters `EDC4E910→C6939104`、adapter-packages `EE88D225→32A3F5B1`、control-drivers `2C9F10E2→42C35720`、error-codes `910ECCB3→37BFCA4F`、fill-merge `783A6122→3F246417`、check-adapters `A2666F32→15AF29D9`）=0；`update F01`（oracle-run `75B8F96B→DD316BC4`+merge 保留 12 项）=0。终态 check：`受控一致 155 | 漂移 0 | 缺失 0 | 新文件已声明 26 | 未声明 0 | 存量已声明改动 0 | 存量漂移 0 | 外部改动 3`，**EXIT=0**。
+- 剩余限制：E1301 号段 E13xx 为新增段（E11/E12 既有），报表消费端（漏填清单/字段报告）对 E1301 的展示走 `issueMeta` 通用路径未专测。
+- 下一卡：审查者判 B4 → A1（开工前重读 INV-A1 四不变式）或等用户清单走 T3。
+
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->

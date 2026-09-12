@@ -37,17 +37,15 @@ export type ControlDriverId =
   | 'native-select'
   | 'date'
   | 'month-picker'
-  | 'date-range'
   | 'textarea'
   | 'table'
   | 'layui'
   | 'ant'
   | 'select2'
   | 'element'
-  | 'kendo'
-  | 'aspnet'
   | 'school-picker'
   | 'major-picker';
+// B4:已收口 driver（date-range/kendo/aspnet）从类型联合剔除——运行时遇旧包声明走 E1301 显式报错（RD-8）。
 
 export interface AdapterFieldContract {
   nativeId?: string;

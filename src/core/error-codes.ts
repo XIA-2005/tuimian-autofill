@@ -55,6 +55,10 @@ export const ISSUE_CATALOG: Record<string, IssueMeta> = {
     summary: '本页没有找到可用的加行按钮',
     action: '确认该表格是否支持自动加行；可手动新增一行后重新填充',
   },
+  E1301: {
+    summary: '适配包声明了已停用的控件驱动（date-range/kendo/aspnet）',
+    action: '该适配包使用了已收口的驱动类型；请更新适配包合同，或用「复制字段报告」反馈给开发者',
+  },
 };
 
 export function issueMeta(code: string): IssueMeta | null {

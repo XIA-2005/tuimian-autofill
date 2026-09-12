@@ -3,7 +3,11 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { SCHOOL_ADAPTER_PACKAGES, validateAdapterPackage } from '../src/core/adapter-packages';
+import type { SchoolAdapterPackage } from '../src/core/adapters';
 import { FIELD_RULES } from '../src/core/matcher';
+import { fillAdapterContract } from '../src/core/control-drivers';
+import { emptyProfile } from '../src/core/profile';
+import { makeDomIsolated } from './regression/observer';
 
 const failures: string[] = [];
 function check(name: string, cond: boolean): void {
@@ -133,6 +137,51 @@ function checkPackages(): void {
 }
 
 checkPackages();
+
+// ===== B4:已收口 driver（date-range/kendo/aspnet）双向负向自检（RD-8 禁静默降级）=====
+{
+  const retired = ['date-range', 'kendo', 'aspnet'];
+  const base = SCHOOL_ADAPTER_PACKAGES[0];
+  // 负向1:schema 白名单——合同声明即 validate 拒绝（"字段契约格式错误"）。
+  for (const driver of retired) {
+    const pkg = JSON.parse(JSON.stringify({
+      ...base,
+      id: `b4-probe-${driver}`,
+      match: { hosts: ['b4.invalid'] },
+      pages: [{ id: 'p1', name: 'p1', pathPatterns: ['*'], role: 'form', fields: [{ profilePath: 'basic.name', driver: driver, labels: [], selectors: ['input'] }] }],
+    }));
+    let threw = '';
+    try { validateAdapterPackage(pkg); } catch (e) { threw = (e as Error).message; }
+    check(`B4 schema 拒绝已收口 driver ${driver}（声明即报错）`, threw === '字段契约格式错误');
+  }
+  // 负向2:运行时——绕过 validate 的手工包必须产出 [E1301] failed 显式报错,禁静默降级/禁静默跳过。
+  const manualPkg = {
+    ...base,
+    id: 'b4-runtime-probe',
+    match: { hosts: ['b4.invalid'] },
+    pages: [{ id: 'p1', name: 'p1', pathPatterns: ['*'], role: 'form', fields: [{ profilePath: 'basic.name', driver: 'date-range', labels: ['姓名'], selectors: ['[name="xm"]'] }] }],
+    crawl: { mode: 'guided', pageOrder: ['p1'] },
+  } as unknown as SchoolAdapterPackage;
+  // makeDomIsolated(非裸 JSDOM):applyGlobals 注入 jsdom 的 Event 等全局,emitChange 的 dispatchEvent 才可用。
+  const ctx = makeDomIsolated('<form><label>姓名<input name="xm"></label></form>', 'https://b4.invalid/form');
+  const profile = emptyProfile();
+  profile.basic.name = '张三';
+  const items = fillAdapterContract(profile, ctx.doc, 'https://b4.invalid/form', manualPkg);
+  const hit = items.find((i) => i.profilePath === 'basic.name');
+  check('B4 运行时已收口 driver 显式 [E1301] failed（禁静默降级）', !!hit && hit.status === 'failed' && hit.issueCode === 'E1301' && hit.reason.includes('E1301'));
+  // 正向对照:同一守卫不得误伤合法 driver（text 可正常产出合同条目）。
+  const okPkg = {
+    ...base,
+    id: 'b4-ok-probe',
+    match: { hosts: ['b4.invalid'] },
+    pages: [{ id: 'p1', name: 'p1', pathPatterns: ['*'], role: 'form', fields: [{ profilePath: 'basic.name', driver: 'text', labels: ['姓名'], selectors: ['[name="xm"]'] }] }],
+    crawl: { mode: 'guided', pageOrder: ['p1'] },
+  } as unknown as SchoolAdapterPackage;
+  const okItems = fillAdapterContract(profile, ctx.doc, 'https://b4.invalid/form', okPkg);
+  const okHit = okItems.find((i) => i.profilePath === 'basic.name');
+  check('B4 正向对照:合法 driver text 正常填写不受 E1301 误伤', !!okHit && okHit.status === 'filled');
+}
+
 // F09:默认校验 evidence 目录下全部证据文件(新增证据自动纳入门禁);argv 可指定单个文件。
 const argvFile = process.argv[2];
 if (argvFile) {

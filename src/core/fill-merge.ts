@@ -88,7 +88,7 @@ export function mergeContractFillResult(result: FillResult, contractItems: Contr
     if (!contract.el) {
       if (contract.status === 'failed') {
         if (!result.items.some((i) => i.field === contract.profilePath && i.status === 'failed')) {
-          result.items.push({ label: contract.profilePath, field: contract.profilePath, status: 'failed', reason: contract.reason });
+          result.items.push({ label: contract.profilePath, field: contract.profilePath, status: 'failed', reason: contract.reason, issueCode: contract.issueCode });
           result.stats.total = result.items.length;
           result.stats.failed += 1;
         }
@@ -100,7 +100,7 @@ export function mergeContractFillResult(result: FillResult, contractItems: Contr
     if (contract.status === 'filled') {
       pushItem({ label, field: contract.profilePath, status: 'filled', reason: contract.reason, el: contract.el, expectedValue: contract.expectedValue });
     } else if (contract.status === 'failed') {
-      pushItem({ label, field: contract.profilePath, status: 'failed', reason: contract.reason, el: contract.el });
+      pushItem({ label, field: contract.profilePath, status: 'failed', reason: contract.reason, el: contract.el, issueCode: contract.issueCode });
     } else if (contract.pickerContext) {
       pushItem({ label, field: contract.profilePath, status: 'picker', reason: contract.reason, valuePreview: contract.valuePreview, el: contract.el, pickerContext: contract.pickerContext });
     }
