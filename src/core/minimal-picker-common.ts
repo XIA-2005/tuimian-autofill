@@ -1,6 +1,7 @@
 // 简约系统 ASP.NET 选择器公共流程，只供院校/专业两个独立内核复用。
 
 import { CodeNameBinding, PopupPickContext, resolveCodeNameBinding, verifyCodeNameBinding } from './popup-binding';
+import { dispatchValueEvents } from './event-policy';
 
 export interface MinimalPickerSpec {
   triggerSelectors: string[];
@@ -27,10 +28,8 @@ function setInput(el: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(win?.HTMLInputElement.prototype || HTMLInputElement.prototype, 'value')?.set;
   if (setter) setter.call(el, value);
   else el.value = value;
-  const EventCtor = win?.Event || Event;
-  el.dispatchEvent(new EventCtor('input', { bubbles: true }));
-  el.dispatchEvent(new EventCtor('change', { bubbles: true }));
-  el.dispatchEvent(new EventCtor('blur', { bubbles: false }));
+  // A1/W-6:派发收敛至 event-policy（tail=blur-only 与原三事件逐字面等价：blur 无 focusout、不冒泡）。
+  dispatchValueEvents(el, { tail: 'blur-only' });
 }
 
 function findBySelectors<T extends Element>(doc: Document, selectors: string[]): T | null {
@@ -145,7 +144,8 @@ export async function runMinimalPicker(doc: Document, anchor: Element, value: st
     const option = category ? Array.from(category.options).find((item) => item.text.trim() === spec.category) : undefined;
     if (category && option && category.value !== option.value) {
       category.value = option.value;
-      category.dispatchEvent(new (pickerDoc.defaultView?.Event || Event)('change', { bubbles: true }));
+      // A1/W-6:派发收敛至 event-policy（tail=change-only 与原单 change 逐字面等价——分类联动不派 input）。
+      dispatchValueEvents(category, { tail: 'change-only' });
       await new Promise((resolve) => setTimeout(resolve, 450));
       pickerDoc = frameDocument(doc, effective) || pickerDoc;
     }

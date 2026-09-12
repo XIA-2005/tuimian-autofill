@@ -64,10 +64,16 @@ function allTouchRes() {
 function expectedMap() {
   const out = { ...readJson(BASE, { files: {} }).files };
   const signed = readJson(SIGNED, {});
-  // [A1 批修复] 多卡共签同一文件（如 test/run.ts ∈ F03/A1/A7）时按**卡签名时间**升序遍历、后签覆盖先签；
+  // [A1 批修复 + W-5 条目级] 多卡共签同一文件（如 test/run.ts ∈ F03/A1/A7）时按**新鲜度**升序遍历、后签覆盖先签。
+  // 新鲜度=W-5 下沉到文件条目级 at（update 时记）；条目缺 at 回退卡级（兼容旧记录）。
   // 原字母序会让字母靠后卡（F03）的陈旧条目覆盖字母靠前卡（A1）的新签名 → check 恒 DRIFT 循环。
-  const cards = Object.keys(signed).sort((a, b) => String(signed[a].at || '').localeCompare(String(signed[b].at || '')));
-  for (const card of cards) for (const f of signed[card].files) out[norm(f.path)] = f.sha256;
+  const entries = [];
+  for (const card of Object.keys(signed)) {
+    const cardAt = String(signed[card].at || '');
+    for (const f of signed[card].files) entries.push({ path: norm(f.path), sha: f.sha256, at: String(f.at || cardAt) });
+  }
+  entries.sort((a, b) => a.at.localeCompare(b.at));
+  for (const e of entries) out[e.path] = e.sha;
   return out;
 }
 
@@ -172,6 +178,11 @@ if (mode === 'update') {
   const treeFiles = readJson(TREE, { files: {} }).files;
   const out = [];
   const changed = [];
+  const nowIso = new Date().toISOString();
+  const signedCache = readJson(SIGNED, {});
+  // W-5:条目级新鲜度——重申条目保留原签 at（内容未变=新鲜度未变），真变化/删除/首签 at=本次时刻。
+  const prevFilesOfCard = Array.isArray(signedCache[card] && signedCache[card].files) ? signedCache[card].files : [];
+  const prevAtOf = (p) => { const f = prevFilesOfCard.find((x) => x.path === p); return f && f.at ? String(f.at) : nowIso; };
   for (const p of files) {
     if (!res.some((r) => r.test(p))) { console.error(`[v10-hashes] REJECT：${p} 不在卡 ${card} 的 touch-list 内`); process.exit(1); }
     const abs = path.join(ROOT, p);
@@ -179,18 +190,18 @@ if (mode === 'update') {
       const tracked = lastExpected[p] !== undefined || treeFiles[p] !== undefined;
       if (!tracked) { console.error(`[v10-hashes] REJECT：${p} 不存在且从未被跟踪，无从签`); process.exit(1); }
       if (lastExpected[p] === 'DELETED') { console.error(`[v10-hashes] REJECT：${p} 已是删除墓碑`); process.exit(1); }
-      out.push({ path: p, sha256: 'DELETED', prev: lastExpected[p] === undefined ? 'TREE' : lastExpected[p] });
+      out.push({ path: p, sha256: 'DELETED', prev: lastExpected[p] === undefined ? 'TREE' : lastExpected[p], at: nowIso });
       changed.push(p);
       continue;
     }
     const now = diskSha(p);
     // [v10.5] 签名语义：真变化签入；无变化重申同哈希（prev==now，签名层不丢文件）；仅整批全无变化才 REJECT（保留 L-F04 负向自检 NEG2）。
-    if (lastExpected[p] === now) { out.push({ path: p, sha256: now, prev: now }); continue; }
-    out.push({ path: p, sha256: now, prev: lastExpected[p] === undefined ? null : lastExpected[p] });
+    if (lastExpected[p] === now) { out.push({ path: p, sha256: now, prev: now, at: prevAtOf(p) }); continue; }
+    out.push({ path: p, sha256: now, prev: lastExpected[p] === undefined ? null : lastExpected[p], at: nowIso });
     changed.push(p);
   }
   if (!changed.length && !prune.length) { console.error(`[v10-hashes] REJECT：卡 ${card} 本批全部文件与上次签名相同，无变化不签`); process.exit(1); }
-  const signed = readJson(SIGNED, {});
+  const signed = signedCache;
   // [W-1 v10.5] merge 语义：本次列出者新增/更新，未列出者**保留**托管；删托管必须显式 --prune。
   // 修复前 signed[card] 为整卡替换——列子集会静默洗掉该卡其余文件的托管（L-F01c 偏差备案 ③ 根因）。
   const prevFiles = Array.isArray(signed[card] && signed[card].files) ? signed[card].files : [];

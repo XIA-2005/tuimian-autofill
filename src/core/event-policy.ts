@@ -13,9 +13,11 @@ export type EventPolicy = 'full' | 'soft' | 'silent';
  * 值变更事件尾部的口别差异（迁移自既有派发口，full=现行逐字面）：
  *  - blur-focusout：input+change+blur(bubbles:false)+focusout（filler.setInputValue / date-drivers 现行）
  *  - blur-bubble ：input+change+blur(bubbles:true,用 win.Event)（control-drivers.emitChange / blue-flat 现行）
+ *  - blur-only   ：input+change+blur(bubbles:false)（minimal-picker 现行；W-6 收敛）
+ *  - change-only ：仅 change 不派 input（radio 组/分类下拉现行——input 会污染受控组件输入历史；W-6 收敛）
  *  - none        ：仅 input+change（组件/隐藏载体两件套现行）
  */
-export type ValueEventTail = 'blur-focusout' | 'blur-bubble' | 'none';
+export type ValueEventTail = 'blur-focusout' | 'blur-bubble' | 'blur-only' | 'change-only' | 'none';
 
 /** 任务书 A1 风险级默认表：分数/GPA/排名/语言成绩/日期类字段路径 → ASP 页自动 soft。 */
 const RISK_SOFT_FIELD = /(^|\.)(gpa|score|cet4|cet6|rank|comprehensiveRank|gradeRank|birthday)|csrq|csny|rxny|byny|rxrq|byrq|date/i;
@@ -71,7 +73,8 @@ export function dispatchValueEvents(el: Element, opts: DispatchValueEventsOption
   if (policy === 'silent') return;
   const win = el.ownerDocument ? el.ownerDocument.defaultView : null;
   const EventCtor = win?.Event || Event;
-  el.dispatchEvent(new EventCtor('input', { bubbles: true }));
+  // change-only：radio/分类下拉现行协议不派 input（防受控组件输入历史污染）。
+  if (opts.tail !== 'change-only') el.dispatchEvent(new EventCtor('input', { bubbles: true }));
   el.dispatchEvent(new EventCtor('change', { bubbles: true }));
   if (policy === 'soft') return;
   switch (opts.tail) {
@@ -83,6 +86,10 @@ export function dispatchValueEvents(el: Element, opts: DispatchValueEventsOption
       if (win) el.dispatchEvent(new win.Event('blur', { bubbles: true }));
       else el.dispatchEvent(new EventCtor('blur', { bubbles: true }));
       break;
+    case 'blur-only':
+      el.dispatchEvent(new EventCtor('blur', { bubbles: false }));
+      break;
+    case 'change-only':
     case 'none':
     default:
       break;

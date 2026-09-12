@@ -10,7 +10,7 @@ import type { Profile } from './profile';
 import { captureRunSnapshot } from './fill-session';
 import { beginWriteScope, conditionalRestore, endWriteScope, getWriteRecord, noteExternalInput, readNativeControlValue, registerWriteOwnership, setInputValue } from './filler';
 import { dispatchForcedChange, dispatchValueEvents, isAspLikePage, resolveEventPolicy } from './event-policy';
-import type { EventPolicy } from './event-policy';
+import type { EventPolicy, ValueEventTail } from './event-policy';
 import { fillAdapterContract } from './control-drivers';
 import type { SchoolAdapterPackage } from './adapters';
 import { mergeContractFillResult } from './fill-merge';
@@ -47,7 +47,7 @@ export function runEventPolicyTests(): void {
       return () => n;
     };
     const counts: Record<string, () => number> = { input: count('input'), change: count('change'), blur: count('blur'), focusout: count('focusout') };
-    const run = (policy: EventPolicy, tail: 'blur-focusout' | 'blur-bubble' | 'none', field: string | null, asp: boolean): Record<string, number> => {
+    const run = (policy: EventPolicy, tail: ValueEventTail, field: string | null, asp: boolean): Record<string, number> => {
       el.value = String(Math.random());
       dispatchValueEvents(el, { policy, tail, field, aspPage: asp });
       return Object.fromEntries(Object.entries(counts).map(([k, get]) => [k, get()]));
@@ -63,6 +63,12 @@ export function runEventPolicyTests(): void {
     test('A1: tail=blur-bubble 派发 bubble blur', bb.blur - silent.blur === 1);
     const none = run('full', 'none', null, false);
     test('A1: tail=none 无失焦族', none.blur === bb.blur && none.focusout === bb.focusout);
+    const bo = run('full', 'blur-only', null, false);
+    test('A1: tail=blur-only 派 blur(不冒泡) 无 focusout', bo.blur - none.blur === 1 && bo.focusout === none.focusout);
+    const co = run('full', 'change-only', null, false);
+    test('A1: tail=change-only 仅 change 不派 input（radio 协议）', co.change - bo.change === 1 && co.input === bo.input && co.blur === bo.blur);
+    const coSoft = run('soft', 'change-only', null, false);
+    test('A1: change-only 在 soft 下 change 信号不受抑制', coSoft.change - co.change === 1);
     ctx.restore();
   }
   {

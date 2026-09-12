@@ -12,6 +12,7 @@
 import { detectCaptchaPairs, startMutationObserver, type CaptchaPair, imgToDataUrl } from './captcha-detector';
 import { recognizeCaptchaRouteA } from './captcha-ocr';
 import { getCaptchaSettings } from '../core/captcha-settings';
+import { dispatchValueEvents } from '../core/event-policy';
 import { recognizeCaptchaRouteB } from '../core/captcha-bridge';
 import { appendCaptchaHistory, markLastHistoryUsed } from '../core/captcha-history';
 import type { CaptchaSettings } from '../core/captcha-types';
@@ -241,8 +242,8 @@ function setInputValueWithEvents(input: HTMLInputElement, value: string): void {
   } else {
     input.value = value;
   }
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  input.dispatchEvent(new Event('change', { bubbles: true }));
+  // A1/W-6:派发收敛至 event-policy（tail=none 与原两件套逐字面等价）。
+  dispatchValueEvents(input, { tail: 'none' });
   input.focus();
 }
 

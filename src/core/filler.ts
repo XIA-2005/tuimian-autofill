@@ -215,8 +215,8 @@ function pickOption(el: HTMLSelectElement, index: number): void {
       const desc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
       if (desc && desc.set) desc.set.call(el, el.options[index].value);
       else el.selectedIndex = index;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+      // A1/W-6:派发收敛至 event-policy（tail=none 与原两件套逐字面等价）。
+      dispatchValueEvents(el, { tail: 'none' });
     });
   } finally {
     endInternalWrite();
@@ -294,7 +294,8 @@ function setRadioGroup(el: HTMLInputElement, value: string): boolean {
       if (!r.checked) {
         r.checked = true;
         r.click();
-        r.dispatchEvent(new Event('change', { bubbles: true }));
+        // A1/W-6:派发收敛至 event-policy（tail=change-only 与原单 change 逐字面等价——radio 不派 input）。
+        dispatchValueEvents(r, { tail: 'change-only' });
       }
       return true;
     }

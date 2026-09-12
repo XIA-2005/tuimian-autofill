@@ -221,4 +221,15 @@ EXTERNAL-MOD docs/analysis/ds-v9-复核报告-2026-09-11.md
 - 剩余限制：①soft/silent 现无生产调用方（合同 eventPolicy 字段零包声明）——行为面=full 等价+能力就绪，ASP 页真实降 soft 待 A3/A4 日期族卡联动验证；②`isAspLikePage` 对 300KB 截断外的尾部特征不可见（缓存限幅取舍）；③R1 的"翻绿"=事件层收敛完成+零回归，分数字段 ASP 页行为变化待 D 阶段真页验证。
 - 下一卡：审查者判 A1 → A2a（回发诊断，只读）。
 
+## L-R1W56 · R-1/R-2 oracle 修正 + W-5 条目级 at + W-6 收敛补完（2026-09-12）
+
+- **R-1**（改生成器非手编 JSON）：`test/gen-oracle-draft.cjs` `blue#yzbm`/`retro#txtYb` 两条例 `truncateZeroPad`→**identity**、basis `page-attr`→**fixture-dom label**（夹具无 maxlength/pattern/size，原引用失真；夹具未动——禁改夹具迎合 oracle）。重生成 draft：expectedLiteral 不变（identity≡truncateZeroPad@满位 '100001'）→ bench 期望面零变化。draft 新 sha256=`cf850590de8b7bf5d41874782c6c15283d195f465dfda272d68a6623ba3d9de7`，**交审查者重签**。
+- **R-2**：`probe-sign-oracle.cjs`（硬化版）→ **exit 0 无 FAIL**：fixtures=3 PASS / E1 78/78 / E2 covers≡refusable / 校验器仅 A6 / **basis 真实性抽查 70 条 PASS** / B1-B2 零出现。`probe-oracle-validate.cjs` 仍仅 A6（D1 既定形态）。
+- **W-5**（`tools/v10-hashes.cjs`）：`expectedMap` 新鲜度**下沉到文件条目级**——update 时条目记 `at`（真变化/删除/首签=本次时刻；**重申条目保留原 at**——内容未变=新鲜度未变）；expectedMap 按条目 at 升序覆盖（缺 at 回退卡级=兼容旧记录）。**负向自检（disposable worktree 两轮，主仓零污染）**：①旧工具（HEAD 版）复现 GPT 隐患——同文件双卡交错（A1 t1 签 run.ts → F03 t2 签 run.ts → A1 t3 签 filler）→ check `DRIFT test/run.ts`（卡级 at 高估 merge 保留条目）；②纯新签名数据 + 新工具同三步 → **test/run.ts 无 DRIFT**（唯一 DRIFT=worktree 内被覆盖的工具文件本身，正确信号）。混合期边界（旧条目无 at 回退卡级）已如实记：随各卡自然重签收敛。
+- **W-6**（A2b 前置，六处收敛+两形状）：策略层 `ValueEventTail` 扩 **`blur-only`**（minimal-picker 三事件）/ **`change-only`**（radio/分类下拉——**不派 input**，防受控组件输入历史污染；soft 下 change 信号不受抑制）。六处迁移：`filler.setSelectValue`（none）、`filler.setRadioGroup`（change-only）、`retro-honor-fill.setInputValue`（blur-focusout）、`src/content/captcha-orchestrator`（none）、`minimal-picker-common.setInput`（blur-only）、`minimal-picker-common` 分类下拉（change-only）。**分母说明**：`filler` jqx 过滤框逐字键盘模拟序列（keydown/InputEvent/keyup+12ms 节奏）为**协议性派发**，非值变更通知口，不入收敛分母（与 GPT 审计分母口径一致）；mouse/keyboard 序列同理。
+- **INV 断言扩展**：tail=blur-only（派 blur 不冒泡、无 focusout）/ change-only（仅 change 不派 input；soft 下不受抑制）两组新形状断言入 event-policy.test.ts。
+- **命令+退出码**：`node test/gen-oracle-draft.cjs`=0；`probe-sign-oracle`=0；`npm run typecheck`=0；`npm run test:offline`=0；签名批 update F04（工具 `8D5B87E2→0FFE7174`+touch-lists A1 范围增补 retro-honor/captcha/minimal `12853455→AC097A47`）=0、update A1 八文件（filler `A119ACFB→BB0603F3`、event-policy `EACA6FA2→A393B317`、event-policy.test `47A7BECD→B87A1B18→0CD2099C`、retro-honor `7DB0B65C→1D4E70BA`、captcha `A9840366→31BAB1A4`、minimal-picker `4AB80D52→CD2C5B0B`、run.ts/control-drivers 重申）=0、update B4 REJECT（无变化，正确拒签）=1。
+- **当前 check 态**：`受控一致 154 | 漂移 3 | 缺失 0 | 新文件已声明 36 | 未声明 0 | 存量漂移 0 | 外部 3`——漂移 3=**R-3 待办**（draft 修正+signed 撤回信号+生成器），待审查者重签后随批 `update F01` 清零。
+- 下一动作：审查者重签 signed.json（draft sha=cf850590…）→ 本方 update F01 → A2a（只读诊断）。
+
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->

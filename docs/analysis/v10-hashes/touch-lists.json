@@ -20,6 +20,9 @@
     "src/core/hidden-blob.ts",
     "src/core/component-select-drivers.ts",
     "src/core/blue-flat-picker-driver.ts",
+    "src/core/retro-honor-fill.ts",
+    "src/content/captcha-orchestrator.ts",
+    "src/core/minimal-picker-common.ts",
     "test/run.ts"
   ],
   "A7": [

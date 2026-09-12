@@ -5,18 +5,16 @@
 
 import { composeListText, Profile } from './profile';
 import { withUnlocked } from './unlock';
+import { dispatchValueEvents } from './event-policy';
 
-/** 写前临时解锁 + 原生 setter + 事件派发（与 filler.setInputValue 同口径） */
+/** 写前临时解锁 + 原生 setter + 事件派发（A1/W-6 收敛：tail=blur-focusout 与原四事件逐字面等价） */
 function setInputValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   withUnlocked(el, () => {
     const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const desc = Object.getOwnPropertyDescriptor(proto, 'value');
     if (desc && desc.set) desc.set.call(el, value);
     else el.value = value;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    el.dispatchEvent(new Event('blur', { bubbles: false }));
-    el.dispatchEvent(new Event('focusout', { bubbles: true }));
+    dispatchValueEvents(el, { tail: 'blur-focusout' });
   });
 }
 
