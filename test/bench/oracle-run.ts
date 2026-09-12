@@ -133,8 +133,8 @@ export function runOracle(signedPath: string, negative: boolean): number {
     let rows: ClassifyRow[] = classifyControls(ctx.doc, mapsIn);
 
     if (negative) {
-      // 注入载体:优先 untracked(期望外);无则注入拒填清单内控件(refused 控件被写=P4 口径必判 overfill)。
-      const target = rows.find((r) => r.cls === 'untracked') || rows.find((r) => r.cls === 'refused');
+      // [W-2 v10.5] 注入载体=拒填清单内控件:拒填却写=P4 唯一 overfill 语义;未建模(untracked)写入非越界,不作载体。
+      const target = rows.find((r) => r.cls === 'refused');
       if (!target) {
         failures.push(`[${fix.fixtureId}] 无 untracked 与 refused 控件可作越界注入载体`);
         summary.push({ fixtureId: fix.fixtureId, tally: tallyControls(rows), untrackedKeys: [], injected: false, detected: false, defectKeys: [] });

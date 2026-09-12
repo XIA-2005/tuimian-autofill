@@ -117,8 +117,11 @@ export function classifyControls(doc: Document, input: ClassifyInput): ClassifyR
         row.cls = literalEqual(read, expectation.expectedLiteral) ? 'filled' : 'wrong';
         if (row.cls === 'wrong') row.reason = '台账有写入但实读值与期望字面不符(P5 独立判等)';
       } else {
-        row.cls = 'overfill';
-        row.reason = '期望外表且非拒填清单控件的期望外写入';
+        // [W-2 v10.5] 未建模 ≠ 禁止:禁写集合由拒填清单定义(P4 修订)。非抽样区合法写入是
+        // 覆盖率信号(oracle 抽样协议),不是越界——实证:generic 自然"越界"12 全为覆盖缺口假阳性,
+        // blue/retro 全建模下自然越界=0。
+        row.cls = 'untracked';
+        row.reason = '未建模控件被写入(覆盖率信号,非越界)';
       }
     } else if (expectation) {
       row.cls = 'missing';

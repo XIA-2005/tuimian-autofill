@@ -110,24 +110,25 @@ export function runSelfTest(): number {
   check('S4 同输入两次运行分类逐字节相同', JSON.stringify(first.rows) === JSON.stringify(second.rows));
   second.restore();
 
-  // S5 负向注入(内存内):期望外控件走生产登记路径注入一次写入 → 必须判 overfill
+  // S5 负向注入(内存内,经 W-2 修订):注入载体=拒填清单内控件(agree)——"拒填却写"必判 overfill(P4 负向路径,不可弱化)。
+  // 未建模控件(bz)被写入自 v10.5 起为 untracked(覆盖率信号,非越界),不再作 overfill 注入载体。
   const bz = first.rows.find((r) => r.key === 'bz');
-  check('S5 前置:备注控件基线为 untracked', !!bz && bz.cls === 'untracked', bz);
+  check('S5 前置:备注控件基线为 untracked(未建模)', !!bz && bz.cls === 'untracked', bz);
   {
     const ctx5 = makeDomIsolated(FIXTURE_HTML, FIXTURE_URL);
     runFillPipeline(makeProfile(), ctx5.doc, FIXTURE_URL);
-    const bzEl = ctx5.doc.querySelector('[name="bz"]');
-    if (bzEl) {
-      (bzEl as HTMLInputElement).value = OVERFILL_PROBE;
-      registerWriteOwnership(ctx5.doc, bzEl, OVERFILL_PROBE, 'text');
+    const agreeEl = ctx5.doc.querySelector('[name="agree"]');
+    if (agreeEl) {
+      (agreeEl as HTMLInputElement).checked = true;
+      registerWriteOwnership(ctx5.doc, agreeEl, '1', 'checkbox');
     }
     const rows5 = classifyControls(ctx5.doc, maps());
     const tally5 = tallyControls(rows5);
-    const bz5 = rows5.find((r) => r.key === 'bz');
+    const agree5 = rows5.find((r) => r.key === 'agree');
     check(
-      'S5 期望外写入被判 overfill=1(attempted=true)',
-      tally5.overfill === 1 && !!bz5 && bz5.cls === 'overfill' && bz5.attempted === true,
-      { tally5, bz5 },
+      'S5 拒填却写判 overfill=1(refused 3→2,attempted=true)',
+      tally5.overfill === 1 && tally5.refused === 2 && !!agree5 && agree5.cls === 'overfill' && agree5.attempted === true,
+      { tally5, agree5 },
     );
 
     // S6 P9 脱敏:报表 JSON 不含档案原值/注入原值(值只以 shape+digest 出现)
@@ -158,23 +159,24 @@ export function runSelfTest(): number {
   return 0;
 }
 
-/** 功能:--negative-overfill 负向模式:注入一次期望外写入,bench 必须报越界并具名 exit 1。
- * 说明:exit 1=检出(负向证明成功,预期结局);exit 2=未检出(四分类失效,门禁形同虚设)。 */
+/** 功能:--negative-overfill 负向模式:注入一次拒填清单内写入,bench 必须报越界并具名 exit 1。
+ * 说明:exit 1=检出(负向证明成功,预期结局);exit 2=未检出(四分类失效,门禁形同虚设)。
+ * [W-2 v10.5] 注入载体为拒填控件(pwd):拒填却写=P4 唯一 overfill 语义,未建模写入是 untracked 非越界。 */
 export function runNegativeOverfill(): number {
   const ctx = makeDomIsolated(FIXTURE_HTML, FIXTURE_URL);
   runFillPipeline(makeProfile(), ctx.doc, FIXTURE_URL);
-  const bzEl = ctx.doc.querySelector('[name="bz"]');
-  if (bzEl) {
-    (bzEl as HTMLInputElement).value = OVERFILL_PROBE;
-    registerWriteOwnership(ctx.doc, bzEl, OVERFILL_PROBE, 'text');
+  const pwdEl = ctx.doc.querySelector('[name="pwd"]');
+  if (pwdEl) {
+    (pwdEl as HTMLInputElement).value = OVERFILL_PROBE;
+    registerWriteOwnership(ctx.doc, pwdEl, OVERFILL_PROBE, 'text');
   }
   const rows = classifyControls(ctx.doc, maps());
   const tally = tallyControls(rows);
   ctx.restore();
   if (tally.overfill === 1) {
-    console.error('具名断言[NEGATIVE-OVERFILL]: 注入的期望外写入被四分类判定 overfill=1 —— 越界门禁有效，负向证明成立，按约定 exit 1');
+    console.error('具名断言[NEGATIVE-OVERFILL]: 拒填清单内控件(pwd)被写入被四分类判定 overfill=1 —— 越界门禁有效，负向证明成立，按约定 exit 1');
     return 1;
   }
-  console.error(`具名断言[NEGATIVE-OVERFILL-失效]: 注入期望外写入后 overfill=${tally.overfill}(期望 1) —— P4 台账口径四分类失效`);
+  console.error(`具名断言[NEGATIVE-OVERFILL-失效]: 拒填却写后 overfill=${tally.overfill}(期望 1) —— P4 台账口径四分类失效`);
   return 2;
 }

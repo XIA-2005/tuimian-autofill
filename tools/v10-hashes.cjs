@@ -154,8 +154,11 @@ if (mode === 'check') {
 
 if (mode === 'update') {
   const card = process.argv[3];
-  const files = process.argv.slice(4).map(norm);
-  if (!card || !files.length) { console.error('用法: update <卡号> <相对路径...>'); process.exit(2); }
+  const rest = process.argv.slice(4);
+  const pruneIdx = rest.indexOf('--prune');
+  const prune = pruneIdx >= 0 ? rest.slice(pruneIdx + 1).map(norm) : [];
+  const files = (pruneIdx >= 0 ? rest.slice(0, pruneIdx) : rest).map(norm);
+  if (!card || (!files.length && !prune.length)) { console.error('用法: update <卡号> <相对路径...> [--prune <相对路径...>]'); process.exit(2); }
   const patterns = readJson(TOUCH, {})[card];
   if (!Array.isArray(patterns) || patterns.length === 0) {
     console.error(`[v10-hashes] REJECT：卡 ${card} 无 touch-list 登记（开工时登记允许范围，RD-7）`);
@@ -178,18 +181,27 @@ if (mode === 'update') {
       continue;
     }
     const now = diskSha(p);
-    // [v10.5] 签名语义修复：update 为替换式（signed[card]=本次清单），此前"任一文件无变化→整卡 REJECT"与
-    // 替换式组合出死角——批内部分文件再改动时列全必 REJECT、列部分则洗白其余。现改为：真变化签入，
-    // 无变化重申同哈希（prev==now，签名层不丢文件），仅整批全无变化才 REJECT（保留 L-F04 负向自检 NEG2）。
+    // [v10.5] 签名语义：真变化签入；无变化重申同哈希（prev==now，签名层不丢文件）；仅整批全无变化才 REJECT（保留 L-F04 负向自检 NEG2）。
     if (lastExpected[p] === now) { out.push({ path: p, sha256: now, prev: now }); continue; }
     out.push({ path: p, sha256: now, prev: lastExpected[p] === undefined ? null : lastExpected[p] });
     changed.push(p);
   }
-  if (!changed.length) { console.error(`[v10-hashes] REJECT：卡 ${card} 本批全部文件与上次签名相同，无变化不签`); process.exit(1); }
+  if (!changed.length && !prune.length) { console.error(`[v10-hashes] REJECT：卡 ${card} 本批全部文件与上次签名相同，无变化不签`); process.exit(1); }
   const signed = readJson(SIGNED, {});
-  signed[card] = { at: new Date().toISOString(), files: out };
+  // [W-1 v10.5] merge 语义：本次列出者新增/更新，未列出者**保留**托管；删托管必须显式 --prune。
+  // 修复前 signed[card] 为整卡替换——列子集会静默洗掉该卡其余文件的托管（L-F01c 偏差备案 ③ 根因）。
+  const prevFiles = Array.isArray(signed[card] && signed[card].files) ? signed[card].files : [];
+  const merged = new Map(prevFiles.map((f) => [f.path, f]));
+  for (const f of out) merged.set(f.path, f);
+  for (const p of prune) {
+    if (!merged.delete(p)) { console.error(`[v10-hashes] REJECT：--prune ${p} 不在卡 ${card} 签名层，无可删除托管`); process.exit(1); }
+  }
+  signed[card] = { at: new Date().toISOString(), files: [...merged.values()] };
   fs.writeFileSync(SIGNED, JSON.stringify(signed, null, 1));
-  console.log(`[v10-hashes] 已重签卡 ${card}：` + out.map((f) => `${f.path} ${String(f.prev).slice(0, 8)}${f.prev === f.sha256 ? '==（重申）' : '→' + f.sha256.slice(0, 8)}`).join(' | '));
+  const retained = merged.size - out.length;
+  console.log(`[v10-hashes] 已重签卡 ${card}：` + out.map((f) => `${f.path} ${String(f.prev).slice(0, 8)}${f.prev === f.sha256 ? '==（重申）' : '→' + f.sha256.slice(0, 8)}`).join(' | ')
+    + (prune.length ? ` | --prune：${prune.join(', ')}` : '')
+    + (retained > 0 ? ` | （merge 保留未列出托管 ${retained} 项）` : ''));
   process.exit(0);
 }
 

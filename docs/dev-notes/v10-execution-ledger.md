@@ -181,4 +181,16 @@ EXTERNAL-MOD docs/analysis/ds-v9-复核报告-2026-09-11.md
 - 剩余限制：①strict 仍 exit 1（declared=审查产物 24 项加严保留，属"保留加严"指令的预期态）；②真实路径四元组非绿（红相位素材，属 F02 及后续卡的工作面）；③fixtureHashes 口径（≠夹具文件哈希）未解释，原样透传。
 - 下一卡：审查者 T1 复跑 → F02 红相位（`correctness-gaps-2026-09-11.md` 目标行为断言）。
 
+## L-F02 · T1 后修订批（W-1 merge 语义 / W-2 P4 单义化 / 任务书 v10.5）+ F02 红相位登记（2026-09-12）
+
+- **前置**：审查者 T1 过审（逐项复现含 check EXIT=0、签名闭环 874F2F25、NEG2、真实 oracle 负向、CI 34631187029 success），位点 HEAD `aec0fe1`。
+- **W-1 update merge 语义**（`tools/v10-hashes.cjs` update 段重写）：本次列出者新增/更新，**未列出者保留**托管；删托管须显式 `--prune`（prune 不在层即 REJECT）。**负向自检（现场实证）**：`update F01 test/bench/{classify,self-test,oracle-run}.ts`（3 真变化）→ 输出`（merge 保留未列出托管 10 项）`exit 0；事后 `check` = `漂移 0|缺失 0|未声明 0|存量漂移 0|EXIT 0` 且 oracle-draft/signed/fixtures/gen 等**零**出现在任何漂移类（旧替换式下会掉 11 项出签名层）。前置负向：`--prune` 不存在路径 → REJECT exit 1（代码路径在案）。
+- **W-2 bench 同步**（`classify.ts`）：`record && !refusal && !expectation` 分支 overfill → **untracked**（reason="未建模控件被写入(覆盖率信号,非越界)"）；**负向自检=拒填却写仍判 overfill 未被弱化**：self-test S5 重写为注入拒填控件 agree → `overfill=1, refused 3→2, attempted=true` ✓；`--negative-overfill` 载体改 pwd → 具名 exit 1 ✓；`--oracle --negative-overfill` 载体改 refused 控件 → 三校注入/检出配对全 true 具名 exit 1 ✓。
+- **P4 单义化（任务书 v10.5）**：§2 P4 改"越界=拒填却写；未建模≠禁止（untracked=覆盖率信号）"；版本日志追加 v10.5 段（含 W-1/W-2/W-3）；头部版本行 v10.5。W-2 后真实路径实证：generic 自然 overfill **12→0**（untracked 81→94）、blue/retro 0 不变——三校自然越界全零，与审查者实测一致。`update F00` 列全两文件：任务书 `DF0539E8→1024DAC6`、竞品文档重申，exit 0。
+- **F02 红相位登记**：`docs/dev-notes/correctness-gaps-2026-09-11.md`——**[F02-D1] 日期族 missing**（csrq/rxny/byny/txtCsrq/txtRxny/txtByny 三独立夹具重复，第一优先）+ [F02-R1..R7]（各标翻绿卡 A1/A2b/A3/A4/A5/A6/A7）+ [F02-S1..S4]（B1/B2/B3/B4）+ 次优先 [F02-B1a] wrong:sqyxmc、[F02-B3a] picker missing。全部"目标绿行为"形态，无现状固化；门禁放行约定：翻绿=bench:oracle 对应键缺陷消失+对应桶归零。
+- **命令+退出码**：`npm run typecheck`=0；`node test/bench/run.mjs --self-test`=0（S1-S7）；`--negative-overfill`=1 具名；`--oracle … --negative-overfill`=1 具名三校配对；check 终态=0（`受控一致 155 | 漂移 0 | 缺失 0 | 新文件已声明 25 | 未声明 0 | 存量漂移 0 | 外部 3`；+1=审查者新落 `复审-T1签批落地批-2026-09-12.md`，REVIEW 声明常态）。
+- W-3 残留遵指令不单独开工（MANAGED_ROOTS 不含 docs/dev-notes/）。
+- 剩余限制：F02 红断言未接入执行门禁（登记+素材形态，翻绿接入路径已写明）；oracle 签名未随 P4 修订重签（draft 内容未变，874F2F25 仍锚定有效——P4 修订改的是 bench 判读语义非 oracle 数据）。
+- 下一卡：审查者判 F02 → B4（S4 收口）或等用户清单走 T3。
+
 <!-- 每卡一条，按模板追加：ID/状态/证据/命令+退出码/bench 四元组/负向自检/重签/审查者判定/剩余限制/下一卡 -->
